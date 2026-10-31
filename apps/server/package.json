@@ -1,0 +1,33 @@
+{
+  "name": "@framezen/server",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/index.ts",
+    "build": "node build.mjs",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@framezen/catalog": "4.0.0",
+    "@framezen/documents": "4.0.0",
+    "@framezen/engine": "4.0.0",
+    "@electric-sql/pglite": "^0.5.14",
+    "@hono/node-server": "^2.1.5",
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4.13.14",
+    "playwright-core": "^1.64.1",
+    "postgres": "^3.4.7",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zod": "^4.6.7",
+    "@framezen/shared": "4.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "drizzle-kit": "^0.31.11",
+    "esbuild": "^0.28.2"
+  }
+}

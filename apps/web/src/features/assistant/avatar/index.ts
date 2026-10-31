@@ -1,0 +1,6 @@
+export { MarcoAvatar, eyeScaleFor, type MarcoAvatarProps, type MarcoLookAt, type MarcoPoint } from './MarcoAvatar'
+export { MARCO_STATES, type MarcoState } from './engine/director'
+export { MARCO_STATE_LABELS } from './labels'
+export { stillFrame } from './engine/still'
+export { MarcoEngine, type MarcoFrame } from './engine/engine'
+export { MarcoDirector } from './engine/director'

@@ -1,0 +1,11 @@
+node_modules
+**/node_modules
+# Datos locales, herramientas y variables de entorno, en cualquier carpeta (COPY apps ./apps copiaría
+# apps/*/.env* y apps/*/.data a la imagen).
+**/.data
+**/.scratch
+**/.env*
+.git
+**/dist
+docs/research
+docs/build

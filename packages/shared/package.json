@@ -1,0 +1,10 @@
+{
+  "name": "@framezen/shared",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@framezen/engine": "4.0.0" }
+}

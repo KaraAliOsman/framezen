@@ -1,0 +1,307 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/instrument-sans/wdth.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
+/* Framezen · «Papel y tinta». Fuente de verdad de tokens: docs/DESIGN.md */
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+/* Pantallas táctiles: inputs de 44 px y texto de 16 px (evita el zoom de iOS). */
+@custom-variant touch (@media (pointer: coarse));
+
+@theme {
+  --font-sans: 'Instrument Sans Variable', 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --color-paper-0: var(--paper-0);
+  --color-paper-50: var(--paper-50);
+  --color-paper-100: var(--paper-100);
+  --color-paper-200: var(--paper-200);
+  --color-paper-350: var(--paper-350);
+  --color-paper-600: var(--paper-600);
+  --color-paper-900: var(--paper-900);
+
+  --color-ink-50: var(--ink-50);
+  --color-ink-100: var(--ink-100);
+  --color-ink-500: var(--ink-500);
+  --color-ink-600: var(--ink-600);
+  --color-ink-700: var(--ink-700);
+
+  --color-ok-50: var(--ok-50);
+  --color-ok-600: var(--ok-600);
+  --color-ok-800: var(--ok-800);
+  --color-warn-50: var(--warn-50);
+  --color-warn-600: var(--warn-600);
+  --color-warn-800: var(--warn-800);
+  --color-bad-50: var(--bad-50);
+  --color-bad-600: var(--bad-600);
+  --color-bad-800: var(--bad-800);
+
+  --color-pvc-white: #f6f5f1;
+  --color-pvc-anthracite: #383e42;
+  --color-pvc-black: #0e0e10;
+  --color-pvc-golden-oak: #a8692e;
+  --color-pvc-walnut: #5b3a22;
+  --color-glass: #d9ebee;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --shadow-float: 0 1px 2px rgb(31 28 24 / 0.06), 0 8px 24px rgb(31 28 24 / 0.08);
+  --shadow-pop: 0 2px 4px rgb(31 28 24 / 0.06), 0 16px 40px rgb(31 28 24 / 0.12);
+
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+
+  --text-meta: 12px;
+  --text-meta--line-height: 16px;
+  --text-table: 13px;
+  --text-table--line-height: 18px;
+  --text-base: 14px;
+  --text-base--line-height: 20px;
+  --text-lead: 16px;
+  --text-lead--line-height: 24px;
+  --text-h3: 20px;
+  --text-h3--line-height: 28px;
+  --text-h2: 24px;
+  --text-h2--line-height: 32px;
+  --text-h1: 32px;
+  --text-h1--line-height: 40px;
+  --text-display: 56px;
+  --text-display--line-height: 60px;
+
+  --color-pvc-winchester: #7a4a2a;
+}
+
+:root {
+  --paper-0: #ffffff;
+  --paper-50: #faf8f5;
+  --paper-100: #f4f1ec;
+  --paper-200: #e4dfd7;
+  --paper-350: #9c9489;
+  --paper-600: #6f685e;
+  --paper-900: #1f1c18;
+
+  --ink-50: #eef1fc;
+  --ink-100: #dce3fa;
+  --ink-500: #3a5bd6;
+  --ink-600: #2747c2;
+  --ink-700: #1f3aa0;
+
+  --ok-50: #e6f2ea;
+  --ok-600: #2f7d4f;
+  --ok-800: #1d5234;
+  --warn-50: #fbf0dc;
+  --warn-600: #a35f00;
+  --warn-800: #6b3e00;
+  --bad-50: #fbe8e5;
+  --bad-600: #c23b2e;
+  --bad-800: #8a2219;
+
+  /* Vidrio de los dibujos: 70 % sobre papel; más tenue sobre fondo oscuro. */
+  --sketch-glass-opacity: 0.7;
+  --sketch-glint-opacity: 0.95;
+
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --paper-0: #1e1b18;
+  --paper-50: #151311;
+  --paper-100: #24211d;
+  --paper-200: #34302b;
+  --paper-350: #5e5850;
+  --paper-600: #a39d94;
+  --paper-900: #ede9e3;
+  --ink-50: #1d2238;
+  --ink-100: #263057;
+  --ink-500: #8ea5ee;
+  --ink-600: #8ea5ee;
+  --ink-700: #b3c3f4;
+  --ok-50: #17271d;
+  --ok-600: #6cbf8c;
+  --ok-800: #a6dcb9;
+  --warn-50: #2c2213;
+  --warn-600: #e2a24a;
+  --warn-800: #f2cd92;
+  --bad-50: #311a17;
+  --bad-600: #ec7a6c;
+  --bad-800: #f6b3aa;
+  --sketch-glass-opacity: 0.22;
+  --sketch-glint-opacity: 0.45;
+  color-scheme: dark;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-paper-50 text-paper-900 font-sans antialiased;
+    min-height: 100dvh;
+    font-size: 14px;
+    line-height: 20px;
+    font-feature-settings: 'ss01' on;
+  }
+  ::selection {
+    background: var(--ink-100);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ink-500);
+    outline-offset: 2px;
+  }
+  button,
+  [role='button'] {
+    cursor: pointer;
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  .narrow {
+    font-stretch: 87.5%;
+  }
+  .scrollbar-quiet {
+    scrollbar-width: thin;
+    scrollbar-color: var(--paper-200) transparent;
+  }
+}
+
+/* ── Movimiento: 120/160/200/240 ms, solo opacity y transform ───────────────── */
+
+@keyframes fz-fade-in {
+  from { opacity: 0; }
+}
+@keyframes fz-fade-out {
+  to { opacity: 0; }
+}
+@keyframes fz-pop-in {
+  from { opacity: 0; transform: translateY(var(--fz-pop-y, 4px)) scale(0.98); }
+}
+@keyframes fz-pop-out {
+  to { opacity: 0; transform: scale(0.98); }
+}
+@keyframes fz-dialog-in {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)) scale(0.98); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes fz-dialog-out {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to { opacity: 0; transform: translate(-50%, -50%) scale(0.98); }
+}
+@keyframes fz-sheet-right-in {
+  from { opacity: 0; transform: translateX(16px); }
+}
+@keyframes fz-sheet-right-out {
+  to { opacity: 0; transform: translateX(16px); }
+}
+@keyframes fz-sheet-left-in {
+  from { opacity: 0; transform: translateX(-16px); }
+}
+@keyframes fz-sheet-left-out {
+  to { opacity: 0; transform: translateX(-16px); }
+}
+@keyframes fz-sheet-bottom-in {
+  from { transform: translateY(100%); }
+}
+@keyframes fz-sheet-bottom-out {
+  to { transform: translateY(100%); }
+}
+@keyframes fz-flash {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes fz-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes fz-breathe {
+  50% { opacity: 0.45; }
+}
+
+@layer components {
+  .fz-overlay[data-state='open'] { animation: fz-fade-in 200ms var(--ease-out); }
+  .fz-overlay[data-state='closed'] { animation: fz-fade-out 150ms var(--ease-in); }
+
+  .fz-pop[data-side='top'] { --fz-pop-y: -4px; }
+  .fz-pop[data-state='open'],
+  .fz-pop[data-state='delayed-open'],
+  .fz-pop[data-state='instant-open'] { animation: fz-pop-in 160ms var(--ease-out); }
+  .fz-pop[data-state='closed'] { animation: fz-pop-out 120ms var(--ease-in); }
+
+  .fz-dialog { transform: translate(-50%, -50%); }
+  .fz-dialog[data-state='open'] { animation: fz-dialog-in 240ms var(--ease-out) both; }
+  .fz-dialog[data-state='closed'] { animation: fz-dialog-out 180ms var(--ease-in) both; }
+
+  .fz-sheet-right[data-state='open'] { animation: fz-sheet-right-in 200ms var(--ease-out); }
+  .fz-sheet-right[data-state='closed'] { animation: fz-sheet-right-out 150ms var(--ease-in); }
+  .fz-sheet-left[data-state='open'] { animation: fz-sheet-left-in 200ms var(--ease-out); }
+  .fz-sheet-left[data-state='closed'] { animation: fz-sheet-left-out 150ms var(--ease-in); }
+  .fz-sheet-bottom[data-state='open'] { animation: fz-sheet-bottom-in 240ms var(--ease-out); }
+  .fz-sheet-bottom[data-state='closed'] { animation: fz-sheet-bottom-out 180ms var(--ease-in); }
+
+  .fz-flash-layer { animation: fz-flash 600ms var(--ease-out) forwards; }
+  .fz-spin { animation: fz-spin 700ms linear infinite; }
+  .fz-breathe { animation: fz-breathe 1.2s ease-in-out infinite; }
+
+  /* Toasts (sonner): tinta invertida, sobria. */
+  .fz-toast {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: var(--width, 356px);
+    padding: 10px 10px 10px 14px;
+    border-radius: var(--radius-md);
+    background: var(--paper-900);
+    color: var(--paper-0);
+    box-shadow: var(--shadow-pop);
+    font-size: 14px;
+    line-height: 20px;
+  }
+  .fz-toast [data-icon] { flex: none; display: flex; color: inherit; opacity: 0.8; }
+  .fz-toast [data-content] { flex: 1; min-width: 0; }
+  .fz-toast [data-description] { opacity: 0.72; font-size: 13px; line-height: 18px; }
+  .fz-toast-action {
+    flex: none;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    color: var(--ink-100);
+    background: color-mix(in srgb, var(--paper-0) 10%, transparent);
+    transition: background-color 120ms var(--ease-out);
+  }
+  [data-theme='dark'] .fz-toast-action { color: var(--ink-600); }
+  .fz-toast-action:hover { background: color-mix(in srgb, var(--paper-0) 18%, transparent); }
+  .fz-toast-cancel {
+    flex: none;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: var(--radius-sm);
+    opacity: 0.7;
+  }
+}
+
+/* Avisos de arriba (solo el editor): centrados sobre el contenido (<main>, ver useToastArea) y no
+   sobre la ventana, para no tapar la barra lateral, la columna de ítems ni el inspector. Va fuera de
+   las capas para ganarle al CSS que inyecta sonner. En el teléfono (≤ 600 px) manda sonner. */
+@media (min-width: 601px) {
+  [data-sonner-toaster][data-y-position='top'][data-x-position='center'] {
+    left: var(--fz-toast-area-x, 50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

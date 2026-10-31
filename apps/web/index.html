@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es-CL" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#faf8f5" />
+    <meta
+      name="description"
+      content="Framezen: cotiza ventanas y puertas de PVC en segundos, con precio al instante, documentos que venden y taller con cortes optimizados."
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Framezen · Ventanas de PVC, cotizadas y fabricadas sin fricción</title>
+    <script>
+      // Aplica el tema guardado antes de pintar para evitar el destello.
+      ;(function () {
+        try {
+          var pref = localStorage.getItem('fz-theme') || 'light'
+          var dark = pref === 'dark' || (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+          if (dark) document.querySelector('meta[name="theme-color"]').setAttribute('content', '#151311')
+        } catch (e) {}
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>Framezen necesita JavaScript para funcionar.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

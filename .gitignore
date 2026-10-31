@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.data/
+.scratch/
+*.log
+coverage/
+test-results/
+playwright-report/
+.DS_Store
+
+# Variables de entorno: ningún .env* se versiona, en ninguna carpeta (Vite también lee .env.[modo] y
+# .env.[modo].local dentro de apps/web). Las variables están documentadas en README.md. Si algún día se
+# versiona una plantilla revisada y sin valores, agrégala aquí con `!.env.example`.
+.env*
+
+# Investigación, bitácoras de construcción y auditorías con datos del negocio y de terceros: solo local
+# (repo público). Lo que deba publicarse va a docs/SPEC.md o docs/DESIGN.md, sin cifras ni precios.
+docs/research/
+docs/build/

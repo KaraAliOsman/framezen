@@ -1,0 +1,32 @@
+// Documentos de taller de Framezen: componentes React imprimibles (Carta/A4).
+export type { WorkshopDocumentData, WorkshopDocumentProps, WorkshopPaper, WorkshopSale } from './types'
+
+export { WorkOrderDocument, WORKSHOP_STATIONS } from './work-order'
+export type { WorkOrderDocumentProps } from './work-order'
+export { CutOptimizationDocument } from './optimization'
+export type { CutOptimizationDocumentProps } from './optimization'
+export { GlassListDocument, groupGlassLines } from './glass'
+export type { GlassGroup } from './glass'
+export { MaterialsDocument, WORKSHOP_MATERIAL_GROUPS } from './materials'
+export type { MaterialsDocumentProps } from './materials'
+export { AssemblyChecklistDocument, assemblyChecklistSheets, assemblyChecks } from './assembly'
+export type { AssemblyCheck, AssemblyChecklistDocumentProps } from './assembly'
+export { CostDocument, WORKSHOP_COST_FAMILIES, workshopCostSummary } from './costs'
+export type { CostDocumentProps } from './costs'
+export { LabelsDocument, workshopLabelCount, workshopLabels } from './labels'
+export type { LabelsDocumentProps, WorkshopLabel, WorkshopLabelOptions } from './labels'
+export { PurchaseOrderDocument } from './purchase-order'
+export type { PurchaseOrderDocumentProps } from './purchase-order'
+
+export { WorkshopDocument, WORKSHOP_DOCUMENTS } from './registry'
+export type { WorkshopDocumentInfo, WorkshopDocumentKind, WorkshopDocumentSwitchProps } from './registry'
+
+export { WorkshopQr, workshopQrMatrix, workshopQrPath } from './qr'
+export type { WorkshopQrLevel, WorkshopQrProps } from './qr'
+export { workshopPieceCodes } from './helpers'
+export type { WorkshopPieceUnit } from './helpers'
+export { workshopCss, workshopPageRule, WORKSHOP_CSS, WORKSHOP_PAPER_SIZES } from './styles'
+export { fitWorkshopSheets, WORKSHOP_FIT_SCRIPT } from './fit'
+export type { WorkshopCssOptions } from './styles'
+
+export { sampleWorkshopData, sampleWorkshopCatalog, SAMPLE_CUT_SETTINGS } from './sample'

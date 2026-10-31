@@ -1,0 +1,21 @@
+{
+  "name": "@framezen/catalog",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node.ts",
+    "./data/*": "./data/*"
+  },
+  "dependencies": {
+    "@framezen/engine": "4.0.0",
+    "@framezen/shared": "4.0.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "import": "tsx scripts/import.ts"
+  }
+}
