@@ -2,7 +2,7 @@ import '../../test/setup'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
-import type { Me } from '@framezen/shared'
+import type { Me } from '@dekopen/shared'
 import { createQueryClient, qk } from '../lib/queryClient'
 import { AppProviders } from './providers'
 import { routes } from './router'
@@ -91,7 +91,8 @@ describe('límites de error del shell', () => {
     expect(await screen.findByRole('heading', { name: 'Esta pantalla no pudo abrirse' })).toBeTruthy()
     const sidebar = screen.getByRole('complementary', { name: 'Navegación principal' })
     expect(within(sidebar).getByRole('link', { name: /Cotizaciones/ })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Buscar o ir a/ })).toBeTruthy()
+    // Hay dos: el de la barra lateral y el icono del teléfono (el CSS no corre en jsdom).
+    expect(screen.getAllByRole('button', { name: /Buscar o ir a/ }).length).toBeGreaterThan(0)
     // El aviso vive dentro del contenido, no en una pantalla aparte.
     const main = document.getElementById('contenido')
     expect(main?.textContent).toContain('Esta pantalla no pudo abrirse')
@@ -127,8 +128,9 @@ describe('límites de error del shell', () => {
     renderApp('/inicio')
 
     expect(await screen.findByRole('heading', { name: 'Inicio de prueba' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Buscar o ir a/ })).toBeTruthy()
+    // Hay dos: el de la barra lateral y el icono del teléfono (el CSS no corre en jsdom).
+    expect(screen.getAllByRole('button', { name: /Buscar o ir a/ }).length).toBeGreaterThan(0)
     expect(screen.queryByRole('heading', { name: 'Esta pantalla no pudo abrirse' })).toBeNull()
-    expect(screen.getByRole('button', { name: /Marco tuvo un problema/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /tuvo un problema/ })).toBeTruthy()
   })
 })

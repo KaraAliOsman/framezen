@@ -1,10 +1,10 @@
-import type { ReactNode } from 'react'
+import { createContext, useContext, type ReactNode } from 'react'
 import { cn } from '../lib/cn'
-import { formatNumber } from '../lib/format'
+import { useFormat } from '../lib/i18n'
 
 /**
  * Dibujo de ventana en trazo fino para estados vacíos y pantallas de acceso. No es el dibujo
- * técnico (ese vive en @framezen/documents): es una ilustración sobria con la convención del rubro.
+ * técnico (ese vive en @dekopen/documents): es una ilustración sobria con la convención del rubro.
  */
 export type SketchKind = 'casement' | 'tilt_turn' | 'double' | 'sliding' | 'transom' | 'fixed' | 'door' | 'triple'
 
@@ -19,6 +19,25 @@ export interface WindowSketchProps {
   size?: number
   className?: string
   title?: string
+  /** Marca con un trazo más grueso el canto de apertura (lado de cierre de la hoja). */
+  accentEdge?: boolean
+}
+
+/** Si el dibujo resalta el canto de apertura (solo en la primera hoja que abre: la marca `accent`). */
+const AccentContext = createContext(false)
+
+function AccentEdge({ x, y, h }: { x: number; y: number; h: number }) {
+  if (!useContext(AccentContext)) return null
+  return (
+    <path
+      d={`M${x} ${y + 1.5} V${y + h - 1.5}`}
+      stroke="currentColor"
+      strokeWidth={2.25}
+      strokeLinecap="round"
+      vectorEffect="non-scaling-stroke"
+      fill="none"
+    />
+  )
 }
 
 const SCALE = 0.1 // 1 unidad = 10 mm
@@ -90,7 +109,7 @@ function Handle({ box, side }: { box: Box; side: 'left' | 'right' }) {
   return <rect x={hx} y={hy - 5} width={2} height={10} rx={1} fill="currentColor" fillOpacity={0.8} />
 }
 
-function Sash({ box, hinge, away, tilt }: { box: Box; hinge: 'left' | 'right'; away?: boolean; tilt?: boolean }) {
+function Sash({ box, hinge, away, tilt, accent }: { box: Box; hinge: 'left' | 'right'; away?: boolean; tilt?: boolean; accent?: boolean }) {
   const glass = inset(box, SASH)
   return (
     <g>
@@ -99,6 +118,7 @@ function Sash({ box, hinge, away, tilt }: { box: Box; hinge: 'left' | 'right'; a
       <OpeningSymbol box={glass} hinge={hinge} away={away} />
       {tilt ? <OpeningSymbol box={glass} hinge="bottom" away /> : null}
       <Handle box={box} side={hinge === 'left' ? 'right' : 'left'} />
+      {accent ? <AccentEdge x={hinge === 'left' ? box.x + box.w : box.x} y={box.y} h={box.h} /> : null}
     </g>
   )
 }
@@ -139,8 +159,8 @@ function Dimension({
   const ext = 8 * k
   const textGap = 15 * k
   const fontSize = 11.5 * k
-  const label = formatNumber(value)
-  const common = { vectorEffect: 'non-scaling-stroke' as const, stroke: 'var(--ink-600)', strokeWidth: 1, fill: 'none' }
+  const label = useFormat().mm(value)
+  const common = { vectorEffect: 'non-scaling-stroke' as const, stroke: 'var(--dk-dimension)', strokeWidth: 1, fill: 'none' }
   if (axis === 'x') {
     return (
       <g>
@@ -151,8 +171,8 @@ function Dimension({
           x={(from + to) / 2}
           y={at + textGap}
           textAnchor="middle"
-          fill="var(--ink-700)"
-          className="tabular"
+          fill="var(--dk-dimension-text)"
+          className="dim"
           style={{ fontSize, fontWeight: 500 }}
         >
           {label}
@@ -169,8 +189,8 @@ function Dimension({
         x={at + textGap}
         y={(from + to) / 2}
         textAnchor="middle"
-        fill="var(--ink-700)"
-        className="tabular"
+        fill="var(--dk-dimension-text)"
+        className="dim"
         transform={`rotate(-90 ${at + textGap} ${(from + to) / 2})`}
         style={{ fontSize, fontWeight: 500 }}
       >
@@ -191,7 +211,7 @@ const DEFAULT_SIZES: Record<SketchKind, [number, number]> = {
   triple: [2100, 1300],
 }
 
-export function WindowSketch({ kind = 'casement', width, height, dimensions = false, size, className, title }: WindowSketchProps) {
+export function WindowSketch({ kind = 'casement', width, height, dimensions = false, size, className, title, accentEdge = false }: WindowSketchProps) {
   const [dw, dh] = DEFAULT_SIZES[kind]
   const mmW = width ?? dw
   const mmH = height ?? dh
@@ -209,17 +229,17 @@ export function WindowSketch({ kind = 'casement', width, height, dimensions = fa
   let body: ReactNode
   switch (kind) {
     case 'casement':
-      body = <Sash box={light} hinge="left" />
+      body = <Sash box={light} hinge="left" accent />
       break
     case 'tilt_turn':
-      body = <Sash box={light} hinge="left" tilt />
+      body = <Sash box={light} hinge="left" tilt accent />
       break
     case 'double': {
       const half = light.w / 2
       body = (
         <>
           <Sash box={{ ...light, w: half }} hinge="left" />
-          <Sash box={{ ...light, x: light.x + half, w: half }} hinge="right" />
+          <Sash box={{ ...light, x: light.x + half, w: half }} hinge="right" accent />
         </>
       )
       break
@@ -236,6 +256,7 @@ export function WindowSketch({ kind = 'casement', width, height, dimensions = fa
           <rect x={right.x} y={right.y} width={right.w} height={right.h} {...stroke} />
           <Glass box={inset(right, SASH)} />
           <SlidingArrow box={inset(left, SASH)} direction="right" />
+          <AccentEdge x={left.x + left.w} y={left.y} h={left.h} />
           <SlidingArrow box={inset(right, SASH)} direction="left" />
         </>
       )
@@ -248,7 +269,7 @@ export function WindowSketch({ kind = 'casement', width, height, dimensions = fa
         <>
           <Glass box={{ ...light, h: topH - bar / 2 }} />
           <rect x={light.x} y={light.y + topH - bar / 2} width={light.w} height={bar} {...stroke} />
-          <Sash box={{ ...light, y: light.y + topH + bar / 2, h: light.h - topH - bar / 2 }} hinge="left" />
+          <Sash box={{ ...light, y: light.y + topH + bar / 2, h: light.h - topH - bar / 2 }} hinge="left" accent />
         </>
       )
       break
@@ -267,6 +288,7 @@ export function WindowSketch({ kind = 'casement', width, height, dimensions = fa
           <rect x={glass.x} y={glass.y + glass.h - panelH} width={glass.w} height={panelH} {...stroke} strokeOpacity={0.55} />
           <OpeningSymbol box={glass} hinge="left" />
           <Handle box={sash} side="right" />
+          <AccentEdge x={sash.x + sash.w} y={sash.y} h={sash.h} />
         </>
       )
       break
@@ -280,7 +302,7 @@ export function WindowSketch({ kind = 'casement', width, height, dimensions = fa
           <rect x={light.x + third - mullion / 2} y={light.y} width={mullion} height={light.h} {...stroke} />
           <Glass box={{ ...light, x: light.x + third + mullion / 2, w: third - mullion }} />
           <rect x={light.x + 2 * third - mullion / 2} y={light.y} width={mullion} height={light.h} {...stroke} />
-          <Sash box={{ ...light, x: light.x + 2 * third + mullion / 2, w: third - mullion / 2 }} hinge="right" />
+          <Sash box={{ ...light, x: light.x + 2 * third + mullion / 2, w: third - mullion / 2 }} hinge="right" accent />
         </>
       )
       break
@@ -288,6 +310,7 @@ export function WindowSketch({ kind = 'casement', width, height, dimensions = fa
   }
 
   return (
+    <AccentContext.Provider value={accentEdge}>
     <svg
       viewBox={`0 0 ${vbW} ${vbH}`}
       height={size}
@@ -295,9 +318,9 @@ export function WindowSketch({ kind = 'casement', width, height, dimensions = fa
       role={title ? 'img' : undefined}
       aria-hidden={title ? undefined : true}
       aria-label={title}
-      className={cn('shrink-0 overflow-visible text-paper-600', className)}
+      className={cn('shrink-0 overflow-visible text-fg-muted', className)}
     >
-      <rect x={frame.x} y={frame.y} width={frame.w} height={frame.h} rx={0.8} {...stroke} fill="var(--paper-0)" />
+      <rect x={frame.x} y={frame.y} width={frame.w} height={frame.h} rx={0.8} {...stroke} fill="var(--dk-surface)" />
       <rect x={light.x} y={light.y} width={light.w} height={light.h} {...stroke} strokeOpacity={0.7} />
       {body}
       {dimensions ? (
@@ -307,5 +330,6 @@ export function WindowSketch({ kind = 'casement', width, height, dimensions = fa
         </>
       ) : null}
     </svg>
+    </AccentContext.Provider>
   )
 }

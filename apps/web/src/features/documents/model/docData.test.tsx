@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { SAMPLE_CATALOG } from '@framezen/catalog'
-import { CatalogDocument, QuoteDocument } from '@framezen/documents'
-import { createDesign, DEFAULT_PRICING, evaluateQuote } from '@framezen/engine'
-import type { Quote } from '@framezen/shared'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
+import { CatalogDocument, QuoteDocument } from '@dekopen/documents'
+import { createDesign, DEFAULT_PRICING, evaluateQuote } from '@dekopen/engine'
+import type { Quote } from '@dekopen/shared'
 import { catalogDocFromCatalog, colorLabel, fromPricePerM2, quoteDocFromQuote, SAMPLE_DOC_CLIENT, sampleQuoteDoc, toDocOrg, type DocContext } from './docData'
-import { applyDocEdit, DEFAULT_PREFS, SUGGESTED_TEXTS, withDefaultPrefs } from './prefs'
+import { applyDocEdit, DEFAULT_PREFS, withDefaultPrefs } from './prefs'
 
 const ctx: DocContext = {
   catalog: SAMPLE_CATALOG,
@@ -63,7 +63,7 @@ describe('cotización real del taller', () => {
     version: 1,
     createdAt: '2026-10-30T12:00:00.000Z',
     updatedAt: '2026-10-31T12:00:00.000Z',
-    documentOverrides: { intro: 'Hola Rojas' },
+    documentOverrides: { v: 2, texts: { intro: 'Hola Rojas' } },
   }
 
   it('toma precios y totales del motor, y los textos propios de esa cotización', () => {
@@ -141,10 +141,10 @@ describe('edición directa sobre el documento', () => {
     expect(applyDocEdit(DEFAULT_PREFS, 'notes', 'x')).toEqual({ ignored: 'quote-field' })
   })
 
-  it('completa preferencias guardadas incompletas con los textos sugeridos', () => {
+  it('completa preferencias guardadas incompletas sin inventar compromisos', () => {
     const prefs = withDefaultPrefs({ font: 'serif' })
     expect(prefs.font).toBe('serif')
-    expect(prefs.conditions).toBe(SUGGESTED_TEXTS.conditions)
-    expect(prefs.validityDays).toBe(15)
+    expect(prefs.conditions).toBe('')
+    expect(prefs.validityDays).toBe(0)
   })
 })

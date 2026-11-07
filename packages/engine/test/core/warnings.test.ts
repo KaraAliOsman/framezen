@@ -48,7 +48,7 @@ describe('nunca bloquea: datos faltantes', () => {
   it('perfil sin asignar en la línea: el corte se lista sin código', () => {
     const cat = withLine({ profiles: { frame: 'PRO01', sash: 'PRO521', bead: 'PRO05' } })
     const bom = computeBom(createDesign('fixed_casement', base), cat)
-    expect(warning(bom, 'profile_missing')?.message).toBe('El travesaño de PRO6004 no está en tu catálogo: se cotiza en $0. Agrégalo en Catálogo.')
+    expect(warning(bom, 'profile_missing')?.message).toBe('El travesaño de PRO6004 no está en tu catálogo: la ventana queda fuera del total. Agrégalo en Catálogo.')
     expect(bom.cuts.find((c) => c.role === 'mullion')).toMatchObject({ code: '—', name: 'Travesaño', length: 1200 })
   })
 
@@ -65,9 +65,9 @@ describe('nunca bloquea: datos faltantes', () => {
     expect(warning(bom, 'glass_missing')?.fix?.patch).toEqual({ glassId: 'dvh-4-12-4' })
   })
 
-  it('herraje sin precio: se cotiza en $0 con aviso', () => {
+  it('herraje sin precio: queda fuera del total, con aviso', () => {
     const bom = computeBom(createDesign('tilt_turn', { ...base, width: 700, height: 1300 }), catalog)
-    expect(warning(bom, 'price_missing_item')?.message).toBe('El herraje sin-precio · Kit oscilobatiente no tiene precio: se cotiza en $0.')
+    expect(warning(bom, 'price_missing_item')?.message).toBe('El herraje sin-precio · Kit oscilobatiente no tiene precio: queda fuera del total.')
   })
 })
 
@@ -75,7 +75,7 @@ describe('avisos de fabricación', () => {
   it('hoja fuera del rango de herrajes (alto)', () => {
     const bom = computeBom(createDesign('casement_out', { ...base, width: 600, height: 1000 }), catalog)
     expect(warning(bom, 'hardware_out_of_range')?.message).toBe(
-      'No hay herraje de PRO6004 para hojas de 928 mm de alto (cubre hasta 600 y desde 1.200). Se cotiza sin él.',
+      'No hay herraje de PRO6004 para hojas de 928 mm de alto (cubre hasta 600 y desde 1.200). Queda fuera del total.',
     )
     // Lo que sí calza se lista igual (bisagras, cerraderos, manilla).
     expect(bom.items.map((i) => i.itemId).sort()).toEqual(['A-T19', 'H-B2D', 'H-M1', 'H-R13'])
@@ -87,7 +87,7 @@ describe('avisos de fabricación', () => {
     const w = bom.warnings.filter((x) => x.code === 'hardware_out_of_range')
     expect(w).toHaveLength(1)
     expect(w[0].nodeId).toBe('n3')
-    expect(w[0].message).toBe('No hay herraje de PRO6004 para hojas de 1.052 mm de ancho (cubre hasta 900). Se cotiza sin él.')
+    expect(w[0].message).toBe('No hay herraje de PRO6004 para hojas de 1.052 mm de ancho (cubre hasta 900). Queda fuera del total.')
   })
 
   it('línea sin reglas de herrajes: aviso informativo único', () => {
@@ -99,7 +99,7 @@ describe('avisos de fabricación', () => {
     const rules: HardwareRule[] = PRO6004.hardwareRules.filter((r) => !r.openings.includes('tilt_turn'))
     const bom = computeBom(createDesign('tilt_turn', base), withLine({ hardwareRules: rules }))
     expect(warning(bom, 'hardware_missing')?.message).toBe(
-      'PRO6004 no tiene herrajes para oscilobatientes: agrégalos en el catálogo para que entren al costo.',
+      'PRO6004 no tiene herrajes para oscilobatientes: la ventana queda fuera del total hasta agregarlos en el catálogo.',
     )
   })
 
@@ -134,7 +134,7 @@ describe('avisos de fabricación', () => {
       'El termopanel del paño fijo mide 2,73 m²: sobre 2,6 m² es muy pesado para manipular e instalar. Divide el paño con un travesaño.',
     )
     const mono = computeBom(createDesign('fixed', { ...base, glassId: 'mono-4', width: 1500, height: 1400 }), catalog)
-    expect(warning(mono, 'glass_too_big')?.fix).toEqual({ label: 'Usar DVH 4+12+4', patch: { glassId: 'dvh-4-12-4' } })
+    expect(warning(mono, 'glass_too_big')?.fix).toEqual({ label: 'Usar DVH 4+12+4', key: 'use', params: { name: 'DVH 4+12+4' }, patch: { glassId: 'dvh-4-12-4' } })
   })
 
   it('forma especial con hoja: se calcula sobre el rectángulo y ofrece dejarla fija', () => {
@@ -142,6 +142,7 @@ describe('avisos de fabricación', () => {
     const bom = computeBom(d, catalog)
     expect(warning(bom, 'shape_not_fixed')?.fix).toEqual({
       label: 'Dejar como paño fijo',
+      key: 'make_fixed',
       patch: { root: { id: 'n1', type: 'leaf', opening: { kind: 'fixed' } } },
     })
   })
@@ -193,7 +194,7 @@ describe('puertas, inversor y reglas por paso', () => {
     expect(frame).toEqual([
       ['PRO01', 906, 1, 45, 45, 'arr'],
       ['PRO01', 2103, 2, 45, 90, 'izq/der'],
-      ['UMB-AL', 772, 1, 90, 90, 'umbral'],
+      ['UMB-AL', 812, 1, 90, 90, 'umbral'],
     ])
     expect(computeLayout(asked, cat).sashes[0].handle).toBe('right')
     // Sin pedirlo: marco completo como la puerta balconera de la OT 385 (V1), aunque la línea tenga umbral.

@@ -1,4 +1,4 @@
-import type { Catalog, Layout, WindowDesign } from '@framezen/engine'
+import type { Catalog, Layout, WindowDesign } from '@dekopen/engine'
 
 /** Layouts escritos a mano (contrato del motor) para probar el dibujo sin depender del núcleo. */
 

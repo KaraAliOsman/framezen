@@ -132,7 +132,7 @@ class FakeFlow {
       case 'GET payment/getStatus': {
         const pay = this.payments.get(p.token)
         if (!pay) return Response.json({ code: 105, message: 'Token not found' }, { status: 400 })
-        return Response.json({ ...pay, subject: 'Framezen', payer: 'pagador@correo.cl', paymentData: { media: 'Webpay' } })
+        return Response.json({ ...pay, subject: 'DEKOPEN', payer: 'pagador@correo.cl', paymentData: { media: 'Webpay' } })
       }
       default:
         return Response.json({ code: 404, message: `No existe ${route}` }, { status: 404 })
@@ -247,7 +247,7 @@ describe('Flow: suscripción, cambio de plan, cancelación', () => {
     // La suscripción anterior se cancela y la nueva parte el próximo período (hoy ya quedó pagado).
     expect(flow.subs.get(oldId)!.status).toBe(4)
     const newSub = flow.lastCall('subscription/create')!.params
-    expect(newSub.planId).toBe(`framezen-empresa-monthly-${planGross('empresa', 'monthly')}`)
+    expect(newSub.planId).toBe(`dekopen-empresa-monthly-${planGross('empresa', 'monthly')}`)
     expect(newSub.subscription_start).toBe(addMonths(now(), 1).toISOString().slice(0, 10))
 
     // Avisos repetidos o el retorno del navegador no vuelven a aplicar nada.

@@ -1,8 +1,10 @@
 import { useDeferredValue, useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { FileDown, Printer } from 'lucide-react'
-import { WORKSHOP_PAPER_SIZES, type WorkshopPaper } from '@framezen/documents'
+import { WORKSHOP_PAPER_SIZES, type WorkshopPaper } from '@dekopen/documents'
 import { cn } from '../../../lib/cn'
+import { useT } from '../../../lib/i18n'
 import { Button, Spinner } from '../../../ui'
+import es from '../i18n/es'
 
 const PX_PER_MM = 96 / 25.4
 
@@ -40,6 +42,7 @@ export function DocumentPreview({
   footer?: ReactNode
   className?: string
 }) {
+  const t = useT(es)
   const frame = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const deferred = useDeferredValue(element)
@@ -57,19 +60,20 @@ export function DocumentPreview({
 
   const zoom = previewZoom(width, paper)
   return (
-    <div className={cn('relative rounded-lg border border-paper-200 bg-paper-100 px-3 py-4 sm:px-6 sm:py-6', className)}>
+    <div className={cn('relative rounded-panel bg-sunken px-3 py-4 sm:px-6 sm:py-6', className)}>
       <style>{PREVIEW_CSS}</style>
       <div ref={frame} role="region" aria-label={label} className="fz-docpreview mx-auto w-full overflow-hidden">
-        <div style={{ zoom }} className={cn('transition-opacity duration-160', stale && 'opacity-60')}>
+        {/* Los documentos se imprimen en claro: la hoja conserva el papel blanco también en el tema oscuro. */}
+        <div data-theme="light" style={{ zoom }} className={cn('transition-opacity duration-140', stale && 'opacity-60')}>
           {deferred}
         </div>
       </div>
       {stale ? (
-        <span className="absolute top-3 right-3 inline-flex items-center gap-1.5 rounded-full bg-paper-0 px-2 py-1 text-meta text-paper-600 shadow-float">
-          <Spinner size={12} /> Actualizando
+        <span className="absolute top-3 right-3 inline-flex items-center gap-1.5 rounded-xs bg-raised px-2 py-1 text-meta text-fg-muted shadow-float">
+          <Spinner size={12} /> {t('doc.updating')}
         </span>
       ) : null}
-      {footer ? <div className="mt-4 text-center text-[13px] text-paper-600">{footer}</div> : null}
+      {footer ? <div className="mt-4 text-center text-table text-fg-muted">{footer}</div> : null}
     </div>
   )
 }
@@ -98,19 +102,20 @@ export function DocumentToolbar({
   /** Sin botón primario (cuando la vista ya tiene uno, p. ej. «Descargar OT» en la cabecera). */
   quiet?: boolean
 }) {
+  const t = useT(es)
   return (
     <div className="mb-4 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
       <div className="min-w-[min(100%,260px)] flex-[1_1_360px]">
-        <h2 className="text-h3 font-semibold tracking-[-0.01em] text-pretty text-paper-900">{title}</h2>
-        {description ? <p className="mt-0.5 max-w-2xl text-pretty text-paper-600">{description}</p> : null}
+        <h2 className="text-h3 font-medium text-pretty text-fg-strong">{title}</h2>
+        {description ? <p className="mt-0.5 max-w-2xl text-pretty text-fg-muted">{description}</p> : null}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {options}
-        <Button icon={Printer} onClick={onPrint} disabled={disabled}>
-          Imprimir
+        <Button icon={FileDown} onClick={onDownload} loading={downloading} disabled={disabled}>
+          {t('doc.download')}
         </Button>
-        <Button variant={quiet ? 'secondary' : 'primary'} icon={FileDown} onClick={onDownload} loading={downloading} disabled={disabled}>
-          Descargar PDF
+        <Button variant={quiet ? 'secondary' : 'primary'} icon={Printer} onClick={onPrint} disabled={disabled}>
+          {t('doc.print')}
         </Button>
       </div>
     </div>

@@ -1,0 +1,51 @@
+/* Landing: lo que Tailwind no expresa bien con utilidades. */
+
+/* Controles: sin retardo de toque ni selección accidental del rótulo al mantener. */
+.lp-root :is(a, button, [role='tab'], [role='radio']) {
+  touch-action: manipulation;
+}
+.lp-root :is(button, [role='tab'], [role='radio']) {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Logotipo gigante del pie: escala con el ancho, nunca desborda. */
+.lp-wordmark svg {
+  width: 100%;
+  height: auto;
+}
+
+/* Hojas reales de la cotización, una al lado de la otra. */
+.lp-sheets .dkd {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 32px;
+  width: max-content;
+  padding: 0;
+  background: none;
+}
+.lp-sheets .dkd-page {
+  flex: none;
+  box-shadow: var(--shadow-raised);
+}
+
+/* Portada del héroe: solo la primera hoja. */
+.lp-first-page .dkd {
+  padding: 0;
+  gap: 0;
+  background: none;
+}
+.lp-first-page .dkd-page {
+  box-shadow: none;
+}
+
+.lp-rail {
+  scrollbar-gutter: stable;
+}
+
+@media print {
+  [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

@@ -1,4 +1,4 @@
-import type { Line, Opening, Pauta } from '../types'
+import type { Line, Opening, OpeningKind, Pauta } from '../types'
 import { DEFAULT_PAUTA } from './defaults'
 
 /**
@@ -14,9 +14,10 @@ export interface LinePautaOverrides {
 export type LineWithOverrides = Line & LinePautaOverrides
 
 /**
- * Extensión opcional de `WindowDesign.extras`: `threshold: true` pide umbral bajo en las
- * puertas que llegan al piso (si la línea tiene perfil de umbral). Por defecto la puerta
- * lleva marco completo, como la puerta balconera de la OT 385 (V1: marco 2 × 862 + 2 × 2246).
+ * Compatibilidad v4: `WindowDesign.extras.threshold: true` pide umbral bajo en las puertas que
+ * llegan al piso (si la línea tiene perfil de umbral). Por defecto la puerta lleva marco completo,
+ * como la puerta balconera de la OT 385 (V1: marco 2 × 862 + 2 × 2246). Hoy es parte de
+ * `WindowExtras`; el alias queda para quien lo importaba.
  */
 export interface DesignExtrasOverrides {
   threshold?: boolean
@@ -50,6 +51,9 @@ export function sanitizePauta(p?: Partial<Pauta> | null): { pauta: Pauta; missin
   }
   if (finite(p?.beadDeduction) && p.beadDeduction >= 0) pauta.beadDeduction = p.beadDeduction
   if (finite(p?.slidingHeightAdd)) pauta.slidingHeightAdd = p.slidingHeightAdd
+  if (finite(p?.frenchGap) && p.frenchGap >= 0) pauta.frenchGap = p.frenchGap
+  if (finite(p?.frenchMullionDeduction) && p.frenchMullionDeduction >= 0) pauta.frenchMullionDeduction = p.frenchMullionDeduction
+  if (finite(p?.thresholdGap) && p.thresholdGap >= 0) pauta.thresholdGap = p.thresholdGap
   const r = p?.reinforcement
   if (r) {
     const reinforcement: NonNullable<Pauta['reinforcement']> = {}
@@ -71,6 +75,9 @@ export function mergePauta(base: Pauta, over?: Partial<Pauta>): Pauta {
   }
   if (finite(over.beadDeduction) && over.beadDeduction >= 0) out.beadDeduction = over.beadDeduction
   if (finite(over.slidingHeightAdd)) out.slidingHeightAdd = over.slidingHeightAdd
+  if (finite(over.frenchGap) && over.frenchGap >= 0) out.frenchGap = over.frenchGap
+  if (finite(over.frenchMullionDeduction) && over.frenchMullionDeduction >= 0) out.frenchMullionDeduction = over.frenchMullionDeduction
+  if (finite(over.thresholdGap) && over.thresholdGap >= 0) out.thresholdGap = over.thresholdGap
   if (over.reinforcement) {
     const r = { ...(base.reinforcement ?? {}) }
     if (finite(over.reinforcement.frame)) r.frame = over.reinforcement.frame
@@ -87,20 +94,40 @@ export function openingDirection(opening: Opening): 'in' | 'out' {
   return opening?.kind === 'awning' ? 'out' : 'in'
 }
 
-export type SashVariant = 'window' | 'window_in' | 'door'
+export type SashVariant = 'window' | 'window_in' | 'door' | 'door_out'
+
+/** Hoja de puerta: la puerta de abatir y toda hoja declarada balconera o de acceso. */
+export function isDoorLeaf(opening: Opening | undefined): boolean {
+  return opening?.kind === 'door' || opening?.use === 'balcony' || opening?.use === 'entrance'
+}
+
+/**
+ * Hojas que suelen llegar al piso y pueden llevar umbral bajo: puertas (incluidas balconeras y de
+ * acceso), plegables, osciloparalelas y correderas paralelas (productos de terraza).
+ */
+const FLOOR_KINDS = new Set<OpeningKind>(['door', 'folding', 'tilt_slide', 'parallel_slide'])
+export function isFloorLeaf(opening: Opening | undefined): boolean {
+  return !!opening && (FLOOR_KINDS.has(opening.kind) || isDoorLeaf(opening))
+}
 
 /** Qué pauta y perfil de hoja corresponde a una apertura en una línea. */
 export function sashVariant(opening: Opening, line?: Line): SashVariant {
-  if (opening.kind === 'door') return 'door'
+  if (isDoorLeaf(opening)) return openingDirection(opening) === 'out' && line?.doorOutProfileId ? 'door_out' : 'door'
   if (openingDirection(opening) === 'in' && line?.sashInProfileId) return 'window_in'
   return 'window'
 }
 
-/** Pauta efectiva de una hoja según su variante. */
-export function variantPauta(base: Pauta, line: Line | undefined, variant: SashVariant): Pauta {
-  if (variant === 'door') return mergePauta(base, line?.doorPauta)
-  if (variant === 'window_in') return mergePauta(base, (line as LineWithOverrides | undefined)?.sashInPauta)
-  return base
+/**
+ * Pauta efectiva de una hoja según su variante y, si la línea los trae, sus ajustes por apertura
+ * (`openingPautas`: osciloparalela, plegable, pivotante…).
+ */
+export function variantPauta(base: Pauta, line: Line | undefined, variant: SashVariant, kind?: OpeningKind): Pauta {
+  let pauta = base
+  if (variant === 'door') pauta = mergePauta(base, line?.doorPauta)
+  else if (variant === 'door_out') pauta = mergePauta(mergePauta(base, line?.doorPauta), line?.doorOutPauta)
+  else if (variant === 'window_in') pauta = mergePauta(base, (line as LineWithOverrides | undefined)?.sashInPauta)
+  const byKind = kind ? line?.openingPautas?.[kind] : undefined
+  return byKind ? mergePauta(pauta, byKind) : pauta
 }
 
 export const missingPautaLabels = (missing: BaseKey[]): string[] => missing.map((k) => PAUTA_LABELS[k])

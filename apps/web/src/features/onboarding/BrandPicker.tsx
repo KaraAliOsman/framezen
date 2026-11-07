@@ -1,40 +1,23 @@
 import { useMemo, useState } from 'react'
 import { Search } from 'lucide-react'
 import { humanError } from '../../lib/api'
-import { cn } from '../../lib/cn'
-import { formatNumber, normalizeSearch } from '../../lib/format'
+import { normalizeSearch } from '../../lib/format'
+import { LOCALE_META, useFormat, useLocale, useT } from '../../lib/i18n'
+import { Monogram } from '../catalog/parts'
 import { Input } from '../../ui/Input'
 import { Skeleton } from '../../ui/Skeleton'
 import { Switch } from '../../ui/Switch'
 import { toast } from '../../ui/Toaster'
 import { useBrands, useToggleBrand, type BrandSummary } from '../settings/lib/accountApi'
-
-const KIND_LABEL: Record<BrandSummary['brand']['kind'], string> = {
-  profiles: 'Perfiles',
-  mixed: 'Perfiles y accesorios',
-  glass: 'Vidrios',
-  hardware: 'Herrajes',
-}
+import es from './i18n/es'
 
 const KIND_ORDER: BrandSummary['brand']['kind'][] = ['profiles', 'mixed', 'glass', 'hardware']
 
-const COMPLETENESS: Record<BrandSummary['completeness'], string> = {
-  verified: 'Datos verificados',
-  complete: 'Datos completos',
-  partial: 'Datos parciales',
-  none: 'Sin lista de precios',
-}
-
-function brandInfo(b: BrandSummary): string {
-  const parts: string[] = []
-  if (b.counts.lines) parts.push(`${formatNumber(b.counts.lines)} ${b.counts.lines === 1 ? 'línea' : 'líneas'}`)
-  if (b.counts.priced) parts.push(`${formatNumber(b.counts.priced)} precios`)
-  parts.push(COMPLETENESS[b.completeness])
-  return parts.join(' · ')
-}
-
 /** Marcas que usa el taller: activar o desactivar con un toque (se guarda solo). */
 export function BrandPicker() {
+  const t = useT(es)
+  const fmt = useFormat()
+  const { locale } = useLocale()
   const brands = useBrands()
   const toggle = useToggleBrand()
   const [query, setQuery] = useState('')
@@ -47,16 +30,26 @@ export function BrandPicker() {
 
   const groups = useMemo(() => {
     const q = normalizeSearch(query)
+    const collator = new Intl.Collator(LOCALE_META[locale].intl, { sensitivity: 'base' })
     const list = (brands.data ?? []).filter((b) => (q ? normalizeSearch(b.brand.name).includes(q) : !compact || pinned.has(b.brand.id)))
     return KIND_ORDER.map((kind) => ({
       kind,
       items: list
         .filter((b) => b.brand.kind === kind)
-        .sort((a, b) => Number(b.recommended) - Number(a.recommended) || a.brand.name.localeCompare(b.brand.name, 'es')),
+        .sort((a, b) => Number(b.recommended) - Number(a.recommended) || collator.compare(a.brand.name, b.brand.name)),
     })).filter((g) => g.items.length > 0)
-  }, [brands.data, query, compact, pinned])
+  }, [brands.data, query, compact, pinned, locale])
 
   const enabledCount = (brands.data ?? []).filter((b) => b.enabled).length
+
+  const info = (b: BrandSummary): string => {
+    const parts: string[] = []
+    if (b.counts.lines) parts.push(t('brands.lines', { count: b.counts.lines }))
+    if (b.counts.priced) parts.push(t('brands.prices', { count: b.counts.priced }))
+    // Vidrios y herrajes no tienen líneas: su dato es cuántos precios traen, no qué tan completa está la marca.
+    if (b.counts.lines || !b.counts.priced) parts.push(t(`brands.completeness.${b.completeness}`))
+    return parts.join(' · ')
+  }
 
   if (brands.isPending) {
     return (
@@ -68,49 +61,43 @@ export function BrandPicker() {
     )
   }
   if (brands.isError) {
-    return (
-      <p className="rounded-md border border-paper-200 bg-paper-0 px-4 py-5 text-[13px] text-paper-600">
-        {humanError(brands.error)} Puedes saltar este paso: tus marcas se eligen también en Catálogo.
-      </p>
-    )
+    return <p className="text-table text-fg-muted">{t('brands.loadError', { error: humanError(brands.error) })}</p>
   }
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Input icon={Search} type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar marca" aria-label="Buscar marca" wrapperClassName="w-full sm:w-72" />
-        <span className="text-[13px] text-paper-600">
-          {enabledCount === 1 ? '1 marca activa' : `${formatNumber(enabledCount)} marcas activas`}
-        </span>
+        <Input
+          icon={Search}
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('brands.search')}
+          aria-label={t('brands.search')}
+          wrapperClassName="w-full sm:w-72"
+        />
+        <span className="text-table text-fg-muted tabular">{t('brands.active', { count: enabledCount })}</span>
       </div>
-      {groups.length === 0 ? <p className="py-6 text-center text-[13px] text-paper-600">Ninguna marca se llama «{query}».</p> : null}
+      {groups.length === 0 ? <p className="py-6 text-center text-table text-fg-muted">{t('brands.none', { query })}</p> : null}
       {groups.map((group) => (
-        <section key={group.kind} aria-label={KIND_LABEL[group.kind]}>
-          <h3 className="mb-2 text-meta font-medium text-paper-600">{KIND_LABEL[group.kind]}</h3>
-          <ul className="divide-y divide-paper-200 overflow-hidden rounded-md border border-paper-200 bg-paper-0">
+        <section key={group.kind} aria-label={t(`brands.kind.${group.kind}`)}>
+          <h3 className="mb-1 text-table text-fg-muted">{t(`brands.kind.${group.kind}`)}</h3>
+          <ul>
             {group.items.map((b) => (
               <li key={b.brand.id}>
-                <label className={cn('flex cursor-pointer items-center gap-3 px-3.5 py-3 transition-colors duration-120 hover:bg-paper-50', b.enabled && 'bg-ink-50/40')}>
-                  <span
-                    aria-hidden
-                    className="inline-flex size-9 shrink-0 items-center justify-center rounded-sm text-[12px] font-semibold text-paper-0"
-                    style={{ background: b.brand.accent ?? 'var(--paper-600)' }}
-                  >
-                    {b.brand.monogram ?? b.brand.name.slice(0, 2).toUpperCase()}
-                  </span>
+                <label className="flex min-h-12 cursor-pointer items-center gap-3 py-1.5">
+                  <Monogram brand={b.brand} size={32} />
                   <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-2">
-                      <span className="truncate font-medium text-paper-900">{b.brand.name}</span>
-                      {b.recommended ? <span className="shrink-0 rounded-xs bg-paper-100 px-1.5 text-[11px] leading-[18px] font-medium text-paper-600">Recomendada</span> : null}
+                    <span className="block truncate text-fg-strong">
+                      {b.brand.name}
+                      {b.recommended ? <span className="ml-2 text-table text-fg-muted">{t('brands.recommended')}</span> : null}
                     </span>
-                    <span className="block truncate text-[13px] leading-[18px] text-paper-600">{brandInfo(b)}</span>
+                    <span className="block truncate text-table text-fg-muted">{info(b)}</span>
                   </span>
                   <Switch
                     checked={b.enabled}
-                    aria-label={`${b.enabled ? 'Desactivar' : 'Activar'} ${b.brand.name}`}
-                    onCheckedChange={(enabled) =>
-                      toggle.mutate({ id: b.brand.id, enabled }, { onError: (error) => toast.error(humanError(error)) })
-                    }
+                    aria-label={b.enabled ? t('brands.toggleOff', { name: b.brand.name }) : t('brands.toggleOn', { name: b.brand.name })}
+                    onCheckedChange={(enabled) => toggle.mutate({ id: b.brand.id, enabled }, { onError: (error) => toast.error(humanError(error)) })}
                   />
                 </label>
               </li>
@@ -122,9 +109,9 @@ export function BrandPicker() {
         <button
           type="button"
           onClick={() => setShowAll(true)}
-          className="flex h-11 items-center justify-center rounded-md border border-dashed border-paper-350/70 text-[13px] font-medium text-paper-900 transition-colors duration-120 hover:border-paper-600 hover:bg-paper-0"
+          className="self-start text-table font-medium text-accent-ink hover:underline"
         >
-          Ver todas las marcas ({formatNumber(hiddenCount)} más)
+          {t('brands.showAll', { count: fmt.number(hiddenCount) })}
         </button>
       ) : null}
     </div>

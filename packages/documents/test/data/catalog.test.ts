@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
-import { createDesign, DEFAULT_PRICING, evaluateQuote } from '@framezen/engine'
-import type { Quote } from '@framezen/shared'
+import { createDesign, DEFAULT_PRICING, evaluateQuote } from '@dekopen/engine'
+import type { Quote } from '@dekopen/shared'
 import {
   buildCatalogDocData,
   CATALOG_DOC_MAX_TYPOLOGIES,
@@ -55,7 +55,7 @@ describe('buildCatalogDocData', () => {
     // Hoja con herraje sin precio (limitador a $0) y línea sin perfiles: precio incompleto.
     const casement = createDesign('casement', { lineId: line.id, width: 800, height: 1200, colorId: line.colorIds[0], glassId: full.glass[0].id })
     const evaluation = evaluateQuote({ items: [{ id: 'x', ref: 'V1', qty: 1, design: casement }], extras: [], discountPct: 0 }, full, DEFAULT_PRICING)
-    expect(evaluation.items[0].price.unitNet).toBeGreaterThan(0)
+    expect(evaluation.items[0].price.pending?.length).toBeGreaterThan(0)
     expect([...evaluation.items[0].price.warnings, ...evaluation.items[0].bom.warnings].some(isIncompletePriceWarning)).toBe(true)
     expect(fromPricePerM2(casement, full, { pricing: DEFAULT_PRICING })).toBeUndefined()
     const noProfiles = { ...full, lines: full.lines.map((l) => ({ ...l, profiles: {} })) }

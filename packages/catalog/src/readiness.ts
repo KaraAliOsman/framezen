@@ -8,14 +8,16 @@
  *    en correderas marco, hoja, traslapo, riel y junquillo).
  *  - «complete» solo si todos esos roles tienen perfil, hay al menos un color ofrecido en que
  *    TODOS tienen precio, los refuerzos que llevan tienen precio, los herrajes y accesorios de
- *    sus reglas tienen precio y la pauta viene del fabricante (no la típica).
+ *    sus reglas tienen precio, la pauta viene del fabricante (no la típica) y, en las líneas del
+ *    catálogo base, los cortes tienen respaldo (`provenance.automatic`).
  *  - «verified» = «complete» + evidencia de taller (pauta verificada contra una obra real). La
  *    evidencia nunca se salta la comprobación.
  *  - «partial» en cualquier otro caso. Se cotiza igual y se avisa qué falta: nada bloquea.
  *
  * Puro y seguro para navegador.
  */
-import type { Catalog, Id, Item, Line, OpeningKind, Profile, ProfileRole, TypologyId } from '@framezen/engine'
+import type { Catalog, Id, Item, Line, OpeningKind, Profile, ProfileRole, TypologyId } from '@dekopen/engine'
+import { cutOrigin, lineProvenance, provenanceWarnings, type DataOrigin } from './provenance'
 
 export type ReadinessState = 'ready' | 'warnings' | 'geometry'
 
@@ -43,14 +45,20 @@ export interface LineReadiness {
   unpricedSteel: Id[]
   /** Herrajes y accesorios de las reglas de la línea sin precio. */
   unpricedItems: Id[]
-  /** Herrajes de referencia de Framezen (precio estimado, no de un proveedor). */
+  /** Herrajes de referencia de DEKOPEN (precio estimado, no de un proveedor). */
   referenceItems: Id[]
   /** Perfiles que la línea toma de otra línea de la marca. */
   sharedProfiles: { role: ProfileRole; profileId: Id; fromLineId: Id }[]
-  /** La pauta es la típica de Framezen, no la del fabricante. */
+  /** La pauta es la típica de DEKOPEN, no la del fabricante. */
   typicalPauta: boolean
   /** Hay evidencia de taller (pauta verificada contra una obra real). */
   evidence: boolean
+  /** Peor origen de sus cortes (`fabricante`, `lista_taller`, `sin_verificar`). Sin dato: línea propia. */
+  cutOrigin?: DataOrigin
+  /** Línea del catálogo base cuyos cortes no tienen respaldo: se cotiza, pero con aviso. */
+  unbackedCuts: boolean
+  /** Motivos y contradicciones de sus datos técnicos, para mostrar junto a la línea. */
+  dataWarnings: string[]
   /** Lo que falta en palabras cortas («hoja», «riel», «herrajes», «la pauta del fabricante»). */
   missing: string[]
   /** «Lista para cotizar», «Cotiza con avisos: faltan precios de hoja y riel», «Solo medidas». */
@@ -59,18 +67,18 @@ export interface LineReadiness {
   details: string[]
 }
 
-/** La pauta típica de Framezen (sin productos del fabricante) se declara con este prefijo en `source`. */
+/** La pauta típica de DEKOPEN (sin productos del fabricante) se declara con este prefijo en `source`. */
 export const TYPICAL_PAUTA_PREFIX = 'Pauta típica'
 /**
  * Evidencia de taller declarada en `source`. `source` se muestra tal cual a cada taller, así que
- * dice «verificada por Framezen» y nunca cita la orden de trabajo de un tercero.
+ * dice «verificada por DEKOPEN» y nunca cita la orden de trabajo de un tercero.
  */
-export const VERIFIED_SOURCE_MARK = 'verificada por Framezen'
+export const VERIFIED_SOURCE_MARK = 'verificada por DEKOPEN'
 /**
  * Reconoce la evidencia en `source`. También acepta el texto de catálogos generados antes
  * («… + OT N° 385 …») para no bajar de nivel una línea que ya estaba verificada.
  */
-export const VERIFIED_EVIDENCE_PATTERN = /verificada por Framezen|\bOT N° ?\d+/i
+export const VERIFIED_EVIDENCE_PATTERN = /verificada por DEKOPEN|\bOT N° ?\d+/i
 
 /** Nombre corto y en minúscula de cada rol, para frases («faltan precios de hoja y riel»). */
 export const READINESS_ROLE_NAME: Record<ProfileRole, string> = {
@@ -108,48 +116,175 @@ const READINESS_ROLE_SUBJECT: Record<ProfileRole, string> = {
   other: 'El perfil complementario',
 }
 
-const SLIDING_ROLES: ProfileRole[] =['sliding_frame', 'sliding_sash', 'interlock', 'guide', 'bead']
+const SLIDING_ROLES: ProfileRole[] = ['sliding_frame', 'sliding_sash', 'interlock', 'guide', 'bead']
+const LIFT_SLIDE_ROLES: ProfileRole[] = [...SLIDING_ROLES, 'threshold']
 
-/** Roles que necesita cada tipología practicable. */
-const TYPOLOGY_ROLES: Partial<Record<TypologyId, ProfileRole[]>> = {
-  fixed: ['frame', 'bead'],
-  arch: ['frame', 'bead'],
-  trapezoid: ['frame', 'bead'],
-  triangle: ['frame', 'bead'],
+const FIXED_ROLES: ProfileRole[] = ['frame', 'bead']
+const SASH_ROLES: ProfileRole[] = ['frame', 'sash', 'bead']
+const SASH_MULLION_ROLES: ProfileRole[] = ['frame', 'sash', 'bead', 'mullion']
+const FRENCH_ROLES: ProfileRole[] = ['frame', 'sash', 'bead', 'french_mullion']
+const DOOR_ROLES: ProfileRole[] = ['frame', 'door_sash', 'bead']
+const FOLDING_ROLES: ProfileRole[] = ['frame', 'sash', 'bead', 'guide']
+
+/**
+ * Roles que necesita cada tipología. `Record` completo: una tipología nueva del motor no compila
+ * hasta declarar aquí qué perfiles pide (antes era parcial y una omisión pasaba en silencio).
+ */
+const TYPOLOGY_ROLES: Record<TypologyId, ProfileRole[]> = {
+  fixed: FIXED_ROLES,
+  arch: FIXED_ROLES,
+  trapezoid: FIXED_ROLES,
+  triangle: FIXED_ROLES,
+  round: FIXED_ROLES,
+  oval: FIXED_ROLES,
+  pentagon: FIXED_ROLES,
+  octagon: FIXED_ROLES,
+  gable: FIXED_ROLES,
+  arch_segmental: FIXED_ROLES,
   fixed_3: ['frame', 'bead', 'mullion'],
-  casement: ['frame', 'sash', 'bead'],
-  casement_out: ['frame', 'sash', 'bead'],
-  tilt_turn: ['frame', 'sash', 'bead'],
-  tilt: ['frame', 'sash', 'bead'],
-  awning: ['frame', 'sash', 'bead'],
-  casement_double: ['frame', 'sash', 'bead', 'french_mullion'],
-  fixed_casement: ['frame', 'sash', 'bead', 'mullion'],
-  fixed_tilt_turn: ['frame', 'sash', 'bead', 'mullion'],
-  casement_transom: ['frame', 'sash', 'bead', 'mullion'],
-  fixed_awning_bottom: ['frame', 'sash', 'bead', 'mullion'],
-  casement_fixed_casement: ['frame', 'sash', 'bead', 'mullion'],
-  door: ['frame', 'door_sash', 'bead'],
+  casement: SASH_ROLES,
+  casement_out: SASH_ROLES,
+  tilt_turn: SASH_ROLES,
+  tilt: SASH_ROLES,
+  awning: SASH_ROLES,
+  pivot_v: SASH_ROLES,
+  pivot_h: SASH_ROLES,
+  casement_double: FRENCH_ROLES,
+  french_casement: FRENCH_ROLES,
+  french_tilt_turn: FRENCH_ROLES,
+  fixed_casement: SASH_MULLION_ROLES,
+  fixed_tilt_turn: SASH_MULLION_ROLES,
+  casement_transom: SASH_MULLION_ROLES,
+  fixed_awning_bottom: SASH_MULLION_ROLES,
+  casement_fixed_casement: SASH_MULLION_ROLES,
+  fixed_tilt_turn_fixed: SASH_MULLION_ROLES,
+  tilt_turn_double_transom: SASH_MULLION_ROLES,
+  arch_casement: SASH_MULLION_ROLES,
+  // Osciloparalela y paralela: hoja de practicable junto a un fijo, separados por travesaño.
+  tilt_slide: SASH_MULLION_ROLES,
+  tilt_slide_2: SASH_MULLION_ROLES,
+  parallel_slide: SASH_MULLION_ROLES,
+  folding_3: FOLDING_ROLES,
+  folding_4: FOLDING_ROLES,
+  folding_5: FOLDING_ROLES,
+  folding_6: FOLDING_ROLES,
+  folding_7: FOLDING_ROLES,
+  door: DOOR_ROLES,
+  balcony_door: DOOR_ROLES,
+  entrance_door: DOOR_ROLES,
   door_double: ['frame', 'door_sash', 'bead', 'french_mullion'],
+  balcony_door_double: ['frame', 'door_sash', 'bead', 'french_mullion'],
   door_sidelight: ['frame', 'door_sash', 'bead', 'mullion'],
   door_transom: ['frame', 'door_sash', 'bead', 'mullion'],
+  entrance_door_sidelights: ['frame', 'door_sash', 'bead', 'mullion'],
+  door_double_sidelights: ['frame', 'door_sash', 'bead', 'mullion', 'french_mullion'],
+  sliding_2: SLIDING_ROLES,
+  sliding_2_fixed: SLIDING_ROLES,
+  sliding_3: SLIDING_ROLES,
+  sliding_3_rail: SLIDING_ROLES,
+  sliding_4: SLIDING_ROLES,
+  sliding_mono: SLIDING_ROLES,
+  sliding_6: SLIDING_ROLES,
+  sliding_3_center_fixed: SLIDING_ROLES,
+  sliding_4_center_fixed: SLIDING_ROLES,
+  lift_slide_2: LIFT_SLIDE_ROLES,
+  lift_slide_3: LIFT_SLIDE_ROLES,
+  lift_slide_4: LIFT_SLIDE_ROLES,
+  casement_bottom_fixed: SASH_MULLION_ROLES,
+  tilt_turn_bottom_fixed: SASH_MULLION_ROLES,
+  casement_double_bottom_fixed: ['frame', 'sash', 'bead', 'mullion', 'french_mullion'],
+  tilt_turn_transom: SASH_MULLION_ROLES,
+  awning_transom: SASH_MULLION_ROLES,
+  fixed_tilt: SASH_MULLION_ROLES,
+  fixed_awning_side: SASH_MULLION_ROLES,
+  casement_double_mullion: SASH_MULLION_ROLES,
+  tilt_turn_fixed_tilt_turn: SASH_MULLION_ROLES,
+  door_panel: ['frame', 'door_sash'],
+  door_zocalo: [...DOOR_ROLES, 'mullion'],
+  door_double_zocalo: ['frame', 'door_sash', 'bead', 'french_mullion'],
+  door_out: DOOR_ROLES,
+  vertical_sliding: SLIDING_ROLES,
+  vertical_sliding_double: SLIDING_ROLES,
+  louver_fixed: ['frame'],
 }
 
-const TYPOLOGY_OPENINGS: Partial<Record<TypologyId, OpeningKind[]>> = {
+/** Aperturas de hoja de cada tipología (para revisar que sus herrajes tengan precio). */
+const TYPOLOGY_OPENINGS: Record<TypologyId, OpeningKind[]> = {
+  fixed: [],
+  arch: [],
+  trapezoid: [],
+  triangle: [],
+  round: [],
+  oval: [],
+  pentagon: [],
+  octagon: [],
+  gable: [],
+  arch_segmental: [],
+  fixed_3: [],
   casement: ['casement'],
   casement_out: ['casement'],
   casement_double: ['casement'],
+  french_casement: ['casement'],
   fixed_casement: ['casement'],
   casement_transom: ['casement'],
   casement_fixed_casement: ['casement'],
+  arch_casement: ['casement'],
+  balcony_door: ['casement'],
+  balcony_door_double: ['casement'],
   tilt_turn: ['tilt_turn'],
   fixed_tilt_turn: ['tilt_turn'],
+  fixed_tilt_turn_fixed: ['tilt_turn'],
+  tilt_turn_double_transom: ['tilt_turn'],
+  french_tilt_turn: ['casement', 'tilt_turn'],
   tilt: ['tilt'],
   awning: ['awning'],
   fixed_awning_bottom: ['awning'],
+  pivot_v: ['pivot_v'],
+  pivot_h: ['pivot_h'],
+  tilt_slide: ['tilt_slide'],
+  tilt_slide_2: ['tilt_slide'],
+  parallel_slide: ['parallel_slide'],
+  folding_3: ['folding'],
+  folding_4: ['folding'],
+  folding_5: ['folding'],
+  folding_6: ['folding'],
+  folding_7: ['folding'],
   door: ['door'],
   door_double: ['door'],
   door_sidelight: ['door'],
   door_transom: ['door'],
+  entrance_door: ['door'],
+  entrance_door_sidelights: ['door'],
+  door_double_sidelights: ['door'],
+  // Correderas: sus reglas se revisan aparte (openings vacío = hoja móvil).
+  sliding_2: [],
+  sliding_2_fixed: [],
+  sliding_3: [],
+  sliding_3_rail: [],
+  sliding_4: [],
+  sliding_mono: [],
+  sliding_6: [],
+  sliding_3_center_fixed: [],
+  sliding_4_center_fixed: [],
+  lift_slide_2: [],
+  lift_slide_3: [],
+  lift_slide_4: [],
+  casement_bottom_fixed: ['casement'],
+  tilt_turn_bottom_fixed: ['tilt_turn'],
+  casement_double_bottom_fixed: ['casement'],
+  tilt_turn_transom: ['tilt_turn'],
+  awning_transom: ['awning'],
+  fixed_tilt: ['tilt'],
+  fixed_awning_side: ['awning'],
+  casement_double_mullion: ['casement'],
+  tilt_turn_fixed_tilt_turn: ['tilt_turn'],
+  door_panel: ['door'],
+  door_zocalo: ['door'],
+  door_double_zocalo: ['door'],
+  door_out: ['door'],
+  vertical_sliding: [],
+  vertical_sliding_double: [],
+  louver_fixed: [],
 }
 
 /** Equivalencias que usa el motor al buscar el perfil de un rol. */
@@ -162,18 +297,23 @@ const ROLE_FALLBACKS: Partial<Record<ProfileRole, ProfileRole[]>> = {
 
 /** Roles que una línea necesita para fabricar las tipologías que publica. */
 export function requiredRolesFor(line: Pick<Line, 'kind' | 'typologyIds'>): ProfileRole[] {
-  if (line.kind === 'sliding') return [...SLIDING_ROLES]
+  const typologyIds = (line.typologyIds ?? []).filter((id): id is TypologyId => id in TYPOLOGY_ROLES)
+  if (line.kind === 'sliding') {
+    // La elevadora corre sobre su umbral: si la línea la publica, el umbral también es requerido.
+    const lift = typologyIds.some((id) => TYPOLOGY_ROLES[id].includes('threshold'))
+    return lift ? [...LIFT_SLIDE_ROLES] : [...SLIDING_ROLES]
+  }
   const roles = new Set<ProfileRole>()
-  for (const id of line.typologyIds as TypologyId[]) for (const role of TYPOLOGY_ROLES[id] ?? []) roles.add(role)
-  if (!roles.size) for (const role of ['frame', 'sash', 'bead'] as ProfileRole[]) roles.add(role)
-  const order: ProfileRole[] = ['frame', 'sash', 'door_sash', 'mullion', 'french_mullion', 'bead']
+  for (const id of typologyIds) for (const role of TYPOLOGY_ROLES[id]) roles.add(role)
+  if (!roles.size) for (const role of SASH_ROLES) roles.add(role)
+  const order: ProfileRole[] = ['frame', 'sash', 'door_sash', 'mullion', 'french_mullion', 'bead', 'guide', 'threshold']
   return order.filter((role) => roles.has(role))
 }
 
 function openingsFor(line: Pick<Line, 'kind' | 'typologyIds'>): Set<OpeningKind> {
   const out = new Set<OpeningKind>()
   if (line.kind === 'sliding') return out
-  for (const id of line.typologyIds as TypologyId[]) for (const opening of TYPOLOGY_OPENINGS[id] ?? []) out.add(opening)
+  for (const id of line.typologyIds ?? []) for (const opening of TYPOLOGY_OPENINGS[id as TypologyId] ?? []) out.add(opening)
   return out
 }
 
@@ -209,7 +349,12 @@ export function readinessIndex(catalog: Pick<Catalog, 'profiles' | 'items' | 'li
  */
 export function lineReadiness(catalog: Pick<Catalog, 'profiles' | 'items' | 'lines' | 'colors'>, line: Line, index: ReadinessIndex = readinessIndex(catalog)): LineReadiness {
   const required = requiredRolesFor(line)
-  const colors = line.colorIds?.length ? line.colorIds : []
+  // Un color propio que hereda precios («Mismo precio», recargo) no es un faltante aparte: sus
+  // huecos son los del color de referencia. Solo cuenta como color listo cuando tiene precio.
+  const inherits = new Set((catalog.colors ?? []).filter((c) => c.priceFrom).map((c) => c.id))
+  const offered = line.colorIds?.length ? line.colorIds : []
+  const colors = offered.filter((id) => !inherits.has(id))
+  const inherited = offered.filter((id) => inherits.has(id))
   const resolve = (role: ProfileRole): Profile | undefined => {
     for (const candidate of ROLE_FALLBACKS[role] ?? [role]) {
       const id = line.profiles?.[candidate]
@@ -232,9 +377,9 @@ export function lineReadiness(catalog: Pick<Catalog, 'profiles' | 'items' | 'lin
     const lacking = colors.filter((colorId) => !((profile.priceByColor?.[colorId] ?? 0) > 0))
     if (lacking.length) unpricedRoles.push({ role, profileId: profile.id, colorIds: lacking })
   }
-  const readyColors = missingRoles.length
-    ? []
-    : colors.filter((colorId) => assigned.every(({ profile }) => (profile.priceByColor?.[colorId] ?? 0) > 0))
+  const pricedIn = (colorId: Id) => assigned.every(({ profile }) => (profile.priceByColor?.[colorId] ?? 0) > 0)
+  const readyBase = missingRoles.length ? [] : colors.filter(pricedIn)
+  const readyColors = missingRoles.length ? [] : [...readyBase, ...inherited.filter(pricedIn)]
 
   // Acero de los perfiles requeridos (y de la hoja interior, si la línea la tiene).
   const steelOwners = [...assigned.map(({ profile }) => profile)]
@@ -281,7 +426,10 @@ export function lineReadiness(catalog: Pick<Catalog, 'profiles' | 'items' | 'lin
   const evidence = VERIFIED_EVIDENCE_PATTERN.test(line.source ?? '')
   const anyProfilePrice = assigned.some(({ profile }) => Object.values(profile.priceByColor ?? {}).some((price) => price > 0))
 
-  const complete = !missingRoles.length && readyColors.length > 0 && !unpricedSteel.length && !unpricedItems.length && !typicalPauta
+  const provenance = lineProvenance(line)
+  const unbackedCuts = Boolean(provenance && !provenance.automatic)
+  const dataWarnings = provenanceWarnings(line)
+  const complete = !missingRoles.length && readyColors.length > 0 && !unpricedSteel.length && !unpricedItems.length && !typicalPauta && !unbackedCuts
   const level: LineReadiness['level'] = complete ? (evidence ? 'verified' : 'complete') : 'partial'
   const state: ReadinessState = complete ? 'ready' : anyProfilePrice ? 'warnings' : 'geometry'
 
@@ -289,7 +437,7 @@ export function lineReadiness(catalog: Pick<Catalog, 'profiles' | 'items' | 'lin
   const name = (role: ProfileRole) => READINESS_ROLE_NAME[role]
   // Roles sin precio que impiden la ventana completa: en todos los colores, o en todos los colores
   // en que el resto sí tiene precio.
-  const blocking = readyColors.length ? [] : unpricedRoles.filter((gap) => gap.colorIds.length === colors.length || missingRoles.length === 0)
+  const blocking = readyBase.length ? [] : unpricedRoles.filter((gap) => gap.colorIds.length === colors.length || missingRoles.length === 0)
   const unpricedNames = blocking.map((gap) => name(gap.role))
   if (unpricedSteel.length) unpricedNames.push(unpricedSteel.length === 1 ? 'refuerzo' : 'refuerzos')
   const items = [...ruleItems].map((id) => index.items.get(id))
@@ -330,7 +478,7 @@ export function lineReadiness(catalog: Pick<Catalog, 'profiles' | 'items' | 'lin
       missing.push(...missingRoles.map(name))
       details.push(missingProfilesSentence(missingRoles.length === 1 ? 'También falta' : 'También faltan'))
     }
-    if (!readyColors.length && unpricedRoles.length && !blocking.length) {
+    if (!readyBase.length && unpricedRoles.length && !blocking.length) {
       details.push('Ningún color tiene todos sus perfiles con precio a la vez.')
     }
     for (const gap of unpricedRoles.filter((g) => !blocking.includes(g))) {
@@ -338,24 +486,28 @@ export function lineReadiness(catalog: Pick<Catalog, 'profiles' | 'items' | 'lin
     }
     if (typicalPauta && headline.indexOf('pauta') < 0) {
       missing.push('la pauta del fabricante')
-      details.push('Usa la pauta típica de Framezen: confirma los descuentos con el fabricante antes de cortar.')
+      details.push('Usa la pauta típica de DEKOPEN: confirma los descuentos con el fabricante antes de cortar.')
+    }
+    if (unbackedCuts && !typicalPauta) {
+      if (headline.indexOf('pauta') < 0) missing.push('la pauta del fabricante')
+      details.push('Sus cortes no están confirmados por el fabricante: revísalos antes de cortar.')
     }
   } else {
     headline = 'Lista para cotizar'
-    if (readyColors.length < colors.length) {
-      const notReady = colors.filter((colorId) => !readyColors.includes(colorId))
+    if (readyBase.length < colors.length) {
+      const notReady = colors.filter((colorId) => !readyBase.includes(colorId))
       const lacking = unpricedRoles.filter((gap) => gap.colorIds.some((colorId) => notReady.includes(colorId))).map((gap) => name(gap.role))
       details.push(`En ${colorList(catalog, notReady)} faltan precios de ${listJoin(lacking)}: ahí cotiza con avisos.`)
     } else details.push('Todos sus perfiles, refuerzos, herrajes y accesorios tienen precio en los colores que ofrece.')
   }
   if (evidence && state === 'ready') details.unshift('Cortes verificados contra una orden de trabajo real.')
-  else if (evidence) details.push('Sus cortes están verificados contra una orden de trabajo real; lo que falta son precios o perfiles.')
+  else if (evidence && !unbackedCuts) details.push('Sus cortes están verificados contra una orden de trabajo real; lo que falta son precios o perfiles.')
   if (sharedProfiles.length) {
     details.push(`Usa ${sharedProfiles.length === 1 ? 'un perfil' : 'perfiles'} de otra línea de la marca (${listJoin(sharedProfiles.map((shared) => name(shared.role)))}): revisa que calcen.`)
   }
   if (referenceItems.length && state !== 'geometry') {
     const kinds = items.filter((item) => item && referenceItems.includes(item.id)).map((item) => (item!.kind === 'hardware' ? 'herrajes' : 'accesorios'))
-    details.push(`Algunos ${listJoin([...new Set(kinds)])} tienen precio de referencia de Framezen: cámbialo por el de tu proveedor.`)
+    details.push(`Algunos ${listJoin([...new Set(kinds)])} tienen precio de referencia de DEKOPEN: cámbialo por el de tu proveedor.`)
   }
   return {
     lineId: line.id,
@@ -371,6 +523,9 @@ export function lineReadiness(catalog: Pick<Catalog, 'profiles' | 'items' | 'lin
     sharedProfiles,
     typicalPauta,
     evidence,
+    ...(provenance ? { cutOrigin: cutOrigin(line) } : {}),
+    unbackedCuts,
+    dataWarnings,
     missing: [...new Set(missing)],
     headline,
     details,

@@ -1,12 +1,19 @@
 /**
- * Lógica pura de Inicio: saludo, embudo, vendido del mes y seguimientos sugeridos.
- * Sin React ni red: se prueba en homeModel.test.ts.
+ * Lógica pura de Inicio: saludo, cifras del mes y la cola de lo que toca hacer.
+ * Sin React ni red: se prueba en homeModel.test.ts. Los textos salen del espacio `features/home`
+ * en el idioma de la interfaz (o en el que se pida, p. ej. el de los documentos para el WhatsApp).
  */
-import type { QuoteStatus, QuoteSummary } from '@framezen/shared'
+import { catalogReadiness } from '@dekopen/catalog'
+import type { Catalog } from '@dekopen/engine'
+import { intlTag, type Locale, type QuoteFollowUp, type QuoteStats, type QuoteStatus, type QuoteSummary } from '@dekopen/shared'
+import { getFormatter, getLocale, translate } from '../../lib/i18n'
+import es from './i18n/es'
 
 export const CHILE_TZ = 'America/Santiago'
 
 // ── Saludo ───────────────────────────────────────────────────────────────────
+
+export type GreetingKey = keyof Omit<typeof es.greeting, 'withName'>
 
 /** Hora (0–23) en Chile, sin depender de la zona del navegador. */
 export function hourIn(now: Date, timeZone = CHILE_TZ): number {
@@ -15,60 +22,31 @@ export function hourIn(now: Date, timeZone = CHILE_TZ): number {
   return Number.isFinite(hour) ? hour % 24 : now.getHours()
 }
 
-/** «Buenos días» (5–11), «Buenas tardes» (12–19), «Buenas noches» (20–4). */
-export function greeting(now: Date = new Date(), timeZone = CHILE_TZ): string {
+/** Momento del día: mañana (5–11), tarde (12–19) o noche (20–4). */
+export function greetingKey(now: Date = new Date(), timeZone = CHILE_TZ): GreetingKey {
   const hour = hourIn(now, timeZone)
-  if (hour >= 5 && hour < 12) return 'Buenos días'
-  if (hour >= 12 && hour < 20) return 'Buenas tardes'
-  return 'Buenas noches'
+  if (hour >= 5 && hour < 12) return 'morning'
+  if (hour >= 12 && hour < 20) return 'afternoon'
+  return 'evening'
 }
 
-/** «sábado 31 de octubre» (para la línea bajo el saludo). */
-export function todayLabel(now: Date = new Date(), timeZone = CHILE_TZ): string {
-  return new Intl.DateTimeFormat('es-CL', { weekday: 'long', day: 'numeric', month: 'long', timeZone }).format(now)
+/** «Buenos días» (5–11), «Buenas tardes» (12–19), «Buenas noches» (20–4), en el idioma pedido. */
+export function greeting(now: Date = new Date(), timeZone = CHILE_TZ, locale: Locale = getLocale()): string {
+  return translate(es, `greeting.${greetingKey(now, timeZone)}`, undefined, locale)
 }
 
-// ── Embudo ───────────────────────────────────────────────────────────────────
-
-export interface QuoteStats {
-  byStatus: Record<QuoteStatus, { count: number; total: number }>
-  soldThisMonth: { count: number; total: number }
-  followUps: QuoteSummary[]
+/** «sábado, 31 de octubre» (para la línea sobre el saludo), en el idioma pedido. */
+export function todayLabel(now: Date = new Date(), timeZone = CHILE_TZ, locale: Locale = getLocale()): string {
+  return new Intl.DateTimeFormat(intlTag(locale), { weekday: 'long', day: 'numeric', month: 'long', timeZone }).format(now)
 }
 
-export interface FunnelStage {
-  status: QuoteStatus
-  label: string
-  /** Frase corta bajo la cifra. */
-  hint: string
-  count: number
-  total: number
-  /** Lista de cotizaciones filtrada por este estado. */
-  to: string
-}
+// ── Cifras ───────────────────────────────────────────────────────────────────
 
-export const FUNNEL: { status: QuoteStatus; label: string; hint: string }[] = [
-  { status: 'draft', label: 'Borradores', hint: 'por enviar' },
-  { status: 'sent', label: 'Enviadas', hint: 'esperando respuesta' },
-  { status: 'accepted', label: 'Aceptadas', hint: 'listas para taller' },
-  { status: 'workshop', label: 'En taller', hint: 'en fabricación' },
-]
+export type { QuoteStats }
 
 /** Enlace a la lista de cotizaciones filtrada por estado (contrato con la zona de cotizaciones). */
 export function quotesListLink(status: QuoteStatus): string {
   return `/cotizaciones?estado=${status}`
-}
-
-export function buildFunnel(stats: Pick<QuoteStats, 'byStatus'> | null | undefined): FunnelStage[] {
-  return FUNNEL.map((stage) => {
-    const entry = stats?.byStatus?.[stage.status]
-    return {
-      ...stage,
-      count: Math.max(0, Number(entry?.count ?? 0)),
-      total: Math.max(0, Number(entry?.total ?? 0)),
-      to: quotesListLink(stage.status),
-    }
-  })
 }
 
 /** Cuenta sin ninguna cotización (ni siquiera rechazadas o cerradas): mostramos la bienvenida. */
@@ -76,11 +54,6 @@ export function isEmptyAccount(stats: Pick<QuoteStats, 'byStatus'> | null | unde
   if (!stats?.byStatus) return false
   return Object.values(stats.byStatus).every((s) => !s || Number(s.count) === 0)
 }
-
-// ── Vendido del mes ──────────────────────────────────────────────────────────
-
-/** Estados que cuentan como venta cerrada (igual que el servidor). */
-export const WON_STATUSES: QuoteStatus[] = ['accepted', 'workshop', 'installed', 'closed']
 
 /** «2026-10» en hora de Chile. */
 export function monthKey(date: Date, timeZone = CHILE_TZ): string {
@@ -97,49 +70,114 @@ export function previousMonthKey(key: string): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`
 }
 
-/** Nombre del mes: «septiembre». */
-export function monthName(key: string): string {
+/** Nombre del mes: «septiembre» (en el idioma pedido). */
+export function monthName(key: string, locale: Locale = getLocale()): string {
   const [y, m] = key.split('-').map(Number)
-  return new Intl.DateTimeFormat('es-CL', { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(y, m - 1, 15)))
+  return new Intl.DateTimeFormat(intlTag(locale), { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(y, m - 1, 15)))
 }
 
-export interface MonthSales {
-  thisMonth: { count: number; total: number; key: string }
-  lastMonth: { count: number; total: number; key: string }
-  /** Variación porcentual frente al mes anterior; null si el mes anterior fue $0. */
-  delta: number | null
+/** Variación porcentual frente al mes anterior; undefined si el mes anterior fue $0. */
+export function salesDelta(stats: Pick<QuoteStats, 'soldThisMonth' | 'soldLastMonth'>): number | undefined {
+  const last = stats.soldLastMonth?.total ?? 0
+  return last > 0 ? ((stats.soldThisMonth.total - last) / last) * 100 : undefined
 }
 
 /**
- * Vendido este mes y el anterior a partir de las cotizaciones ganadas (por fecha de aceptación).
- * Si el servidor ya trae el mes en curso (`soldThisMonth`), manda esa cifra.
+ * Lo vendido del mes se reparte en lo que sigue en «Aceptadas» y lo que ya pasó a taller. Una venta
+ * no deja de serlo al pasar a taller, pero sí sale del estado «aceptada»: sin este reparto, Inicio
+ * decía «1 aceptada» mientras la lista de Aceptadas estaba vacía. Por eso el enlace lleva a donde
+ * están: si todas pasaron a taller, a Taller; si no, a Aceptadas.
  */
-export function monthSales(
-  won: readonly Pick<QuoteSummary, 'status' | 'acceptedAt' | 'total'>[],
-  now: Date = new Date(),
-  soldThisMonth?: { count: number; total: number } | null,
-): MonthSales {
-  const current = monthKey(now)
-  const previous = previousMonthKey(current)
-  const acc = { [current]: { count: 0, total: 0 }, [previous]: { count: 0, total: 0 } } as Record<string, { count: number; total: number }>
-  for (const q of won) {
-    if (!q.acceptedAt || !WON_STATUSES.includes(q.status)) continue
-    const at = new Date(q.acceptedAt)
-    if (Number.isNaN(at.getTime())) continue
-    const key = monthKey(at)
-    if (!acc[key]) continue
-    acc[key].count += 1
-    acc[key].total += Math.max(0, Number(q.total) || 0)
-  }
-  const thisMonth = soldThisMonth ? { count: soldThisMonth.count, total: soldThisMonth.total } : acc[current]
-  const last = acc[previous]
-  const delta = last.total > 0 ? ((thisMonth.total - last.total) / last.total) * 100 : null
-  return { thisMonth: { ...thisMonth, key: current }, lastMonth: { ...last, key: previous }, delta }
+export function soldBreakdown(sold: QuoteStats['soldThisMonth']): { waiting: number; inProduction: number; to: string } {
+  const inProduction = Math.min(sold.count, Math.max(0, sold.inProduction ?? 0))
+  const waiting = sold.count - inProduction
+  return { waiting, inProduction, to: inProduction > 0 && waiting === 0 ? '/taller' : quotesListLink('accepted') }
 }
 
-// ── Seguimientos ─────────────────────────────────────────────────────────────
+// ── Cola de seguimiento ──────────────────────────────────────────────────────
 
 const DAY = 86_400_000
+
+export type QueueReason = 'changes' | 'accepted' | 'viewed' | 'unopened' | 'sentPdf'
+
+/** El orden de la cola: lo que el cliente ya movió va antes que lo que hay que ir a buscar. */
+export const QUEUE_ORDER: readonly QueueReason[] = ['changes', 'accepted', 'viewed', 'unopened', 'sentPdf']
+
+/** Por qué una cotización está en la cola. */
+export function queueReason(q: Pick<QuoteFollowUp, 'notices' | 'viewedAt' | 'sentFormat'>): QueueReason {
+  if (q.notices?.some((n) => n.kind === 'changes')) return 'changes'
+  if (q.notices?.some((n) => n.kind === 'accepted')) return 'accepted'
+  if (q.viewedAt) return 'viewed'
+  // Un PDF no avisa si lo abrieron: «sin abrir» sería afirmar algo que no se sabe.
+  return q.sentFormat === 'pdf' ? 'sentPdf' : 'unopened'
+}
+
+/** La cola en orden; dentro de cada motivo se respeta lo que mandó el servidor (lo más antiguo arriba). */
+export function buildQueue<T extends Pick<QuoteFollowUp, 'notices' | 'viewedAt'>>(followUps: readonly T[]): T[] {
+  const rank = (q: T) => QUEUE_ORDER.indexOf(queueReason(q))
+  return followUps.map((q, i) => ({ q, i })).sort((a, b) => rank(a.q) - rank(b.q) || a.i - b.i).map(({ q }) => q)
+}
+
+/** Quién respondió: el nombre que escribió en el portal o el cliente de la cotización. */
+export function whoAnswered(q: Pick<QuoteFollowUp, 'notices' | 'clientName'>): string {
+  return q.notices?.[0]?.who?.trim() || q.clientName?.trim() || ''
+}
+
+/** Mensajes del cliente sin atender, enteros, el más nuevo primero. */
+export function clientMessages(q: Pick<QuoteFollowUp, 'notices'>): string[] {
+  return (q.notices ?? []).flatMap((n) => (n.kind === 'changes' && n.message ? [n.message] : []))
+}
+
+/** Días a elegir en «Recordarme en…». */
+export const REMINDER_DAYS = ['1', '3', '7'] as const
+export type ReminderDays = (typeof REMINDER_DAYS)[number]
+
+/** Opción de «Recordarme en…» más cercana a la fecha guardada; vacío si no se sabe la fecha. */
+export function reminderChoice(followUpAt: string | undefined, now: Date = new Date()): ReminderDays | '' {
+  if (!followUpAt) return ''
+  const days = (new Date(followUpAt).getTime() - now.getTime()) / DAY
+  if (Number.isNaN(days)) return ''
+  return REMINDER_DAYS.reduce((best, d) => (Math.abs(Number(d) - days) < Math.abs(Number(best) - days) ? d : best))
+}
+
+// ── Catálogo ─────────────────────────────────────────────────────────────────
+
+export interface LineToReview {
+  lineName: string
+  quoteId: string
+  quoteLabel: string
+}
+
+/**
+ * Líneas sin todos sus precios que afectan a una cotización en curso. Un catálogo nuevo trae muchas
+ * líneas incompletas que nadie está usando: avisarlas todas no le sirve a nadie, así que solo
+ * cuentan las de borradores y enviadas, y se dice cuál cotización está afectada.
+ */
+export function linesToReview(
+  catalog: Pick<Catalog, 'profiles' | 'items' | 'lines' | 'colors'> | null | undefined,
+  quotes: readonly Pick<QuoteSummary, 'id' | 'number' | 'title' | 'status' | 'firstItem'>[],
+): LineToReview[] {
+  if (!catalog?.lines?.length) return []
+  let readiness: ReturnType<typeof catalogReadiness>
+  try {
+    readiness = catalogReadiness(catalog)
+  } catch {
+    return []
+  }
+  const seen = new Set<string>()
+  const out: LineToReview[] = []
+  for (const q of quotes) {
+    const lineId = q.firstItem?.design.lineId
+    if (!lineId || seen.has(lineId) || (q.status !== 'draft' && q.status !== 'sent')) continue
+    const state = readiness.get(lineId)?.state
+    if (!state || state === 'ready') continue
+    seen.add(lineId)
+    out.push({ lineName: catalog.lines.find((l) => l.id === lineId)?.name ?? lineId, quoteId: q.id, quoteLabel: q.title })
+  }
+  return out
+}
+
+// ── Mensajes ─────────────────────────────────────────────────────────────────
 
 /** Días completos desde una fecha (0 si es hoy o futura). */
 export function daysSince(iso: string | undefined | null, now: Date = new Date()): number {
@@ -168,28 +206,38 @@ export function callName(name: string | undefined | null): string {
 }
 
 /** A quién escribirle: «Pedro» o el nombre completo de la empresa. */
-function addressee(name: string | undefined | null): string {
+export function addressee(name: string | undefined | null): string {
   return callName(name) || (name ?? '').trim()
 }
 
-function daysText(days: number): string {
-  return days === 1 ? '1 día' : `${days} días`
-}
-
-/** «La N° 412 lleva 6 días enviada sin respuesta: escríbele a Pedro». */
-export function followUpText(q: Pick<QuoteSummary, 'number' | 'sentAt' | 'clientName'>, now: Date = new Date()): string {
-  const days = daysSince(q.sentAt, now)
-  const who = addressee(q.clientName)
-  return `La N° ${q.number} lleva ${daysText(days)} enviada sin respuesta: escríbele a ${who || 'tu cliente'}`
-}
-
-/** Mensaje de WhatsApp para retomar la conversación (cálido, corto, con el enlace si existe). */
-export function followUpMessage(opts: { clientName?: string; number: number; orgName?: string; link?: string }): string {
+/**
+ * Mensaje de WhatsApp para retomar la conversación (cálido, corto, con el enlace si existe). Va al
+ * cliente: pásale el idioma de los documentos (el de la cotización o el de la empresa).
+ */
+export function followUpMessage(opts: { clientName?: string; number: number; orgName?: string; link?: string; locale?: Locale }): string {
+  const locale = opts.locale ?? getLocale()
   const who = callName(opts.clientName)
-  const hello = who ? `Hola ${who}` : 'Hola'
-  const from = opts.orgName ? `, te escribo de ${opts.orgName}` : ''
-  const link = opts.link ? ` Aquí la tienes de nuevo: ${opts.link}` : ''
-  return `${hello}${from} por la cotización N° ${opts.number}. ¿Pudiste revisarla?${link} Si quieres ajustar algo, me cuentas y lo vemos.`
+  return translate(
+    es,
+    'followUp.message',
+    {
+      hasName: who ? 'yes' : 'no',
+      name: who,
+      hasOrg: opts.orgName ? 'yes' : 'no',
+      org: opts.orgName ?? '',
+      doc: getFormatter({ locale }).docNumber(opts.number),
+      hasLink: opts.link ? 'yes' : 'no',
+      link: opts.link ?? '',
+    },
+    locale,
+  )
+}
+
+/** WhatsApp para contestar a quien pidió cambios (idioma de los documentos). */
+export function changesReplyMessage(opts: { clientName?: string; number: number; locale?: Locale }): string {
+  const locale = opts.locale ?? getLocale()
+  const who = callName(opts.clientName)
+  return translate(es, 'followUp.changesMessage', { hasName: who ? 'yes' : 'no', name: who, doc: getFormatter({ locale }).docNumber(opts.number) }, locale)
 }
 
 /**
@@ -220,16 +268,4 @@ export function whatsappUrl(phone: string | undefined | null, text: string): str
 /** Enlace público de una cotización enviada. */
 export function portalLink(origin: string, shareToken: string | undefined | null): string | undefined {
   return shareToken ? `${origin.replace(/\/$/, '')}/c/${shareToken}` : undefined
-}
-
-// ── Actividad ────────────────────────────────────────────────────────────────
-
-export type ActivityTone = 'ok' | 'ink' | 'warn' | 'neutral'
-
-/** Color del punto de cada evento según su tipo (aceptada verde, pidió cambios ámbar…). */
-export function activityTone(kind: string): ActivityTone {
-  if (kind === 'quote.accepted' || kind === 'workorder.done' || kind === 'quote.installed') return 'ok'
-  if (kind === 'quote.changes_requested') return 'warn'
-  if (kind === 'quote.sent' || kind === 'quote.viewed') return 'ink'
-  return 'neutral'
 }

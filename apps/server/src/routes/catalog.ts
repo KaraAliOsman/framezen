@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
-import type { BrandSettings, Catalog } from '@framezen/engine'
+import type { BrandSettings, Catalog } from '@dekopen/engine'
 import type {
   CatalogBrandsResponse,
   CatalogResponse,
@@ -10,7 +10,7 @@ import type {
   LinePatchResponse,
   PriceOverride,
   PriceOverridesResponse,
-} from '@framezen/shared'
+} from '@dekopen/shared'
 import type { AppDeps, AppEnv } from '../context'
 import { orgCatalog } from '../db/schema'
 import { badRequest, notFound } from '../lib/errors'
@@ -34,6 +34,8 @@ import {
 } from '../services/catalog'
 import type { CustomCatalog } from '../db/schema'
 import { importMisPrecios } from '../services/csv-import'
+import { CustomColorService } from '../services/textures/color-service'
+import { customColorCreateSchema, customColorPatchSchema } from '@dekopen/shared'
 import { refreshDraftTotals } from '../services/quotes'
 import { getSettings } from '../services/settings'
 
@@ -449,6 +451,17 @@ export function catalogRoutes(deps: AppDeps) {
     }
     return c.json(response)
   })
+
+  // ── Colores propios y texturas propias sobre colores base (TEXUP; services/textures) ──
+  //   GET /colors → CatalogColorsResponse · POST /colors → CatalogColorMutationResponse (201)
+  //   PATCH /colors/:id (en colores base solo `texture`) · DELETE /colors/:id = archivar (deshacer)
+  //   POST /colors/:id/restore
+  const customColors = new CustomColorService(deps)
+  app.get('/colors', async (c) => c.json(await customColors.list(c.get('auth').org.id)))
+  app.post('/colors', ...manage, async (c) => c.json(await customColors.create(c.get('auth'), await readBody(c, customColorCreateSchema)), 201))
+  app.patch('/colors/:id', ...manage, async (c) => c.json(await customColors.patch(c.get('auth'), c.req.param('id'), await readBody(c, customColorPatchSchema))))
+  app.delete('/colors/:id', ...manage, async (c) => c.json(await customColors.archive(c.get('auth'), c.req.param('id'))))
+  app.post('/colors/:id/restore', ...manage, async (c) => c.json(await customColors.restore(c.get('auth'), c.req.param('id'))))
 
   return app
 }

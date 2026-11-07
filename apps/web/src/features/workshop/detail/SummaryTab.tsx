@@ -1,25 +1,16 @@
 import { useMemo, type ReactNode } from 'react'
-import { ChevronDown, Printer, TriangleAlert } from 'lucide-react'
-import type { Catalog } from '@framezen/engine'
-import { WorkOrderDocument, type WorkshopDocData, type WorkshopPaper } from '@framezen/documents'
-import type { Station } from '@framezen/shared'
-import { cn } from '../../../lib/cn'
-import { formatArea, formatNumber, formatSize } from '../../../lib/format'
-import {
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-  IconButton,
-  Select,
-} from '../../../ui'
-import { RefChip, StationMeter, percent, ProgressBar } from '../components/bits'
+import { ChevronDown, Printer } from 'lucide-react'
+import type { Catalog } from '@dekopen/engine'
+import { WorkOrderDocument, type WorkshopDocData, type WorkshopPaper } from '@dekopen/documents'
+import type { Station } from '@dekopen/shared'
+import { useFormat, useGlossary, useT } from '../../../lib/i18n'
+import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger, IconButton, KPI, Notice, Select, StatStrip } from '../../../ui'
+import { ProgressBar, RefChip, StageTrack, usePercent } from '../components/bits'
 import { DesignThumb } from '../components/DesignThumb'
+import type { WorkOrderDetail } from '../data'
+import es from '../i18n/es'
 import { orderProgress, progressText, STATIONS, stationOf } from '../model/stations'
 import { workshopNotices, workshopTotals } from '../model/summary'
-import type { WorkOrderDetail } from '../data'
 import { DocumentPreview, DocumentToolbar } from './DocumentPreview'
 import { NotesField } from './OrderFields'
 import type { useDocumentActions } from './useDocumentActions'
@@ -45,56 +36,78 @@ export function SummaryTab({
   actions: ReturnType<typeof useDocumentActions>
   documentsNav: ReactNode
 }) {
+  const t = useT(es)
+  const fmt = useFormat()
+  const g = useGlossary()
+  const percent = usePercent()
   const totals = workshopTotals(data)
   const notices = workshopNotices(data)
   const refs = data.windows.map((w) => w.ref)
   // Mismo criterio que la lista del taller: avance por ventana.
   const progress = orderProgress(order.progress, refs)
   const element = useMemo(() => <WorkOrderDocument data={data} paper={paper} />, [data, paper])
+  const stationOptions = useMemo(
+    () =>
+      STATIONS.map((s) => ({
+        value: s.id,
+        label: g.station(s.id),
+        leading: <s.icon aria-hidden strokeWidth={1.75} className="size-4 text-fg-muted" />,
+      })),
+    [g],
+  )
 
   // El ancho real depende de la barra lateral (abierta o angosta): se decide por contenedor.
   // Bajo ~900 px, Notas y Documentos van debajo de las ventanas, en dos columnas.
   return (
     <div className="@container flex flex-col gap-6">
-      <div className="grid gap-6 @4xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="@container flex min-w-0 flex-col gap-5">
-          <dl className="grid grid-cols-2 overflow-hidden rounded-lg border border-paper-200 bg-paper-200 @xl:grid-cols-4" style={{ gap: 1 }}>
-            <Tile label="Unidades" value={formatNumber(totals.units)} hint={`${totals.windows} ${totals.windows === 1 ? 'ventana' : 'ventanas'} · ${formatArea(totals.frameArea)}`} />
-            <Tile label="Barras" value={formatNumber(totals.bars)} hint={`${formatNumber(totals.yieldPct, 1)} % de aprovechamiento`} />
-            <Tile label="Vidrios" value={formatNumber(totals.glassPieces)} hint={formatArea(totals.glassArea)} />
-            <Tile label="Piezas a cortar" value={formatNumber(totals.pieces)} hint={totals.offcuts ? `${totals.offcuts} retazos para guardar` : 'Sin retazos'} />
-          </dl>
+      <div className="grid gap-10 pt-5 @4xl:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="@container flex min-w-0 flex-col gap-8">
+          <StatStrip className="gap-x-10">
+            <KPI variant="plain" label={t('summary.units')} value={fmt.number(totals.units)} hint={t('summary.unitsHint', { windows: t('common.windows', { count: totals.windows }), area: fmt.area(totals.frameArea) })} />
+            <KPI variant="plain" label={t('summary.bars')} value={fmt.number(totals.bars)} hint={t('summary.barsHint', { pct: fmt.pct(totals.yieldPct, 1) })} />
+            <KPI variant="plain" label={t('summary.glass')} value={fmt.number(totals.glassPieces)} hint={fmt.area(totals.glassArea)} />
+            <KPI variant="plain" label={t('summary.pieces')} value={fmt.number(totals.pieces)} hint={totals.offcuts ? t('summary.offcuts', { count: totals.offcuts }) : t('summary.noOffcuts')} />
+          </StatStrip>
 
-          <section className="rounded-lg border border-paper-200 bg-paper-0" aria-labelledby="ot-windows">
-            <header className="flex flex-wrap items-center justify-between gap-3 border-b border-paper-200 px-4 py-3">
+          <section aria-labelledby="ot-windows">
+            <header className="mb-3 flex flex-wrap items-end justify-between gap-3">
               <div className="min-w-0">
-                <h2 id="ot-windows" className="font-semibold text-paper-900">
-                  Ventanas y avance
+                <h2 id="ot-windows" className="text-h3 font-medium text-fg-strong">
+                  {t('summary.windowsTitle')}
                 </h2>
-                <p className="text-[13px] text-paper-600 tabular">
-                  {progressText(progress)} · {percent(progress.ratio)}
+                <p className="text-table text-fg-muted tabular">
+                  {progressText(progress, t.locale)} · {percent(progress.ratio)}
                 </p>
               </div>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button size="sm" iconRight={ChevronDown} disabled={readOnly || refs.length === 0}>
-                    Mover todas a…
+                    {t('summary.moveAll')}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-44">
-                  <DropdownMenuLabel>Todas las ventanas a</DropdownMenuLabel>
+                  <DropdownMenuLabel>{t('summary.moveAllLabel')}</DropdownMenuLabel>
                   {STATIONS.map((s) => (
                     <DropdownMenuItem key={s.id} icon={s.icon} onSelect={() => onAllStations(s.id)}>
-                      {s.label}
+                      {g.station(s.id)}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
             </header>
-            <div className="px-4 pt-3">
-              <ProgressBar ratio={progress.ratio} label={`Avance de la OT: ${percent(progress.ratio)}`} />
-            </div>
-            <ul className="divide-y divide-paper-200">
+            <ProgressBar ratio={progress.ratio} label={t('summary.progressLabel', { pct: percent(progress.ratio) })} />
+            <dl className="mt-3 grid grid-cols-4 gap-x-3 gap-y-2 sm:grid-cols-8" aria-label={t('summary.byStage')}>
+              {STATIONS.map((s) => {
+                const count = progress.byStation[s.id]
+                return (
+                  <div key={s.id} className="min-w-0">
+                    <dt className="truncate text-meta text-fg-muted">{g.station(s.id)}</dt>
+                    <dd className={count > 0 ? 'figure m-0 text-lead font-medium text-fg-strong' : 'figure m-0 text-lead text-fg-faint'}>{fmt.number(count)}</dd>
+                  </div>
+                )
+              })}
+            </dl>
+            <ul className="-mx-3 mt-2 divide-y divide-divider rounded-panel bg-plate px-3 shadow-plate">
               {data.windows.map((w) => {
                 const station = stationOf(order.progress, w.ref)
                 const title = w.name || w.description.split(' · ')[0] || w.ref
@@ -103,18 +116,20 @@ export function SummaryTab({
                 // Dibujo y texto crecen; el selector (~240 px) se queda al lado si cabe y, si no,
                 // baja a su propia fila a todo el ancho. Sin cortes palabra por palabra.
                 return (
-                  <li key={w.ref} className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5">
+                  <li key={w.ref} className="flex flex-wrap items-center gap-x-4 gap-y-3 py-3">
                     <div className="flex min-w-0 flex-[999_1_280px] items-center gap-3">
-                      <DesignThumb design={w.design} layout={w.layout} catalog={catalog} size={60} className="rounded-sm bg-paper-50 p-1" />
+                      <span className="inline-flex size-16 shrink-0 items-center justify-center rounded-sm bg-sunken">
+                        <DesignThumb design={w.design} layout={w.layout} catalog={catalog} size={52} />
+                      </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex min-w-0 items-center gap-2">
                           <RefChip>{w.ref}</RefChip>
-                          <span className="truncate font-medium text-paper-900">{title}</span>
+                          <span className="truncate font-medium text-fg-strong">{title}</span>
                         </div>
-                        {detail ? <div className="mt-1 truncate text-[13px] text-paper-600">{detail}</div> : null}
-                        <div className="mt-0.5 text-[13px] whitespace-nowrap text-paper-900 tabular">
-                          {formatSize(w.design.width, w.design.height)}
-                          <span className="text-paper-600"> · {w.qty === 1 ? '1 unidad' : `${w.qty} unidades`}</span>
+                        {detail ? <div className="mt-1 truncate text-table text-fg-muted">{detail}</div> : null}
+                        <div className="mt-0.5 text-table whitespace-nowrap">
+                          <span className="dim text-fg">{fmt.size(w.design.width, w.design.height)}</span>
+                          <span className="text-fg-muted"> · {t('common.units', { count: w.qty })}</span>
                         </div>
                       </div>
                     </div>
@@ -123,21 +138,17 @@ export function SummaryTab({
                         <Select<Station>
                           size="sm"
                           className="w-full"
-                          aria-label={`Estación de la ${w.ref}`}
+                          aria-label={t('order.stationOf', { ref: w.ref })}
                           value={station}
                           disabled={readOnly}
                           onValueChange={(s) => onStation(w.ref, s)}
-                          options={STATIONS.map((s) => ({
-                            value: s.id,
-                            label: s.label,
-                            leading: <s.icon aria-hidden strokeWidth={1.75} className="size-4 text-paper-600" />,
-                          }))}
+                          options={stationOptions}
                         />
-                        <StationMeter station={station} />
+                        <StageTrack station={station} windowRef={w.ref} disabled={readOnly} onChange={(s) => onStation(w.ref, s)} />
                       </div>
                       <IconButton
                         icon={Printer}
-                        label={`Imprimir la hoja de la ${w.ref}`}
+                        label={t('summary.printSheet', { ref: w.ref })}
                         onClick={() => actions.print({ kind: 'work-order', element: <WorkOrderDocument data={data} paper={paper} refs={[w.ref]} /> })}
                       />
                     </div>
@@ -148,9 +159,9 @@ export function SummaryTab({
           </section>
         </div>
 
-        <aside className="grid min-w-0 content-start items-start gap-5 @2xl:grid-cols-2 @4xl:grid-cols-1">
+        <aside className="grid min-w-0 content-start items-start gap-8 @2xl:grid-cols-2 @4xl:grid-cols-1">
           {notices.length > 0 ? <Notices notices={notices} className="@2xl:col-span-2 @4xl:col-span-1" /> : null}
-          <div className="min-w-0 rounded-lg border border-paper-200 bg-paper-0 p-4">
+          <div className="min-w-0">
             <NotesField order={order} readOnly={readOnly} />
           </div>
           <div className="min-w-0">{documentsNav}</div>
@@ -158,58 +169,37 @@ export function SummaryTab({
       </div>
 
       <div>
-        {/* El primario de esta vista es «Descargar OT» de la cabecera: aquí, acciones discretas. */}
+        {/* El primario de esta vista es «Imprimir OT» de la cabecera: aquí, acciones discretas. */}
         <DocumentToolbar
-          title="Hojas de OT"
-          description="Una hoja por ventana: dibujo acotado, cortes, refuerzos, herrajes, vidrio y casillas por estación."
+          title={t('summary.sheetsTitle')}
+          description={t('summary.sheetsHint')}
           onPrint={() => actions.print({ kind: 'work-order', element })}
           onDownload={() => void actions.download({ kind: 'work-order', element })}
           downloading={actions.busy === 'work-order'}
           quiet
         />
-        <DocumentPreview element={element} paper={paper} label="Vista previa de las hojas de OT" />
+        <DocumentPreview element={element} paper={paper} label={t('summary.sheetsPreview')} />
       </div>
     </div>
   )
 }
 
-/** Cifra del resumen: el texto de apoyo se parte en dos líneas antes que cortarse con «…». */
-function Tile({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className="flex min-w-0 flex-col gap-0.5 bg-paper-0 px-4 py-3">
-      <dt className="text-[13px] text-pretty text-paper-600">{label}</dt>
-      <dd className="text-h3 font-semibold tracking-[-0.01em] text-paper-900 tabular">{value}</dd>
-      {hint ? <dd className="text-meta text-pretty break-words text-paper-600 tabular">{hint}</dd> : null}
-    </div>
-  )
-}
-
 function Notices({ notices, className }: { notices: ReturnType<typeof workshopNotices>; className?: string }) {
+  const t = useT(es)
+  const g = useGlossary()
   const hasError = notices.some((n) => n.level === 'error')
   const shown = notices.slice(0, 6)
   return (
-    <section
-      role="note"
-      aria-label="Revisa antes de fabricar"
-      className={cn(
-        'min-w-0 rounded-lg border px-4 py-3',
-        hasError ? 'border-bad-600/25 bg-bad-50 text-bad-800' : 'border-warn-600/25 bg-warn-50 text-warn-800',
-        className,
-      )}
-    >
-      <h2 className="flex items-center gap-2 text-[13px] font-semibold">
-        <TriangleAlert aria-hidden strokeWidth={1.75} className="size-4" />
-        Revisa antes de fabricar
-      </h2>
-      <ul className="mt-1.5 space-y-1 text-[13px] leading-[18px]">
+    <Notice tone={hasError ? 'danger' : 'warning'} title={t('summary.review')} className={className}>
+      <ul className="mt-1 space-y-1">
         {shown.map((n, i) => (
           <li key={i}>
-            {n.ref ? <strong className="font-semibold">{n.ref}: </strong> : null}
-            {n.message}
+            {n.ref ? <strong className="code-id font-medium text-fg-strong">{n.ref}: </strong> : null}
+            {g.warning(n.warning)}
           </li>
         ))}
       </ul>
-      {notices.length > shown.length ? <p className="mt-1.5 text-meta">Y {notices.length - shown.length} avisos más en las hojas de OT.</p> : null}
-    </section>
+      {notices.length > shown.length ? <p className="mt-1.5 text-meta">{t('summary.moreNotices', { count: notices.length - shown.length })}</p> : null}
+    </Notice>
   )
 }

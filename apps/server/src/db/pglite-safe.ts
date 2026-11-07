@@ -10,6 +10,7 @@ import { dirname } from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 
 const SNAPSHOT_EVERY_MS = 10 * 60 * 1000
+const FIRST_SNAPSHOT_DELAY_MS = 90 * 1000
 
 export interface SafePglite {
   client: PGlite
@@ -40,7 +41,7 @@ function acquireLock(dataDir: string) {
     const pid = Number(readFileSync(file, 'utf8').trim())
     if (pid && pid !== process.pid && isAlive(pid)) {
       throw new Error(
-        `La base local ${dataDir} ya está abierta por otro proceso de Framezen (PID ${pid}). Cierra ese servidor o usa otra carpeta con PGLITE_DIR.`,
+        `La base local ${dataDir} ya está abierta por otro proceso de DEKOPEN (PID ${pid}). Cierra ese servidor o usa otra carpeta con PGLITE_DIR.`,
       )
     }
   }
@@ -97,9 +98,12 @@ export async function openSafePglite(dataDir: string, log: (msg: string) => void
     }
   }
 
-  // Copia inicial y periódica (no bloquea el arranque).
+  // Copia inicial y periódica. PGlite atiende una operación a la vez: si la copia (gzip de toda la
+  // base) arranca junto con el servidor, las migraciones y el arranque esperan detrás de ella
+  // (minutos con una base de desarrollo grande). Por eso la primera copia espera un poco.
   const snapshot = () => writeSnapshot(client, dataDir).catch((e) => log(`No se pudo guardar la copia de seguridad: ${e.message}`))
-  void snapshot()
+  const first = setTimeout(() => void snapshot(), FIRST_SNAPSHOT_DELAY_MS)
+  first.unref()
   const timer = setInterval(snapshot, SNAPSHOT_EVERY_MS)
   timer.unref()
 
@@ -110,6 +114,7 @@ export async function openSafePglite(dataDir: string, log: (msg: string) => void
     client,
     restored,
     close: async () => {
+      clearTimeout(first)
       clearInterval(timer)
       await writeSnapshot(client, dataDir).catch(() => {})
       await client.close()

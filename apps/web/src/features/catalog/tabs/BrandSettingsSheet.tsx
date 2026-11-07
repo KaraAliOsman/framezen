@@ -1,28 +1,28 @@
-import { useMemo, useRef, useState } from 'react'
-import type { Brand, BrandSettings, Catalog, MaterialCost } from '@framezen/engine'
-import { DEFAULT_PRICING, formatCLP, formatMeters, formatPct } from '@framezen/engine'
+import { useId, useMemo, useRef, useState } from 'react'
+import type { BrandSettings, Catalog, MaterialCost } from '@dekopen/engine'
+import { DEFAULT_CUT, DEFAULT_PRICING } from '@dekopen/engine'
 import { useSettings } from '../../../lib/hooks'
-import { formatMMUnit, formatNumber } from '../../../lib/format'
 import { cn } from '../../../lib/cn'
-import { Badge, NumberField, SaveIndicator, Sheet, SheetContent } from '../../../ui'
+import { useFormat, useT } from '../../../lib/i18n'
+import { NumberField, SaveIndicator, Sheet, SheetContent } from '../../../ui'
+import { SawDiagram } from '../../workshop/diagram/SawDiagram'
+import { sawPlan, sawSampleOf, type SawParam } from '../../workshop/diagram/sawModel'
 import { usePatchBrand, type BrandPatch, type CatalogBrandSummary } from '../api'
-import { barExample, brandExample } from '../model/brandExample'
-import { DISCOUNT_FAMILIES, type DiscountFamily } from '../model/labels'
-import { Monogram } from '../parts'
+import es from '../i18n/es'
+import { brandExample, pickExampleLine } from '../model/brandExample'
+import { discountFamilyCopy, DISCOUNT_FAMILIES, type DiscountFamily } from '../model/labels'
 import { useAutosave } from '../useAutosave'
 
 export function BrandSettingsSheet({
   summary,
-  siblings,
   catalog,
   onOpenChange,
 }: {
   summary: CatalogBrandSummary | null
-  /** Todas las marcas (para el mismo monograma que en la lista). */
-  siblings?: readonly Brand[]
   catalog: Catalog | undefined
   onOpenChange: (open: boolean) => void
 }) {
+  const t = useT(es)
   // Conserva la última marca mientras la hoja se cierra (animación de salida).
   const last = useRef(summary)
   if (summary) last.current = summary
@@ -31,14 +31,9 @@ export function BrandSettingsSheet({
     <Sheet open={Boolean(summary)} onOpenChange={onOpenChange}>
       {shown ? (
         <SheetContent
-          width={580}
-          title={
-            <span className="flex items-center gap-2.5">
-              <Monogram brand={shown.brand} siblings={siblings} size={28} />
-              Mis precios · {shown.brand.name}
-            </span>
-          }
-          description="Tus condiciones con esta marca. Se aplican al cotizar desde ahora y al recalcular."
+          width={720}
+          title={t('sheet.title', { name: shown.brand.name })}
+          description={t('sheet.description')}
         >
           <BrandSettingsForm key={shown.brand.id} summary={shown} catalog={catalog} />
         </SheetContent>
@@ -47,17 +42,15 @@ export function BrandSettingsSheet({
   )
 }
 
-const FAMILY_ROWS: { key: keyof MaterialCost; label: string }[] = [
-  { key: 'profiles', label: 'Perfiles' },
-  { key: 'reinforcement', label: 'Refuerzos' },
-  { key: 'hardware', label: 'Herrajes' },
-  { key: 'glass', label: 'Vidrio' },
-  { key: 'accessories', label: 'Accesorios' },
-]
+const FAMILY_ROWS: (keyof MaterialCost)[] = ['profiles', 'reinforcement', 'hardware', 'glass', 'accessories']
 
 function BrandSettingsForm({ summary, catalog }: { summary: CatalogBrandSummary; catalog: Catalog | undefined }) {
+  const t = useT(es)
+  const fmt = useFormat()
   const settingsQuery = useSettings()
   const patch = usePatchBrand()
+  const trimId = useId()
+  const kerfId = useId()
   const [draft, setDraft] = useState<BrandSettings>(summary.settings)
   const changes = useRef<BrandPatch['settings']>({})
   const autosave = useAutosave<BrandPatch['settings']>((value) => patch.mutateAsync({ id: summary.brand.id, patch: { settings: value } }), 500, `brand:${summary.brand.id}`)
@@ -77,53 +70,63 @@ function BrandSettingsForm({ summary, catalog }: { summary: CatalogBrandSummary;
   const pricing = settingsQuery.data?.pricing ?? DEFAULT_PRICING
   const orgKerf = settingsQuery.data?.cut.kerf ?? 4
   const example = useMemo(
-    () => (catalog ? brandExample(catalog, draft, pricing, settingsQuery.data?.defaults) : null),
-    [catalog, draft, pricing, settingsQuery.data?.defaults],
+    () => (catalog ? brandExample(catalog, draft, pricing, settingsQuery.data?.defaults, t.locale) : null),
+    [catalog, draft, pricing, settingsQuery.data?.defaults, t.locale],
   )
-  const bar = useMemo(() => barExample(draft.trim, Math.max(draft.kerf, orgKerf)), [draft.trim, draft.kerf, orgKerf])
+  // El mismo dibujo de Ajustes › Taller, con una ventana real de esta marca y lo que usa el optimizador:
+  // el mayor entre el taller y la marca.
+  const orgCut = settingsQuery.data?.cut ?? DEFAULT_CUT
+  const cutUsed = useMemo(
+    () => ({ ...orgCut, kerf: Math.max(orgCut.kerf, draft.kerf), trimStart: Math.max(orgCut.trimStart, draft.trim) }),
+    [orgCut, draft.kerf, draft.trim],
+  )
+  const sawSample = useMemo(() => (catalog ? sawSampleOf(catalog, pickExampleLine(catalog, summary.brand.id)?.id) : null), [catalog, summary.brand.id])
+  const sawResult = useMemo(() => (sawSample ? sawPlan(sawSample, { ...cutUsed, barLength: sawSample.stockLength ?? cutUsed.barLength }) : null), [sawSample, cutUsed])
+  const [sawActive, setSawActive] = useState<SawParam | null>(null)
   const sample = useMemo(() => sampleProfile(catalog, summary.brand.id), [catalog, summary.brand.id])
-  const sameDiscount = DISCOUNT_FAMILIES.every((f) => draft.discounts[f.key] === draft.discounts.profiles)
+  const sameDiscount = DISCOUNT_FAMILIES.every((key) => draft.discounts[key] === draft.discounts.profiles)
+  const strong = <strong className="font-medium text-fg-strong tabular" />
 
   return (
     <div className="flex flex-col gap-7">
-      <div className="-mt-1 flex items-center justify-between gap-3">
-        <p className="text-[13px] text-paper-600">Se guarda solo mientras escribes.</p>
-        <SaveIndicator status={autosave.status} savedAt={autosave.savedAt} />
-      </div>
+      {autosave.status !== 'idle' ? <SaveIndicator status={autosave.status} savedAt={autosave.savedAt} className="-mt-1" /> : null}
 
-      {example ? <ExampleCard example={example} marginPct={pricing.marginPct} /> : (
-        <div className="rounded-md border border-dashed border-paper-200 bg-paper-50 px-4 py-4 text-[13px] leading-[18px] text-paper-600">
-          {summary.enabled
-            ? 'Esta marca no trae líneas de ventanas: sus descuentos se aplican a los artículos que uses de ella en cualquier ventana.'
-            : 'Activa la marca para ver aquí cuánto cuesta una ventana típica con tus condiciones.'}
+      {example ? (
+        <ExampleCard example={example} marginPct={pricing.marginPct} />
+      ) : (
+        <div className="rounded-sm bg-sunken px-3.5 py-3 text-table text-fg-muted">
+          {summary.enabled ? t('sheet.noLines') : t('sheet.inactive')}
         </div>
       )}
 
       <section className="flex flex-col gap-3">
         <div>
-          <h3 className="text-base font-semibold text-paper-900">Descuentos de compra</h3>
-          <p className="mt-0.5 text-[13px] leading-[18px] text-paper-600">Lo que te descuenta tu distribuidor sobre la lista. Tu costo = lista × (1 − descuento).</p>
+          <h3 className="text-h4 font-medium text-fg-strong">{t('sheet.discountsTitle')}</h3>
+          <p className="mt-1 text-table text-fg-muted">{t('sheet.discountsHelp')}</p>
         </div>
         <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
-          {DISCOUNT_FAMILIES.map((family) => (
-            <label key={family.key} className="flex items-center justify-between gap-3 rounded-md border border-paper-200 px-3 py-2">
-              <span className="min-w-0">
-                <span className="block font-medium text-paper-900">{family.label}</span>
-                <span className="block truncate text-meta text-paper-600">{family.help}</span>
-              </span>
-              <NumberField
-                aria-label={`Descuento en ${family.label.toLowerCase()}`}
-                value={draft.discounts[family.key] ?? 0}
-                onChange={(v) => setDiscount(family.key, v)}
-                unit="%"
-                min={0}
-                max={100}
-                step={1}
-                bigStep={5}
-                className="w-24 shrink-0"
-              />
-            </label>
-          ))}
+          {DISCOUNT_FAMILIES.map((key) => {
+            const family = discountFamilyCopy(key, t.locale)
+            return (
+              <label key={key} className="flex items-center justify-between gap-3 py-0.5">
+                <span className="min-w-0">
+                  <span className="block text-fg-strong">{family.label}</span>
+                  <span className="block truncate text-meta text-fg-muted">{family.help}</span>
+                </span>
+                <NumberField
+                  aria-label={t('sheet.discountIn', { family: t.locale === 'es' ? family.label.toLocaleLowerCase('es-CL') : family.label })}
+                  value={draft.discounts[key] ?? 0}
+                  onChange={(v) => setDiscount(key, v)}
+                  unit="%"
+                  min={0}
+                  max={100}
+                  step={1}
+                  bigStep={5}
+                  className="w-24 shrink-0"
+                />
+              </label>
+            )
+          })}
           {!sameDiscount && draft.discounts.profiles > 0 ? (
             <button
               type="button"
@@ -132,85 +135,101 @@ function BrandSettingsForm({ summary, catalog }: { summary: CatalogBrandSummary;
                 const all = { profiles: v, reinforcement: v, hardware: v, glass: v, accessories: v }
                 update({ discounts: all }, { discounts: all })
               }}
-              className="flex items-center justify-center rounded-md border border-dashed border-paper-350/60 px-3 py-2 text-[13px] font-medium text-ink-600 transition-colors duration-120 hover:border-ink-500 hover:bg-ink-50"
+              className="flex min-h-9 items-center text-table font-medium text-accent-ink hover:underline"
             >
-              Usar {formatPct(draft.discounts.profiles)} en todas las familias
+              {t('sheet.sameForAll', { pct: fmt.pct(draft.discounts.profiles) })}
             </button>
           ) : null}
         </div>
         {sample && draft.discounts.profiles > 0 ? (
-          <p className="text-[13px] leading-[18px] text-paper-600">
-            Por ejemplo, la barra de {sample.name} ({sample.code}) cuesta {formatCLP(sample.price)} de lista y te queda en{' '}
-            <strong className="font-medium text-paper-900">{formatCLP(Math.round(sample.price * (1 - draft.discounts.profiles / 100)))}</strong>.
+          <p className="text-table text-fg-muted">
+            {t.rich('sheet.sample', {
+              // En español el nombre va en minúscula dentro de la frase («la barra de marco 60 mm»).
+              name: t.locale === 'es' ? sample.name.toLocaleLowerCase('es-CL') : sample.name,
+              code: sample.code,
+              list: fmt.money(sample.price),
+              mine: fmt.money(Math.round(sample.price * (1 - draft.discounts.profiles / 100))),
+              b: strong,
+            })}
           </p>
         ) : null}
       </section>
 
       <section className="flex flex-col gap-3">
         <div>
-          <h3 className="text-base font-semibold text-paper-900">Margen en esta marca</h3>
-          <p className="mt-0.5 text-[13px] leading-[18px] text-paper-600">
-            Suma o resta puntos a tu margen general ({formatPct(pricing.marginPct)}) solo en ventanas de {summary.brand.name}. Déjalo en 0 si no lo necesitas.
-          </p>
+          <h3 className="text-h4 font-medium text-fg-strong">{t('sheet.marginTitle')}</h3>
+          <p className="mt-1 text-table text-fg-muted">{t('sheet.marginHelp', { pct: fmt.pct(pricing.marginPct), brand: summary.brand.name })}</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <NumberField
-            aria-label="Ajuste de margen en puntos"
+            aria-label={t('sheet.marginLabel')}
             value={draft.marginAdjust ?? 0}
             onChange={(v) => {
               const value = v === null || v === 0 ? null : Math.max(-50, Math.min(50, v))
               update({ marginAdjust: value ?? undefined }, { marginAdjust: value })
             }}
-            unit="pts"
+            unit={t('sheet.marginUnit')}
             min={-50}
             max={50}
             step={1}
             bigStep={5}
             className="w-28"
           />
-          <span className="text-[13px] text-paper-600">
-            Margen efectivo: <strong className="font-medium text-paper-900 tabular">{formatPct(Math.max(0, pricing.marginPct + (draft.marginAdjust ?? 0)))}</strong>
-          </span>
+          <span className="text-table text-fg-muted">{t.rich('sheet.marginEffective', { pct: fmt.pct(Math.max(0, pricing.marginPct + (draft.marginAdjust ?? 0))), b: strong })}</span>
         </div>
       </section>
 
       <section className="flex flex-col gap-3">
         <div>
-          <h3 className="text-base font-semibold text-paper-900">Corte de barras</h3>
-          <p className="mt-0.5 text-[13px] leading-[18px] text-paper-600">
-            El despunte se pierde al inicio de cada barra y el disco en cada corte. Cambian cuántas piezas salen de una barra y lo que compras.
-          </p>
+          <h3 className="text-h4 font-medium text-fg-strong">{t('sheet.cutTitle')}</h3>
+          <p className="mt-1 text-table text-fg-muted">{t('sheet.cutHelp')}</p>
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[13px] font-medium text-paper-900">Despunte</span>
+          <div className="flex flex-col gap-2">
+            <label htmlFor={trimId} className="text-table font-medium text-fg">
+              {t('sheet.trim')}
+            </label>
             <NumberField
-              aria-label="Despunte"
+              id={trimId}
+              onFocus={() => setSawActive('trimStart')}
+              onBlur={() => setSawActive(null)}
               value={draft.trim}
               onChange={(v) => update({ trim: Math.max(0, Math.min(500, v ?? 0)) }, { trim: Math.max(0, Math.min(500, v ?? 0)) })}
               min={0}
               max={500}
               step={5}
             />
-          </label>
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[13px] font-medium text-paper-900">Corte de sierra</span>
+          </div>
+          <div className="flex flex-col gap-2">
+            <label htmlFor={kerfId} className="text-table font-medium text-fg">
+              {t('sheet.kerf')}
+            </label>
             <NumberField
-              aria-label="Corte de sierra"
+              id={kerfId}
+              onFocus={() => setSawActive('kerf')}
+              onBlur={() => setSawActive(null)}
               value={draft.kerf}
               onChange={(v) => update({ kerf: Math.max(0, Math.min(20, v ?? 0)) }, { kerf: Math.max(0, Math.min(20, v ?? 0)) })}
               min={0}
               max={20}
               step={1}
             />
-          </label>
+          </div>
         </div>
-        <BarDiagram bar={bar} />
-        <p className="text-[13px] leading-[18px] text-paper-600">
-          De una barra de {formatMeters(bar.barLength)} salen <strong className="font-medium text-paper-900">{bar.pieces} piezas de {formatMMUnit(bar.piece)}</strong> y
-          sobran {formatMMUnit(bar.remainder)}.
-          {orgKerf > draft.kerf ? ` Usamos el disco de ${formatMMUnit(orgKerf)} de Ajustes › Taller porque es mayor: así nunca falta material.` : null}
+        {sawSample ? <SawDiagram cut={{ ...cutUsed, barLength: sawSample.stockLength ?? cutUsed.barLength }} sample={sawSample} active={sawActive} onActive={setSawActive} compact /> : null}
+        <p className="text-table text-fg-muted">
+          {sawResult?.bar
+            ? t.rich('sheet.sawResult', {
+                count: sawResult.bar.cuts.length,
+                bar: fmt.meters(sawResult.bar.barLength),
+                rest: fmt.mm(sawResult.bar.remainder, { unit: true }),
+                pct: fmt.pct(sawResult.yieldPct, 1),
+                b: strong,
+              })
+            : null}
+          {orgKerf > draft.kerf ? ` ${t('sheet.orgKerf', { kerf: fmt.mm(orgKerf, { unit: true }) })}` : null}
         </p>
+        <p className="text-table text-fg-muted">{t('sheet.ownSetting')}</p>
       </section>
     </div>
   )
@@ -225,104 +244,74 @@ function sampleProfile(catalog: Catalog | undefined, brandId: string) {
   const p = candidates[0]
   if (!p) return null
   const price = p.priceByColor.blanco ?? Object.values(p.priceByColor).find((v) => v > 0) ?? 0
-  return { code: p.code, name: p.name.toLowerCase(), price }
+  return { code: p.code, name: p.name, price }
 }
 
 function ExampleCard({ example, marginPct }: { example: NonNullable<ReturnType<typeof brandExample>>; marginPct: number }) {
+  const t = useT(es)
+  const fmt = useFormat()
   const { list, mine } = example
   const savedMaterial = list.materialsTotal - mine.materialsTotal
   const priceDrop = list.unitNet > 0 ? ((list.unitNet - mine.unitNet) / list.unitNet) * 100 : 0
-  const missing = mine.warnings.filter((w) => w.code === 'price_missing')
+  const missing = mine.warnings.some((w) => w.code === 'price_missing')
   return (
-    <section aria-label="Ejemplo en vivo" className="overflow-hidden rounded-lg border border-paper-200">
-      <header className="flex items-start justify-between gap-3 bg-paper-50 px-4 py-3">
+    <section aria-label={t('sheet.exampleLabel')}>
+      <header className="flex items-start justify-between gap-3 pb-2">
         <div className="min-w-0">
-          <p className="text-meta font-medium text-ink-700">Ejemplo en vivo</p>
-          <p className="mt-0.5 font-medium text-paper-900">{example.title}</p>
-          <p className="text-[13px] text-paper-600">
-            {example.lineName} · {example.colorName} · {example.glassName}
-          </p>
+          <p className="text-table text-fg-muted">{t('sheet.exampleLabel')}</p>
+          <p className="mt-0.5 font-medium text-fg-strong">{example.title}</p>
+          <p className="text-table text-fg-muted">{t('sheet.exampleMeta', { line: example.lineName, color: example.colorName, glass: example.glassName })}</p>
         </div>
         {savedMaterial > 0 ? (
-          <Badge tone="ok" className="mt-0.5">
-            −{formatPct(priceDrop)} en el precio
-          </Badge>
+          <span className="mt-0.5 shrink-0 text-table text-success">{t('sheet.priceDrop', { pct: fmt.pct(priceDrop) })}</span>
         ) : null}
       </header>
       <table className="w-full text-table">
         <thead>
-          <tr className="border-y border-paper-200 text-meta text-paper-600">
-            <th scope="col" className="px-4 py-1.5 text-left font-medium">Material por ventana</th>
-            <th scope="col" className="px-3 py-1.5 text-right font-medium">Lista</th>
-            <th scope="col" className="px-4 py-1.5 text-right font-medium">Con tus descuentos</th>
+          <tr className="h-8 border-b border-divider text-table text-fg-muted">
+            <th scope="col" className="pr-4 text-left font-normal">
+              {t('sheet.materialPerWindow')}
+            </th>
+            <th scope="col" className="px-3 text-right font-normal">
+              {t('sheet.listCol')}
+            </th>
+            <th scope="col" className="pl-4 text-right font-normal">
+              {t('sheet.mineCol')}
+            </th>
           </tr>
         </thead>
         <tbody>
-          {FAMILY_ROWS.filter((r) => list.materials[r.key] > 0 || mine.materials[r.key] > 0).map((row) => (
-            <tr key={row.key} className="border-b border-paper-200/70">
-              <th scope="row" className="px-4 py-1.5 text-left font-normal text-paper-900">{row.label}</th>
-              <td className="px-3 py-1.5 text-right text-paper-600 tabular">{formatCLP(list.materials[row.key])}</td>
-              <td className={cn('px-4 py-1.5 text-right tabular', mine.materials[row.key] < list.materials[row.key] ? 'font-medium text-ok-800' : 'text-paper-900')}>
-                {formatCLP(mine.materials[row.key])}
-              </td>
+          {FAMILY_ROWS.filter((key) => list.materials[key] > 0 || mine.materials[key] > 0).map((key) => (
+            <tr key={key} className="h-8 border-b border-divider">
+              <th scope="row" className="pr-4 text-left font-normal text-fg">
+                {t(`sheet.family.${key}`)}
+              </th>
+              <td className="px-3 text-right text-fg-muted tabular">{fmt.money(list.materials[key])}</td>
+              <td className={cn('pl-4 text-right tabular', mine.materials[key] < list.materials[key] ? 'font-medium text-success' : 'text-fg')}>{fmt.money(mine.materials[key])}</td>
             </tr>
           ))}
-          <tr className="border-b border-paper-200">
-            <th scope="row" className="px-4 py-1.5 text-left font-medium text-paper-900">Total material</th>
-            <td className="px-3 py-1.5 text-right text-paper-600 tabular">{formatCLP(list.materialsTotal)}</td>
-            <td className="px-4 py-1.5 text-right font-medium text-paper-900 tabular">{formatCLP(mine.materialsTotal)}</td>
+          <tr className="h-8">
+            <th scope="row" className="pr-4 text-left font-medium text-fg-strong">
+              {t('sheet.materialTotal')}
+            </th>
+            <td className="px-3 text-right text-fg-muted tabular">{fmt.money(list.materialsTotal)}</td>
+            <td className="pl-4 text-right font-medium text-fg-strong tabular">{fmt.money(mine.materialsTotal)}</td>
           </tr>
-          <tr className="bg-paper-50">
-            <th scope="row" className="px-4 py-2.5 text-left font-semibold text-paper-900">Precio de venta</th>
-            <td className="px-3 py-2.5 text-right text-paper-600 tabular">{formatCLP(list.unitNet)}</td>
-            <td className="px-4 py-2.5 text-right text-lead font-semibold text-paper-900 tabular">{formatCLP(mine.unitNet)}</td>
+          <tr className="h-11 border-t border-divider">
+            <th scope="row" className="pr-4 text-left font-medium text-fg-strong">
+              {t('sheet.salePrice')}
+            </th>
+            <td className="px-3 text-right text-fg-muted tabular">{fmt.money(list.unitNet)}</td>
+            <td className="figure pl-4 text-right text-h3 font-medium text-fg-strong">{fmt.money(mine.unitNet)}</td>
           </tr>
         </tbody>
       </table>
-      <p className="border-t border-paper-200 px-4 py-2.5 text-[13px] leading-[18px] text-paper-600">
+      <p className="pt-2 text-table text-fg-muted">
         {savedMaterial > 0
-          ? `Tu precio de venta sale de tu costo: con estos descuentos ahorras ${formatCLP(savedMaterial)} de material por ventana y cotizas más competitivo manteniendo tu margen de ${formatPct(mine.targetMarginPct)}.`
-          : `Sin descuentos, cotizas con el precio de lista y tu margen de ${formatPct(marginPct)}. Neto, sin IVA.`}
-        {missing.length ? ` ${missing[0].message}` : ''}
+          ? t('sheet.savedNote', { saved: fmt.money(savedMaterial), pct: fmt.pct(mine.targetMarginPct) })
+          : t('sheet.listNote', { pct: fmt.pct(marginPct) })}
+        {missing ? ` ${t('sheet.missingNote')}` : ''}
       </p>
     </section>
   )
 }
-
-/** Barra de 5,8 m dibujada con despunte, piezas, cortes de disco y sobrante. */
-function BarDiagram({ bar }: { bar: ReturnType<typeof barExample> }) {
-  const W = 520
-  const H = 34
-  const sx = (mm: number) => (mm / bar.barLength) * W
-  return (
-    <svg viewBox={`0 0 ${W} ${H + 18}`} className="w-full" role="img" aria-label={`Barra de ${formatNumber(bar.barLength)} mm con ${bar.pieces} piezas`}>
-      <defs>
-        <pattern id="fz-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="0" y2="5" stroke="var(--paper-350)" strokeWidth="1.2" />
-        </pattern>
-      </defs>
-      <rect x="0.5" y="0.5" width={W - 1} height={H} rx="3" fill="var(--paper-0)" stroke="var(--paper-350)" />
-      {bar.trim > 0 ? <rect x="1" y="1" width={Math.max(2, sx(bar.trim))} height={H - 1} fill="url(#fz-hatch)" /> : null}
-      {bar.offsets.map((offset, i) => (
-        <g key={i}>
-          <rect x={sx(offset) + 1} y="4" width={Math.max(1, sx(bar.piece) - 2)} height={H - 7} rx="2" fill="var(--ink-50)" stroke="var(--ink-500)" strokeWidth="1" />
-          <text x={sx(offset + bar.piece / 2)} y={H / 2 + 4} textAnchor="middle" fontSize="11" fill="var(--ink-700)" className="tabular">
-            {formatNumber(bar.piece)}
-          </text>
-          <rect x={sx(offset + bar.piece)} y="1" width={Math.max(1.5, sx(bar.kerf))} height={H - 1} fill="var(--bad-600)" opacity="0.7" />
-        </g>
-      ))}
-      {bar.remainder > 0 ? (
-        <rect x={W - sx(bar.remainder)} y="1" width={Math.max(1, sx(bar.remainder) - 1)} height={H - 1} fill="url(#fz-hatch)" opacity="0.8" />
-      ) : null}
-      <g fontSize="10.5" fill="var(--paper-600)">
-        <text x="0" y={H + 14}>{bar.trim > 0 ? `despunte ${formatNumber(bar.trim)}` : 'sin despunte'}</text>
-        <text x={W / 2} y={H + 14} textAnchor="middle" fill="var(--bad-600)">
-          disco {formatNumber(bar.kerf, 1)} mm por corte
-        </text>
-        <text x={W} y={H + 14} textAnchor="end">sobra {formatNumber(bar.remainder)}</text>
-      </g>
-    </svg>
-  )
-}
-

@@ -1,4 +1,4 @@
-# Framezen · imagen única (API + web compilada) para Railway, Render o Fly.
+# DEKOPEN · imagen única (API + web compilada) para Railway, Render o Fly.
 # Base: imagen oficial de Playwright con Chromium (para los PDF) y Node. Su versión debe calzar con
 # playwright-core del package-lock (hoy 1.64.1); si no calza, los PDF responden 503 y la web
 # imprime desde el navegador (nunca se bloquea nada).

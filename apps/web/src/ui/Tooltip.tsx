@@ -5,7 +5,7 @@ import { Kbd } from './Kbd'
 
 export function TooltipProvider({ children }: { children: ReactNode }) {
   return (
-    <RadixTooltip.Provider delayDuration={400} skipDelayDuration={250}>
+    <RadixTooltip.Provider delayDuration={350} skipDelayDuration={400}>
       {children}
     </RadixTooltip.Provider>
   )
@@ -23,7 +23,7 @@ export interface TooltipProps {
   className?: string
 }
 
-/** Tooltip breve. El hijo debe ser un elemento enfocable (botón, enlace). */
+/** Tooltip breve, en tinta. El segundo seguido aparece sin demora ni animación. El hijo debe ser un elemento enfocable. */
 export function Tooltip({ content, shortcut, side = 'top', align = 'center', disabled, children, className }: TooltipProps) {
   if (disabled || (!content && !shortcut)) return <>{children}</>
   return (
@@ -36,7 +36,7 @@ export function Tooltip({ content, shortcut, side = 'top', align = 'center', dis
           sideOffset={6}
           collisionPadding={8}
           className={cn(
-            'fz-pop z-50 flex max-w-64 items-center gap-2 rounded-sm bg-paper-900 px-2 py-1 text-meta font-medium text-paper-0 shadow-float',
+            'fz-pop z-50 flex min-h-7 max-w-64 items-center gap-2 rounded-sm bg-inverse px-2 py-1 text-meta font-medium text-fg-inverse shadow-float',
             className,
           )}
         >

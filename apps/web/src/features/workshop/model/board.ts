@@ -1,7 +1,8 @@
 /**
  * Tablero por estación: una tarjeta por ventana de cada OT en curso.
  */
-import type { Quote, QuoteItem, Station, WorkOrder } from '@framezen/shared'
+import { includedLineIds } from '@dekopen/engine'
+import type { Quote, QuoteItem, Station, WorkOrder } from '@dekopen/shared'
 import { daysUntil, matchesQuery } from './orders'
 import { STATION_IDS, stationOf } from './stations'
 
@@ -12,7 +13,9 @@ export interface BoardCard {
   orderNumber: number
   ref: string
   station: Station
+  /** Obra (puede venir vacía: la tarjeta muestra «Cotización N° …»). */
   title: string
+  quoteNumber: number
   clientName?: string
   dueDate?: string
   /** Ventana de la cotización (si ya se cargó): dibujo, unidades, nombre. */
@@ -42,8 +45,9 @@ export function orderRefs(order: WorkOrder, quote?: Quote): { ref: string; item?
   if (quote?.items?.length) {
     const seen = new Set<string>()
     const out: { ref: string; item?: QuoteItem }[] = []
+    const counted = includedLineIds(quote.items)
     for (const item of quote.items) {
-      if (!item || !(item.qty > 0)) continue
+      if (!item || !(item.qty > 0) || !counted.has(item.id)) continue
       const ref = item.ref?.trim() || ''
       if (!ref || seen.has(ref)) continue
       seen.add(ref)
@@ -75,7 +79,8 @@ export function buildBoard(sources: readonly BoardSource[], query = '', now: Dat
         orderNumber: order.number,
         ref,
         station,
-        title: order.title || `Cotización N° ${order.quoteNumber}`,
+        title: order.title,
+        quoteNumber: order.quoteNumber,
         ...(order.clientName ? { clientName: order.clientName } : {}),
         ...(order.dueDate ? { dueDate: order.dueDate } : {}),
         ...(item ? { item } : {}),

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactElement } from 'react'
-import type { LayoutDimension } from '@framezen/engine'
+import type { LayoutDimension } from '@dekopen/engine'
 import {
   MATERIAL_COLORS,
   WindowDrawing,
@@ -20,8 +20,8 @@ import { CATALOG, casementDesign, casementLayout, doorDesign, doorLayout, slidin
 const html = (el: ReactElement) => renderToStaticMarkup(el)
 
 describe('WindowDrawing', () => {
-  it('dibuja una abatible con título accesible, vidrio y cotas totales', () => {
-    const out = html(<WindowDrawing layout={casementLayout} design={casementDesign} catalog={CATALOG} width={320} />)
+  it('dibuja una abatible con título accesible, vidrio y cotas totales (técnico)', () => {
+    const out = html(<WindowDrawing layout={casementLayout} design={casementDesign} catalog={CATALOG} width={320} render="technical" />)
     expect(out.startsWith('<svg')).toBe(true)
     expect(out).toContain('viewBox="0 0 320 ')
     expect(out).toContain('Ventana 1.000 × 1.200 mm, vista interior')
@@ -74,7 +74,7 @@ describe('WindowDrawing', () => {
   })
 
   it('corredera: flecha en la hoja móvil y «F» en la fija', () => {
-    const out = html(<WindowDrawing layout={slidingLayout} design={slidingDesign} catalog={CATALOG} width={400} />)
+    const out = html(<WindowDrawing layout={slidingLayout} design={slidingDesign} catalog={CATALOG} width={400} render="technical" />)
     expect(out).toMatch(/>F<\/text>/)
     expect(out).toContain('data-layer="window"')
     // Color por palabra clave cuando el id no está en el catálogo («nogal-oscuro»).
@@ -82,7 +82,7 @@ describe('WindowDrawing', () => {
   })
 
   it('puerta: sintetiza cotas totales, panel ciego, bisagras y manilla', () => {
-    const out = html(<WindowDrawing layout={doorLayout} design={doorDesign} catalog={CATALOG} width={240} height={480} />)
+    const out = html(<WindowDrawing layout={doorLayout} design={doorDesign} catalog={CATALOG} width={240} height={480} render="technical" />)
     expect(out).toContain('>900<')
     expect(out).toContain('>2.100<')
     const rects = out.match(/<rect /g) ?? []
@@ -104,7 +104,9 @@ describe('WindowDrawing', () => {
       />,
     )
     expect(out).toContain('data-layer="selection"')
-    expect(out).toContain('stroke="#2747C2"')
+    // Canto de acento (con la variable del tema) y halo de foco.
+    expect(out).toContain('stroke="#1F6BFF"')
+    expect(out).toContain('var(--dk-select')
     expect(out).toContain('stroke-dasharray="4 3"')
     expect(out).toContain('data-layer="hits"')
     expect(out).toContain('data-node-id="bottom"')
@@ -146,8 +148,9 @@ describe('WindowDrawing', () => {
       expect(outlines?.inner).toMatch(/Z$/)
       const design = { ...casementDesign, colorInId: undefined, shape, root: { id: 'f', type: 'leaf' as const, opening: { kind: 'fixed' as const } } }
       const layout = { ...casementLayout, width: 1000, height: 1000, frame: { rect: { x: 0, y: 0, w: 1000, h: 1000 }, face: 60 }, sashes: [], panes: [], cells: [] }
-      const out = html(<WindowDrawing layout={layout} design={design} catalog={CATALOG} />)
-      expect(out).toContain('clipPath')
+      expect(html(<WindowDrawing layout={layout} design={design} catalog={CATALOG} render="technical" />)).toContain('clipPath')
+      // Realista: el contorno de respaldo se arma en piezas (sin layout del motor).
+      expect(html(<WindowDrawing layout={layout} design={design} catalog={CATALOG} />)).toContain('data-part="frame"')
     }
   })
 })

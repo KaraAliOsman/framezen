@@ -1,18 +1,37 @@
 import { useMemo, useRef, useState, type DragEvent } from 'react'
-import { ArrowRight, FileSpreadsheet, TriangleAlert, Upload, X } from 'lucide-react'
-import type { Catalog } from '@framezen/engine'
-import { formatCLP } from '@framezen/engine'
+import { ArrowRight, TriangleAlert, X } from 'lucide-react'
+import type { Catalog } from '@dekopen/engine'
 import { humanError } from '../../../lib/api'
 import { cn } from '../../../lib/cn'
-import { formatNumber } from '../../../lib/format'
-import { Badge, Button, Card, IconButton, SegmentedControl, Select, Spinner, toast, toastUndo } from '../../../ui'
+import { translate, useFormat, useT } from '../../../lib/i18n'
+import { Button, buttonClass, IconButton, Meter, Notice, SegmentedControl, Select, toast, toastUndo } from '../../../ui'
 import { useImportCsv, usePriceOverrides, useSavePrices, type ImportCsvResponse } from '../api'
+import es from '../i18n/es'
 import { changePct, previewImport, type ImportPreview } from '../model/importPreview'
 import { MiniStat, Swatch } from '../parts'
 
 const MAX_BYTES = 15 * 1024 * 1024
 
+type Step = 'file' | 'review' | 'done'
+const STEPS: Step[] = ['file', 'review', 'done']
+
+/** Pasos de la importación como indicador (no interactivo): archivo → revisión → listo. */
+function Steps({ current }: { current: Step }) {
+  const t = useT(es)
+  const index = STEPS.indexOf(current)
+  return (
+    <div aria-label={t('import.stepsLabel')} className="flex items-center gap-3">
+      <p className="text-table text-fg-muted tabular">
+        {t('import.stepOf', { n: index + 1, total: STEPS.length })} · <span className="text-fg">{t(`import.step.${current}`)}</span>
+      </p>
+      <Meter value={index + 1} max={STEPS.length} aria-label={t('import.stepsLabel')} className="w-20" />
+    </div>
+  )
+}
+
 export function ImportTab({ catalog, onDone }: { catalog: Catalog | undefined; onDone: () => void }) {
+  const t = useT(es)
+  const fmt = useFormat()
   const [file, setFile] = useState<{ name: string; text: string; size: number } | null>(null)
   const [brandId, setBrandId] = useState('auto')
   const [view, setView] = useState<'changes' | 'unmatched'>('changes')
@@ -38,12 +57,12 @@ export function ImportTab({ catalog, onDone }: { catalog: Catalog | undefined; o
     setResult(null)
     if (!f) return
     if (f.size > MAX_BYTES) {
-      setReadError('El archivo pesa más de 15 MB. Exporta solo las marcas que usas y vuelve a intentarlo.')
+      setReadError(t('import.tooBig'))
       return
     }
     const text = await f.text()
     if (!text.trim()) {
-      setReadError('El archivo está vacío. Exporta tu lista «MisPrecios» y vuelve a soltarla aquí.')
+      setReadError(t('import.empty'))
       return
     }
     setFile({ name: f.name, text, size: f.size })
@@ -66,10 +85,7 @@ export function ImportTab({ catalog, onDone }: { catalog: Catalog | undefined; o
           setResult(res)
           if (res.matched > 0) {
             toastUndo(importMessage(res), () =>
-              save.mutate(
-                { overrides: previous, replace: true },
-                { onSuccess: () => toast.success('Volvimos a tus precios de antes.'), onError: (e) => toast.error(humanError(e)) },
-              ),
+              save.mutate({ overrides: previous, replace: true }, { onSuccess: () => toast.success(t('import.undone')), onError: (e) => toast.error(humanError(e)) }),
             )
           } else toast.info(importMessage(res))
         },
@@ -79,164 +95,160 @@ export function ImportTab({ catalog, onDone }: { catalog: Catalog | undefined; o
   }
 
   const brandOptions = useMemo(
-    () => [
-      { value: 'auto', label: 'Según la columna Marca' },
-      ...(catalog?.brands ?? []).map((b) => ({ value: b.id, label: `Todo es de ${b.name}` })),
-    ],
-    [catalog],
+    () => [{ value: 'auto', label: t('import.brandAuto') }, ...(catalog?.brands ?? []).map((b) => ({ value: b.id, label: t('import.brandForced', { name: b.name }) }))],
+    [catalog, t],
   )
 
   if (result) {
     return (
-      <Card padding="lg" className="flex flex-col items-start gap-4">
-        <div className="flex items-start gap-3">
-          <span className={cn('inline-flex size-10 items-center justify-center rounded-md', result.matched ? 'bg-ok-50 text-ok-600' : 'bg-warn-50 text-warn-600')}>
-            <FileSpreadsheet aria-hidden className="size-5" strokeWidth={1.75} />
-          </span>
+      <div className="flex flex-col gap-4">
+        <Steps current="done" />
+        <div className="flex flex-col items-start gap-6">
           <div>
-            <h2 className="text-h3 font-semibold tracking-[-0.01em] text-paper-900">{result.matched ? 'Precios actualizados' : 'No encontramos coincidencias'}</h2>
-            <p className="mt-1 max-w-xl text-paper-600">{importMessage(result)}</p>
+            <h2 className="font-display text-h2 font-medium text-fg-strong">{result.matched ? t('import.resultTitle') : t('import.resultNone')}</h2>
+            <p className="mt-1 max-w-xl text-fg-muted">{importMessage(result)}</p>
+          </div>
+          <div className="grid w-full max-w-2xl grid-cols-2 gap-6 sm:grid-cols-4">
+            <MiniStat label={t('import.statRows')} value={result.rows} />
+            <MiniStat label={t('import.statUpdated')} value={result.matched} />
+            <MiniStat label={t('import.statUnmatched')} value={result.unmatched} tone={result.unmatched ? 'warn' : 'default'} />
+            <MiniStat label={t('import.statOwnTotal')} value={result.overridesTotal} />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="primary" onClick={onDone}>
+              {t('import.seePrices')}
+            </Button>
+            <Button
+              onClick={() => {
+                setResult(null)
+                setFile(null)
+              }}
+            >
+              {t('import.another')}
+            </Button>
           </div>
         </div>
-        <div className="grid w-full grid-cols-2 gap-4 rounded-md border border-paper-200 p-4 sm:grid-cols-4">
-          <MiniStat label="filas leídas" value={result.rows} />
-          <MiniStat label="precios actualizados" value={result.matched} />
-          <MiniStat label="no calzaron" value={result.unmatched} tone={result.unmatched ? 'warn' : 'default'} />
-          <MiniStat label="precios tuyos en total" value={result.overridesTotal} />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="primary" onClick={onDone}>
-            Ver mis precios
-          </Button>
-          <Button
-            onClick={() => {
-              setResult(null)
-              setFile(null)
-            }}
-          >
-            Importar otro archivo
-          </Button>
-        </div>
-      </Card>
+      </div>
     )
   }
 
   if (!file || !preview) {
     return (
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <label
-          onDragOver={(e) => {
-            e.preventDefault()
-            setDragging(true)
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-          className={cn(
-            'flex min-h-72 cursor-pointer flex-col items-center justify-center gap-4 rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors duration-160',
-            dragging ? 'border-ink-500 bg-ink-50' : 'border-paper-350/60 bg-paper-0 hover:border-paper-600',
-          )}
-        >
-          <span className="inline-flex size-12 items-center justify-center rounded-lg bg-paper-100 text-paper-600">
-            <Upload aria-hidden className="size-6" strokeWidth={1.5} />
-          </span>
-          <span>
-            <span className="block text-h3 font-semibold tracking-[-0.01em] text-paper-900">Suelta aquí tu lista «MisPrecios»</span>
-            <span className="mt-1 block text-paper-600">Archivo CSV separado por punto y coma. Antes de guardar te mostramos qué cambia.</span>
-          </span>
-          <span className="inline-flex h-9 items-center rounded-sm border border-paper-200 bg-paper-0 px-3.5 font-medium text-paper-900">Elegir archivo</span>
-          <input
-            ref={input}
-            type="file"
-            accept=".csv,text/csv,text/plain"
-            className="sr-only"
-            onChange={(e) => {
-              void read(e.target.files?.[0])
-              e.target.value = ''
+      <div className="flex flex-col gap-4">
+        <Steps current="file" />
+        <div className="flex max-w-3xl flex-col gap-3">
+          <label
+            onDragOver={(e) => {
+              e.preventDefault()
+              setDragging(true)
             }}
-          />
-          {readError ? (
-            <span role="alert" className="flex items-center gap-1.5 text-[13px] text-bad-600">
-              <TriangleAlert aria-hidden className="size-4" strokeWidth={1.75} />
-              {readError}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+            className={cn(
+              'flex min-h-56 cursor-pointer flex-col items-center justify-center gap-4 rounded-panel border border-dashed border-divider-strong bg-plate px-6 py-10 text-center transition-colors duration-100 ease-out',
+              dragging ? 'border-accent bg-accent-subtle' : 'hover:border-control hover:bg-hover',
+            )}
+          >
+            <span>
+              <span className="block text-h3 font-medium text-fg-strong">{t('import.dropTitle')}</span>
+              <span className="mt-1 block text-fg-muted">{t('import.dropHelp')}</span>
             </span>
-          ) : null}
-        </label>
-        <aside className="flex flex-col gap-3 rounded-lg border border-paper-200 bg-paper-0 p-5 text-[13px] leading-[18px] text-paper-600">
-          <h3 className="text-base font-semibold text-paper-900">Cómo funciona</h3>
-          <ol className="flex list-decimal flex-col gap-2 pl-4">
-            <li>Exporta tu lista de precios en CSV desde tu planilla o tu distribuidor.</li>
-            <li>La cruzamos con tu catálogo por código, color y descripción.</li>
-            <li>Revisas qué precios suben o bajan y los que no encontramos.</li>
-            <li>Aplicas. Si algo no te gusta, lo deshaces con un clic.</li>
-          </ol>
-          <p className="border-t border-paper-200 pt-3">
-            Columnas que leemos: <span className="text-paper-900">Marca, Tipo, Código, Descripción, Línea, Color y Precio</span>. El orden da igual.
-          </p>
-        </aside>
+            <span className={buttonClass('secondary', 'md')}>{t('import.choose')}</span>
+            <input
+              ref={input}
+              type="file"
+              accept=".csv,text/csv,text/plain"
+              className="sr-only"
+              onChange={(e) => {
+                void read(e.target.files?.[0])
+                e.target.value = ''
+              }}
+            />
+            {readError ? (
+              <span role="alert" className="flex items-center gap-1.5 text-table text-danger">
+                <TriangleAlert aria-hidden className="size-4" strokeWidth={1.75} />
+                {readError}
+              </span>
+            ) : null}
+          </label>
+          <p className="text-table text-fg-muted">{t.rich('import.columns', { b: <span className="text-fg" /> })}</p>
+        </div>
       </div>
     )
   }
 
   const colors = new Map((catalog?.colors ?? []).map((c) => [c.id, c]))
   const shown = preview.changes.slice(0, 200)
+  const signedPct = (n: number) => (n > 0 ? `+${fmt.pct(n)}` : fmt.pct(n))
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 rounded-lg border border-paper-200 bg-paper-0 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <Steps current="review" />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-ink-50 text-ink-700">
-            <FileSpreadsheet aria-hidden className="size-[18px]" strokeWidth={1.75} />
-          </span>
           <div className="min-w-0">
-            <p className="truncate font-medium text-paper-900">{file.name}</p>
-            <p className="text-meta text-paper-600">
-              {formatNumber(preview.rows)} filas{preview.brands.length ? ` · ${preview.brands.slice(0, 3).join(', ')}${preview.brands.length > 3 ? '…' : ''}` : ''}
+            <p className="truncate font-medium text-fg-strong">{file.name}</p>
+            <p className="text-meta text-fg-muted">
+              {t('import.rows', { count: preview.rows })}
+              {preview.brands.length ? ` · ${preview.brands.slice(0, 3).join(', ')}${preview.brands.length > 3 ? '…' : ''}` : ''}
             </p>
           </div>
-          <IconButton icon={X} label="Quitar archivo" size="sm" onClick={() => setFile(null)} />
+          <IconButton icon={X} label={t('import.removeFile')} size="sm" onClick={() => setFile(null)} />
         </div>
-        <Select aria-label="Marca del archivo" value={brandId} onValueChange={setBrandId} options={brandOptions} className="sm:w-64" />
+        <Select aria-label={t('import.brandLabel')} value={brandId} onValueChange={setBrandId} options={brandOptions} size="sm" className="sm:w-64" />
       </div>
 
-      <div className="grid grid-cols-2 gap-4 rounded-lg border border-paper-200 bg-paper-0 p-4 sm:grid-cols-4">
-        <MiniStat label="precios cambian" value={preview.changes.length} />
-        <MiniStat label="ya estaban iguales" value={preview.unchanged} />
-        <MiniStat label="no encontrados" value={preview.unmatched.length} tone={preview.unmatched.length ? 'warn' : 'default'} />
-        <MiniStat label="filas sin precio u omitidas" value={preview.skipped} />
+      <div className="grid max-w-2xl grid-cols-2 gap-6 sm:grid-cols-4">
+        <MiniStat label={t('import.statChanges')} value={preview.changes.length} />
+        <MiniStat label={t('import.statUnchanged')} value={preview.unchanged} />
+        <MiniStat label={t('import.statNotFound')} value={preview.unmatched.length} tone={preview.unmatched.length ? 'warn' : 'default'} />
+        <MiniStat label={t('import.statSkipped')} value={preview.skipped} />
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <SegmentedControl
-          aria-label="Qué ver"
+          aria-label={t('import.viewLabel')}
           value={view}
           onValueChange={setView}
           options={[
-            { value: 'changes', label: `Cambios · ${formatNumber(preview.changes.length)}` },
-            { value: 'unmatched', label: `No encontrados · ${formatNumber(preview.unmatched.length)}` },
+            { value: 'changes', label: t('import.viewChanges', { count: fmt.number(preview.changes.length) }) },
+            { value: 'unmatched', label: t('import.viewUnmatched', { count: fmt.number(preview.unmatched.length) }) },
           ]}
         />
         {preview.review ? (
-          <p className="flex items-center gap-1.5 text-[13px] text-warn-800">
-            <TriangleAlert aria-hidden className="size-4 text-warn-600" strokeWidth={1.75} />
-            {preview.review} {preview.review === 1 ? 'cambio grande para revisar' : 'cambios grandes para revisar'} (más de ±60 %)
+          <p className="flex items-center gap-1.5 text-table text-warning">
+            <TriangleAlert aria-hidden className="size-4" strokeWidth={1.75} />
+            {t('import.review', { count: preview.review })}
           </p>
         ) : null}
       </div>
 
       {view === 'changes' ? (
         preview.changes.length ? (
-          <div className="overflow-hidden rounded-md border border-paper-200 bg-paper-0">
-            <div className="scrollbar-quiet overflow-x-auto">
+          <div>
+            <div className="scrollbar-quiet -mx-3 overflow-x-auto rounded-panel bg-plate shadow-plate">
               <table className="w-full min-w-[600px] text-table">
                 <thead>
-                  <tr className="h-9 border-b border-paper-200 bg-paper-50 text-meta text-paper-600">
-                    <th scope="col" className="px-3 text-left font-medium">Artículo</th>
-                    <th scope="col" className="px-3 text-left font-medium max-md:hidden">Línea</th>
-                    <th scope="col" className="px-3 text-left font-medium">Color</th>
-                    <th scope="col" className="px-3 text-right font-medium">Ahora</th>
+                  <tr className="h-9 border-b border-divider text-table text-fg-muted [&_th]:font-normal">
+                    <th scope="col" className="px-3 text-left font-medium">
+                      {t('import.colItem')}
+                    </th>
+                    <th scope="col" className="px-3 text-left font-medium max-md:hidden">
+                      {t('import.colLine')}
+                    </th>
+                    <th scope="col" className="px-3 text-left font-medium">
+                      {t('import.colColor')}
+                    </th>
+                    <th scope="col" className="px-3 text-right font-medium">
+                      {t('import.colNow')}
+                    </th>
                     <th scope="col" className="w-6" />
-                    <th scope="col" className="px-3 text-right font-medium">Nuevo</th>
-                    <th scope="col" className="px-3 text-right font-medium">Cambio</th>
+                    <th scope="col" className="px-3 text-right font-medium">
+                      {t('import.colNew')}
+                    </th>
+                    <th scope="col" className="px-3 text-right font-medium">
+                      {t('import.colChange')}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -244,44 +256,36 @@ export function ImportTab({ catalog, onDone }: { catalog: Catalog | undefined; o
                     const pct = changePct(c.before, c.after)
                     const color = c.colorId ? colors.get(c.colorId) : undefined
                     return (
-                      <tr key={c.key} className={cn('h-10 border-b border-paper-200 last:border-b-0', c.review && 'bg-warn-50/50')}>
+                      <tr key={c.key} className={cn('h-9 border-b border-divider last:border-b-0', c.review && 'bg-warning-bg')}>
                         <td className="max-w-[300px] px-3">
                           <span className="flex min-w-0 items-baseline gap-2">
-                            {c.code ? <span className="shrink-0 font-mono text-[12px] text-paper-600">{c.code}</span> : null}
-                            <span className="truncate text-paper-900">{c.name}</span>
+                            {c.code ? <span className="code-id shrink-0 text-meta text-fg-muted">{c.code}</span> : null}
+                            <span className="truncate text-fg">{c.name}</span>
                           </span>
                         </td>
-                        <td className="px-3 text-paper-600 max-md:hidden">{c.lineName ?? c.brandName}</td>
+                        <td className="px-3 text-fg-muted max-md:hidden">{c.lineName ?? c.brandName}</td>
                         <td className="px-3">
                           {color ? (
                             <span className="flex items-center gap-1.5 whitespace-nowrap">
-                              <Swatch color={color} size={12} />
+                              <Swatch color={color} size={14} />
                               {color.name}
                             </span>
                           ) : (
-                            <span className="text-paper-600">—</span>
+                            <span className="text-fg-muted">{t('common.noneDash')}</span>
                           )}
                         </td>
-                        <td className="px-3 text-right whitespace-nowrap text-paper-600 tabular">{c.before > 0 ? formatCLP(c.before) : 'Sin precio'}</td>
-                        <td className="text-center text-paper-350">
+                        <td className="px-3 text-right whitespace-nowrap text-fg-muted tabular">{c.before > 0 ? fmt.money(c.before) : t('common.noPrice')}</td>
+                        <td className="text-center text-fg-faint">
                           <ArrowRight aria-hidden className="inline size-3.5" />
                         </td>
-                        <td className="px-3 text-right font-medium whitespace-nowrap text-paper-900 tabular">{formatCLP(c.after)}</td>
+                        <td className="px-3 text-right font-medium whitespace-nowrap text-fg-strong tabular">{fmt.money(c.after)}</td>
                         <td className="px-3 text-right whitespace-nowrap">
                           {pct === null ? (
-                            <Badge tone="ok" size="sm">
-                              Nuevo
-                            </Badge>
+                            <span className="text-success">{t('import.isNew')}</span>
                           ) : c.review ? (
-                            <Badge tone="warn" size="sm">
-                              Revisa · {pct > 0 ? '+' : ''}
-                              {formatNumber(pct, 1)} %
-                            </Badge>
+                            <span className="text-warning tabular">{t('import.reviewBadge', { pct: signedPct(pct) })}</span>
                           ) : (
-                            <span className={cn('tabular', pct > 0 ? 'text-paper-900' : 'text-ok-800')}>
-                              {pct > 0 ? '+' : ''}
-                              {formatNumber(pct, 1)} %
-                            </span>
+                            <span className={cn('tabular', pct > 0 ? 'text-fg' : 'text-success')}>{signedPct(pct)}</span>
                           )}
                         </td>
                       </tr>
@@ -291,57 +295,52 @@ export function ImportTab({ catalog, onDone }: { catalog: Catalog | undefined; o
               </table>
             </div>
             {preview.changes.length > shown.length ? (
-              <p className="border-t border-paper-200 px-3 py-2 text-center text-[13px] text-paper-600">
-                y {formatNumber(preview.changes.length - shown.length)} cambios más.
-              </p>
+              <p className="py-2 text-table text-fg-muted">{t('import.moreChanges', { count: preview.changes.length - shown.length })}</p>
             ) : null}
           </div>
         ) : (
-          <p className="rounded-md border border-dashed border-paper-200 bg-paper-0 px-4 py-8 text-center text-paper-600">
-            {preview.matched ? 'Todos los precios del archivo ya están iguales en tu catálogo.' : 'Ninguna fila calzó con tus marcas activas. Prueba eligiendo la marca del archivo arriba.'}
+          <p className="py-6 text-fg-muted">
+            {preview.matched ? t('import.allSame') : t('import.noneMatched')}
           </p>
         )
       ) : preview.unmatched.length ? (
-        <div className="overflow-hidden rounded-md border border-paper-200 bg-paper-0">
-          <ul className="divide-y divide-paper-200">
+        <div>
+          <ul className="divide-y divide-divider">
             {preview.unmatched.slice(0, 100).map((row, i) => (
-              <li key={`${row.code}-${i}`} className="flex items-baseline justify-between gap-3 px-3 py-2 text-table">
+              <li key={`${row.code}-${i}`} className="flex min-h-10 items-baseline justify-between gap-3 py-2 text-table">
                 <span className="flex min-w-0 items-baseline gap-2">
-                  {row.code ? <span className="shrink-0 font-mono text-[12px] text-paper-600">{row.code}</span> : null}
-                  <span className="truncate text-paper-900">{row.description}</span>
+                  {row.code ? <span className="code-id shrink-0 text-meta text-fg-muted">{row.code}</span> : null}
+                  <span className="truncate text-fg">{row.description}</span>
                 </span>
-                <span className="shrink-0 text-paper-600 tabular">
+                <span className="shrink-0 text-fg-muted tabular">
                   {row.brand ? `${row.brand} · ` : ''}
-                  {formatCLP(row.price)}
+                  {fmt.money(row.price)}
                 </span>
               </li>
             ))}
           </ul>
-          <p className="border-t border-paper-200 bg-paper-50 px-3 py-2 text-[13px] leading-[18px] text-paper-600">
-            Estos artículos no están en tus marcas activas o tienen otro código. No se pierde nada: el resto se guarda igual.
-          </p>
+          <Notice tone="neutral" size="compact" className="mt-2">
+            {t('import.unmatchedNote')}
+          </Notice>
         </div>
       ) : (
-        <p className="rounded-md border border-dashed border-paper-200 bg-paper-0 px-4 py-8 text-center text-paper-600">Todo lo del archivo calzó con tu catálogo.</p>
+        <p className="py-6 text-fg-muted">{t('import.allMatched')}</p>
       )}
 
-      <div className="sticky bottom-0 z-10 -mx-4 flex flex-col gap-2 border-t border-paper-200 bg-paper-50/95 px-4 py-3 backdrop-blur-[2px] sm:mx-0 sm:flex-row sm:items-center sm:justify-between sm:rounded-lg sm:border sm:bg-paper-0">
-        <p className="text-[13px] leading-[18px] text-paper-600">
-          Comparamos con tus marcas activas. Al aplicar también guardamos los precios de marcas desactivadas. Puedes deshacerlo.
-        </p>
-        <Button variant="primary" onClick={apply} disabled={importCsv.isPending || preview.rows === 0} className="shrink-0">
-          {importCsv.isPending ? <Spinner size={16} /> : null}
-          {preview.changes.length ? `Aplicar ${formatNumber(preview.changes.length)} ${preview.changes.length === 1 ? 'precio' : 'precios'}` : 'Aplicar igual'}
+      <div className="sticky bottom-0 z-10 -mx-4 flex flex-col gap-2 border-t border-divider bg-canvas/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-[2px] sm:mx-0 sm:flex-row sm:items-center sm:justify-between sm:px-0 sm:pb-3">
+        <p className="text-table text-fg-muted">{t('import.footer')}</p>
+        <Button variant="primary" onClick={apply} loading={importCsv.isPending} disabled={preview.rows === 0} className="shrink-0">
+          {t('import.apply', { count: preview.changes.length })}
         </Button>
       </div>
     </div>
   )
 }
 
-/** Resumen en una frase, con plurales correctos. */
+/** Resumen en una frase, con plurales correctos (idioma de la interfaz). */
 export function importMessage(res: Pick<ImportCsvResponse, 'matched' | 'unmatched'>): string {
-  if (!res.matched) return 'No encontramos coincidencias con tu catálogo. Revisa que la marca del archivo esté activa o elígela arriba.'
-  const updated = `Actualizamos ${formatNumber(res.matched)} ${res.matched === 1 ? 'precio' : 'precios'}.`
+  if (!res.matched) return translate(es, 'import.msgNone')
+  const updated = translate(es, 'import.msgUpdated', { count: res.matched })
   if (!res.unmatched) return updated
-  return `${updated} ${formatNumber(res.unmatched)} ${res.unmatched === 1 ? 'fila no calzó' : 'filas no calzaron'} con tu catálogo.`
+  return translate(es, 'import.msgBoth', { updated, unmatched: translate(es, 'import.msgUnmatched', { count: res.unmatched }) })
 }

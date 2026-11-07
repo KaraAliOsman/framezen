@@ -7,31 +7,40 @@
  */
 import * as React from 'react'
 import {
-  CATALOG_TEMPLATES,
   CatalogDocument,
-  QUOTE_TEMPLATES,
   QuoteDocument,
+  TEMPLATE_FLOW_SCRIPT,
   WORKSHOP_DOCUMENTS,
   WORKSHOP_FIT_SCRIPT,
   WorkshopDocument,
+  docFontFiles,
+  loadBuiltinTextures,
+  pickCatalogTemplateRef,
+  prepareCatalogDocument,
+  prepareQuoteDocument,
+  preloadDocumentTextures,
   renderDocumentHtml,
   renderDocumentHtmlAsync,
+  templateUsesItalic,
   themeFromPrefs,
+  parseCutParts,
+  workshopI18n,
   type CatalogDocData,
+  type CutPartKind,
   type QuoteDocData,
   type RenderDocumentOptions,
   type WorkshopDocumentData,
   type WorkshopDocumentInfo,
   type WorkshopDocumentKind,
-} from '@framezen/documents'
-import type { CatalogTemplateId, QuoteTemplateId } from '@framezen/shared'
+} from '@dekopen/documents'
+import { DEFAULT_QUOTE_PRESET_ID, resolveDocTemplateRef, type DocTemplate } from '@dekopen/shared'
 import { catalogFileName, quoteFileName, workshopFileName, type PdfFileName } from './filename'
-import { documentFontCss } from './fonts'
+import { documentFontCss, templateFontCss } from './fonts'
 
 const { createElement } = React
 
 /**
- * Las plantillas de @framezen/documents son .tsx. Si el servidor corre con tsx desde la raíz
+ * Las plantillas de @dekopen/documents son .tsx. Si el servidor corre con tsx desde la raíz
  * del monorepo (sin un tsconfig con "jsx": "react-jsx"), esbuild las compila con el JSX
  * clásico, que busca `React` global. Con esto funcionan igual con cualquier configuración.
  */
@@ -59,43 +68,57 @@ async function renderJobAsync(job: DocumentJob): Promise<RenderedDocument> {
   return { html: await renderDocumentHtmlAsync(job.element, job.options), title: job.options.title, fileName: job.fileName }
 }
 
-const QUOTE_IDS = new Set<string>(QUOTE_TEMPLATES.map((t) => t.id))
-const CATALOG_IDS = new Set<string>(CATALOG_TEMPLATES.map((t) => t.id))
-
-/** Plantilla pedida si existe; si no, la preferida del taller (nunca un error por esto). */
-export function pickQuoteTemplate(requested: string | undefined, preferred: QuoteTemplateId): QuoteTemplateId {
-  return requested && QUOTE_IDS.has(requested) ? (requested as QuoteTemplateId) : QUOTE_IDS.has(preferred) ? preferred : 'esencial'
+/**
+ * Diseño de cotización a usar: el pedido (`?template=`) si es un diseño, un id v4 o una plantilla propia
+ * conocidos; si no, el preferido del taller; si no, el diseño por defecto (nunca un error por esto).
+ */
+export function pickQuoteTemplate(requested: string | undefined, preferred: string | undefined): string {
+  for (const candidate of [requested, preferred]) {
+    if (candidate && resolveDocTemplateRef(candidate, 'quote').source !== 'default') return candidate
+  }
+  return DEFAULT_QUOTE_PRESET_ID
 }
 
-export function pickCatalogTemplate(requested: string | undefined, preferred: CatalogTemplateId): CatalogTemplateId {
-  return requested && CATALOG_IDS.has(requested) ? (requested as CatalogTemplateId) : CATALOG_IDS.has(preferred) ? preferred : 'vitrina'
+/** Diseño de catálogo a usar (pedido → preferido → por defecto). */
+export function pickCatalogTemplate(requested: string | undefined, preferred: string | undefined): string {
+  return pickCatalogTemplateRef(requested, preferred)
 }
 
 export function workshopInfo(kind: string | undefined): WorkshopDocumentInfo | undefined {
   return WORKSHOP_DOCUMENTS.find((d) => d.kind === kind)
 }
 
-function revisionLabel(revision: number): string {
-  if (revision < 2) return ''
-  return ` ${String.fromCharCode(64 + Math.min(revision, 26))}`
-}
+// Las teselas de foliado se cargan en segundo plano al arrancar: el render sincrónico (pruebas, tareas
+// internas) las usa si ya llegaron; las rutas esperan las que necesitan (variantes `…Async`).
+void loadBuiltinTextures()
 
-function quoteJob(data: QuoteDocData, template: QuoteTemplateId): DocumentJob {
-  const title = `Cotización N° ${data.quote.number}${revisionLabel(data.quote.revision)} · ${data.quote.title || data.org.name}`
+function quoteJob(data: QuoteDocData, template: string | DocTemplate): DocumentJob & { prepared: ReturnType<typeof prepareQuoteDocument> } {
+  const prepared = prepareQuoteDocument({ data, template })
+  const model = prepared.model
+  const italic = templateUsesItalic(model.template, [model.texts.intro, model.texts.conditions, model.texts.warranty])
   return {
-    element: createElement(QuoteDocument, { data, template }),
-    options: { title, theme: themeFromPrefs(data.prefs, data.org.accent), fontCss: documentFontCss() },
+    prepared,
+    element: createElement(QuoteDocument, { data, template, measure: false }),
+    options: {
+      title: prepared.title,
+      lang: prepared.lang,
+      fontCss: templateFontCss(docFontFiles(model.theme, { italic })),
+      // Sin Chromium («Imprimir» del navegador) la cotización se reparte en hojas con los altos reales.
+      script: TEMPLATE_FLOW_SCRIPT,
+    },
     fileName: quoteFileName({ number: data.quote.number, title: data.quote.title, revision: data.quote.revision }),
   }
 }
 
-export function renderQuoteDocument(data: QuoteDocData, template: QuoteTemplateId): RenderedDocument {
+export function renderQuoteDocument(data: QuoteDocData, template: string | DocTemplate): RenderedDocument {
   return renderJob(quoteJob(data, template))
 }
 
-/** Igual que `renderQuoteDocument`, por tramos (no bloquea la API). */
-export function renderQuoteDocumentAsync(data: QuoteDocData, template: QuoteTemplateId): Promise<RenderedDocument> {
-  return renderJobAsync(quoteJob(data, template))
+/** Igual que `renderQuoteDocument`, por tramos (no bloquea la API) y con todas las teselas cargadas. */
+export async function renderQuoteDocumentAsync(data: QuoteDocData, template: string | DocTemplate): Promise<RenderedDocument> {
+  const job = quoteJob(data, template)
+  await preloadDocumentTextures(job.prepared.model.drawingDefs)
+  return renderJobAsync(job)
 }
 
 export interface WorkshopRenderOptions {
@@ -111,6 +134,8 @@ export interface WorkshopRenderOptions {
   showPrices?: boolean
   /** IVA en % para la orden de compra. Por defecto el de la organización (data.ivaPct). */
   ivaPct?: number
+  /** Cortes y orden de corte: solo estos tipos de pieza (`?parts=sash,bead`). */
+  parts?: readonly CutPartKind[]
 }
 
 /** Opción sí/no de la URL: «0», «false», «no» u «off» = no; «1», «true», «si» u «on» = sí; otra cosa = sin opinión. */
@@ -136,12 +161,22 @@ export function workshopRenderOptionsFromQuery(query: (name: string) => string |
   if (brandId) out.brandId = brandId
   const prices = queryFlag(query('prices'))
   if (prices !== undefined) out.showPrices = prices
+  const parts = parseCutParts(query('parts'))
+  if (parts.length) out.parts = parts
   return out
+}
+
+/** «Cortes» → «Cortes-Hojas-Junquillos», para que el archivo diga qué trae. */
+function partsFileName(base: string, parts: readonly CutPartKind[] | undefined): string {
+  if (!parts?.length || !(base === 'Cortes' || base === 'Orden-corte')) return base
+  const { t } = workshopI18n({ locale: 'es' })
+  return [base, ...parts.map((part) => t(`common.parts.${part}`))].join('-')
 }
 
 function workshopJob(data: WorkshopDocumentData, options: WorkshopRenderOptions): DocumentJob {
   const info = workshopInfo(options.kind) ?? WORKSHOP_DOCUMENTS[0]
-  const title = [info.title, `OT N° ${data.workOrder.number}`, data.quote.title].filter(Boolean).join(' · ')
+  const number = data.workOrder.fromQuote ? `Cotización N° ${data.quote.number}` : `OT N° ${data.workOrder.number}`
+  const title = [...new Set([info.title, number, data.quote.title])].filter(Boolean).join(' · ')
   return {
     element: createElement(WorkshopDocument, {
       kind: info.kind,
@@ -152,6 +187,7 @@ function workshopJob(data: WorkshopDocumentData, options: WorkshopRenderOptions)
       ...(options.brandId ? { brandId: options.brandId } : {}),
       ...(options.showPrices !== undefined ? { showPrices: options.showPrices } : {}),
       ...(options.ivaPct !== undefined && Number.isFinite(options.ivaPct) ? { ivaPct: options.ivaPct } : {}),
+      ...(options.parts?.length ? { parts: options.parts } : {}),
     }),
     options: {
       title,
@@ -160,7 +196,7 @@ function workshopJob(data: WorkshopDocumentData, options: WorkshopRenderOptions)
       // Compacta las hojas que se pasarían a otra página por unas pocas filas (mide en Chromium).
       script: WORKSHOP_FIT_SCRIPT,
     },
-    fileName: workshopFileName(info.fileName, { number: data.workOrder.number, title: data.quote.title }),
+    fileName: workshopFileName(partsFileName(info.fileName, options.parts), { number: data.workOrder.number, title: data.quote.title, ...(data.workOrder.fromQuote ? { fromQuote: true } : {}) }),
   }
 }
 
@@ -173,20 +209,25 @@ export function renderWorkshopDocumentAsync(data: WorkshopDocumentData, options:
   return renderJobAsync(workshopJob(data, options))
 }
 
-function catalogJob(data: CatalogDocData, template: CatalogTemplateId): DocumentJob {
-  const title = `${data.title ?? 'Catálogo de ventanas y puertas'} · ${data.org.name}`
+function catalogJob(data: CatalogDocData, template: string): DocumentJob {
+  const prepared = prepareCatalogDocument({ data, template })
   return {
     element: createElement(CatalogDocument, { data, template }),
-    options: { title, theme: themeFromPrefs(data.prefs, data.org.accent), fontCss: documentFontCss() },
+    options: {
+      title: prepared.title,
+      lang: prepared.lang,
+      fontCss: templateFontCss(docFontFiles(prepared.template.theme)),
+    },
     fileName: catalogFileName(data.org.name),
   }
 }
 
-export function renderCatalogDocument(data: CatalogDocData, template: CatalogTemplateId): RenderedDocument {
+export function renderCatalogDocument(data: CatalogDocData, template: string): RenderedDocument {
   return renderJob(catalogJob(data, template))
 }
 
-/** Igual que `renderCatalogDocument`, por tramos. */
-export function renderCatalogDocumentAsync(data: CatalogDocData, template: CatalogTemplateId): Promise<RenderedDocument> {
+/** Igual que `renderCatalogDocument`, por tramos y con los foliados integrados ya cargados (muestras y dibujos). */
+export async function renderCatalogDocumentAsync(data: CatalogDocData, template: string): Promise<RenderedDocument> {
+  await loadBuiltinTextures()
   return renderJobAsync(catalogJob(data, template))
 }

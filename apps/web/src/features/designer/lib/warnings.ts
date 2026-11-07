@@ -3,7 +3,9 @@
  * un marcador discreto sobre él; el resto va a un resumen. Los avisos de precio pertenecen al
  * desglose del precio (inspector), no al dibujo.
  */
-import type { Layout, Rect, Warning, WarningLevel } from '@framezen/engine'
+import type { Layout, Rect, Warning, WarningLevel } from '@dekopen/engine'
+import { translate } from '../../../lib/i18n'
+import es from '../i18n/es'
 import { unionRect } from './viewport'
 
 export interface WarningMarker {
@@ -58,5 +60,5 @@ export function splitWarnings(warnings: Warning[], layout: Layout): { markers: W
 }
 
 export function warningCountLabel(n: number): string {
-  return n === 1 ? '1 aviso' : `${n} avisos`
+  return translate(es, 'warnings.count', { count: n })
 }

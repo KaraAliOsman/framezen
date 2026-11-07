@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
-import { FEATURE_COPY } from '@framezen/shared'
+import { FEATURE_COPY } from '@dekopen/shared'
 import { createQueryClient } from '../src/lib/queryClient'
 import { Button, DataTable, NumberField, PlanGate, StatusPill, type DataTableColumn } from '../src/ui'
 
@@ -136,7 +136,7 @@ describe('DataTable', () => {
       <DataTable caption="Obras" rows={rows} columns={columns} getRowId={(r) => r.id} query="perez" onClearFilters={clear} noun={['obra', 'obras']} />,
     )
     expect(screen.getByText('Casa Pérez')).toBeTruthy()
-    expect(screen.getByText('2 obras ocultas por filtros')).toBeTruthy()
+    expect(screen.getByText('Los filtros ocultan 2 obras')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Quitar filtros' }))
     expect(clear).toHaveBeenCalled()
   })

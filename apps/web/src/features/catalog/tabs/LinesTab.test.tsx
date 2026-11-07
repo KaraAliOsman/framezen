@@ -2,8 +2,8 @@ import '../../../../test/setup'
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import type { Catalog } from '@framezen/engine'
-import { SAMPLE_CATALOG } from '@framezen/catalog'
+import type { Catalog } from '@dekopen/engine'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
 import { TooltipProvider } from '../../../ui'
 import { LinesTab } from './LinesTab'
 
@@ -28,7 +28,6 @@ function renderTab(catalog: Catalog, onCompletePrices = vi.fn()) {
 describe('LinesTab · completitud', () => {
   it('dice en palabras qué falta y abre Precios con eso', () => {
     const onCompletePrices = renderTab(catalogWithGap)
-    expect(screen.getAllByText('Cotiza con avisos').length).toBeGreaterThan(0)
     expect(screen.getByText('Cotiza con avisos: faltan precios de hoja')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /Completar \d+ precios/ }))
     expect(onCompletePrices).toHaveBeenCalledTimes(1)
@@ -40,7 +39,7 @@ describe('LinesTab · completitud', () => {
 
   it('una línea completa se ve «Lista para cotizar» sin acción', () => {
     renderTab(SAMPLE_CATALOG)
-    expect(screen.getAllByText('Lista para cotizar').length).toBeGreaterThan(0)
+    expect(screen.getByText(/^Lista para cotizar/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Completar/ })).toBeNull()
   })
 })

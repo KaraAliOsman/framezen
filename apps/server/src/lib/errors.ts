@@ -1,5 +1,7 @@
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { z } from 'zod'
+import { errorMessage, type ErrorMessageCode } from './i18n'
+import { PLANS, type PlanCode } from '@dekopen/shared'
 
 /** Error con forma { error: { code, message, field? } } y mensaje humano en español. */
 export class HttpError extends Error {
@@ -14,12 +16,27 @@ export class HttpError extends Error {
     super(message)
   }
 
-  toJSON() {
+  /** Cuerpo JSON del error; `message` permite enviarlo traducido (ver lib/i18n). */
+  toJSON(message: string = this.message) {
     return {
-      error: { code: this.code, message: this.message, ...(this.field ? { field: this.field } : {}) },
+      error: { code: this.code, message, ...(this.field ? { field: this.field } : {}) },
       ...this.extra,
     }
   }
+}
+
+/**
+ * Error con el mensaje del diccionario (lib/i18n/errors.ts) en español como texto fuente; el
+ * manejador global lo traduce al idioma de la petición. Para códigos nuevos del servidor v5.
+ */
+export function apiError(
+  status: ContentfulStatusCode,
+  code: ErrorMessageCode,
+  options: { field?: string; extra?: Record<string, unknown>; message?: string } = {},
+): HttpError {
+  const plan = options.extra?.plan
+  const planName = typeof plan === 'string' && plan !== 'trial' ? PLANS[plan as Exclude<PlanCode, 'trial'>]?.name : undefined
+  return new HttpError(status, code, options.message ?? errorMessage(code, 'es', { plan: planName ?? 'Pro' })!, options.field, options.extra)
 }
 
 export const badRequest = (message: string, field?: string, code = 'invalid') => new HttpError(400, code, message, field)

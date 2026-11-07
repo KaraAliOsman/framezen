@@ -125,7 +125,7 @@ function ficha(entry: Product) {
 
 /** Carpeta temporal con la marca Cordillera y su lista de vidrios. Devuelve su ruta. */
 export function createQualitySource(): string {
-  const root = mkdtempSync(join(tmpdir(), 'framezen-quality-'))
+  const root = mkdtempSync(join(tmpdir(), 'dekopen-quality-'))
   const items = join(root, 'items')
   mkdirSync(items, { recursive: true })
   writeFileSync(join(items, 'MisPrecios_31102026_1000.csv'), csv(CORDILLERA_ROWS))

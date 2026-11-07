@@ -1,6 +1,6 @@
 {
-  "name": "@framezen/web",
-  "version": "4.0.0",
+  "name": "@dekopen/web",
+  "version": "5.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,26 +10,30 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@dekopen/catalog": "5.0.0",
+    "@dekopen/documents": "5.0.0",
+    "@dekopen/engine": "5.0.0",
+    "@dekopen/shared": "5.0.0",
+    "@fontsource-variable/funnel-display": "^5.3.0",
+    "@fontsource-variable/funnel-sans": "^5.3.0",
     "@fontsource-variable/instrument-sans": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
-    "@framezen/catalog": "4.0.0",
-    "@framezen/documents": "4.0.0",
-    "@framezen/engine": "4.0.0",
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.2",
     "@tanstack/react-query": "^5.105.0",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "fflate": "^0.8.2",
     "lucide-react": "^1.66.0",
     "motion": "^14.9.0",
+    "pdfjs-dist": "^4.10.38",
     "radix-ui": "^1.8.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router": "7.18.5",
     "sonner": "^2.0.8",
     "three": "^0.187.0",
-    "zustand": "^5.0.16",
-    "@framezen/shared": "4.0.0"
+    "zustand": "^5.0.16"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

@@ -1,7 +1,7 @@
 /*
  * Adaptado de bloub (https://github.com/jeremy-prt/bloub)
  * Copyright (c) 2026 Jérémy Perret — Licencia MIT (ver THIRD_PARTY_NOTICES.md)
- * Modificaciones (c) 2026 Framezen.
+ * Modificaciones (c) 2026 DEKOPEN.
  */
 
 export const TAU = Math.PI * 2

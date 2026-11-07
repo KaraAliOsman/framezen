@@ -1,4 +1,7 @@
-import type { Catalog, CutPiece, Glass, Item, ItemLine, WorkshopWindow } from '@framezen/engine'
+import { assemblyUnits, matchTypology, type Catalog, type CutPiece, type Glass, type Item, type ItemLine, type WorkshopWindow } from '@dekopen/engine'
+import { typologyName } from '@dekopen/shared'
+import { sideTokens, workshopI18n, type WorkshopI18n } from './locale'
+import type { CutPartKind } from './parts'
 import type { WorkshopDocumentData } from './types'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,37 +27,25 @@ export function itemByCode(catalog: Catalog | undefined, code: string): Item | u
 // Lados y etiquetas
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SIDE_WORDS: Record<string, string> = {
-  arr: 'arriba',
-  aba: 'abajo',
-  izq: 'izquierda',
-  der: 'derecha',
-  trav: 'travesaño',
-  incl: 'inclinado',
-  mont: 'montante',
-  tras: 'traslapo',
-  guia: 'guía',
+export { sideTokens }
+
+/** «arr · aba» → «arriba · abajo» (o en el idioma pedido). Deja intacto lo que no reconoce. */
+export function sideWords(label: string, w: WorkshopI18n = workshopI18n()): string {
+  return w.side(label)
 }
 
-/** Separa «arr · aba», «arr;aba» o «izq/der» en sus partes. */
-export function sideTokens(label: string): string[] {
-  return label
-    .split(/\s*(?:[;·,/]|\sy\s)\s*/)
-    .map((t) => t.trim())
-    .filter(Boolean)
-}
-
-/** «arr · aba» → «arriba · abajo». Deja intacto lo que no reconoce. */
-export function sideWords(label: string): string {
-  const tokens = sideTokens(label)
-  if (tokens.length === 0) return label
-  return tokens.map((t) => SIDE_WORDS[t.toLowerCase()] ?? t).join(' · ')
-}
-
-/** Etiqueta corta de una pieza en una barra: «V3 · arr» (agrega la ref si falta). */
-export function barLabel(label: string, ref?: string): string {
-  if (!ref) return label
-  return label.startsWith(ref) ? label : `${ref} · ${label}`
+/**
+ * Etiqueta corta de una pieza en una barra: «V3 · arr» (agrega la ref si falta). Con `w`, el lado
+ * va en palabras del idioma del documento («V3 · top») salvo en español, que conserva la forma corta.
+ */
+export function barLabel(label: string, ref?: string, w?: WorkshopI18n): string {
+  const local = (text: string) => (w && w.locale !== 'es' ? w.side(text) : text)
+  if (!ref) return local(label)
+  if (label.startsWith(ref)) {
+    const rest = label.slice(ref.length).replace(/^\s*·\s*/, '')
+    return rest ? `${ref} · ${local(rest)}` : ref
+  }
+  return `${ref} · ${local(label)}`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,14 +88,16 @@ export function workshopPieceCodes(window: WorkshopWindow): WorkshopPieceUnit[] 
   let next = 1
 
   const push = (piece: CutPiece, cutIndex: number, members: string[]) => {
-    const tokens = sideTokens(piece.label)
+    // En un conjunto la etiqueta trae la unidad: «A · arr/aba» → «A · arr» y «A · aba».
+    const unit = /^([A-Z]+) · (.+)$/.exec(piece.label)
+    const tokens = sideTokens(unit?.[2] ?? piece.label)
     const list = members.map((member, i) => ({
       code: `${window.ref}-${member}`,
       member,
       ref: window.ref,
       piece,
       cutIndex,
-      side: tokens.length === members.length ? (tokens[i] ?? piece.label) : piece.label,
+      side: tokens.length === members.length ? `${unit ? `${unit[1]} · ` : ''}${tokens[i] ?? piece.label}` : piece.label,
     }))
     byCut.set(cutIndex, list)
     units.push(...list)
@@ -172,14 +165,30 @@ export function windowTint(data: WorkshopDocumentData, ref: string | undefined):
   return WINDOW_TINTS[(i < 0 ? 0 : i) % WINDOW_TINTS.length] ?? '#EEEAE3'
 }
 
-/** Título y subtítulo humanos de una ventana. */
-export function windowTitle(window: WorkshopWindow): { title: string; subtitle: string } {
+/**
+ * Título y subtítulo humanos de una ventana. La descripción del motor empieza con el nombre de la
+ * tipología en español; en otro idioma se cambia por el del glosario (el resto son nombres del
+ * catálogo: línea, color, vidrio).
+ */
+export function windowTitle(window: WorkshopWindow, w?: WorkshopI18n): { title: string; subtitle: string } {
   const parts = window.description.split(' · ').filter(Boolean)
+  if (w && w.locale !== 'es' && parts.length) {
+    const id = safeMatch(window)
+    if (id) parts[0] = typologyName(id, w.locale, parts[0])
+  }
   const head = parts[0] ?? window.ref
   if (window.name) {
-    return { title: window.name, subtitle: [window.location, window.description].filter(Boolean).join(' · ') }
+    return { title: window.name, subtitle: [window.location, parts.join(' · ')].filter(Boolean).join(' · ') }
   }
   return { title: head, subtitle: [window.location, ...parts.slice(1)].filter(Boolean).join(' · ') }
+}
+
+function safeMatch(window: WorkshopWindow): string | undefined {
+  try {
+    return matchTypology(window.design)
+  } catch {
+    return undefined
+  }
 }
 
 /** ¿Tiene hojas que abren (practicables o correderas móviles)? */
@@ -197,12 +206,35 @@ export function isOddAngle(angle: number): boolean {
 }
 
 /** Línea de referencia del documento: «Cotización N° 412 · Casa Pérez». */
-export function quoteLine(data: WorkshopDocumentData): string {
-  return `Cotización N° ${data.quote.number} · ${data.quote.title}`
+/** Sin nombre de obra, el título es el número de la cotización: se escribe en el idioma del documento. */
+export function quoteTitle(data: WorkshopDocumentData, w: WorkshopI18n = workshopI18n()): string {
+  const unnamed = data.quote.title === `Cotización N° ${data.quote.number}`
+  return unnamed ? w.t('common.quoteLabel', { number: data.quote.number }) : data.quote.title
 }
 
-export function otLabel(data: WorkshopDocumentData): string {
-  return `OT N° ${data.workOrder.number}`
+export function quoteLine(data: WorkshopDocumentData, w: WorkshopI18n = workshopI18n()): string {
+  const title = quoteTitle(data, w)
+  const label = w.t('common.quoteLabel', { number: data.quote.number })
+  return title === label ? label : w.t('common.quoteLine', { number: data.quote.number, title })
+}
+
+/** Pie sin tramos repetidos: «Cotización N° 1 · Cortes · Cotización N° 1» dice lo mismo dos veces. */
+export function uniqueFooter(footer: string): string {
+  return footer
+    .split(' · ')
+    .filter((part, i, all) => all.indexOf(part) === i)
+    .join(' · ')
+}
+
+export function otLabel(data: WorkshopDocumentData, w: WorkshopI18n = workshopI18n()): string {
+  if (data.workOrder.fromQuote) return w.t('common.quoteLabel', { number: data.quote.number })
+  return w.t('common.otLabel', { number: data.workOrder.number })
+}
+
+/** Rótulo de un documento filtrado por tipo de pieza: «Optimización de cortes · Hojas, Junquillos». */
+export function partsKicker(kicker: string, parts: readonly CutPartKind[] | undefined, w: WorkshopI18n): string {
+  if (!parts?.length) return kicker
+  return `${kicker} · ${parts.map((part) => w.t(`common.parts.${part}`)).join(', ')}`
 }
 
 /** Une líneas repetidas del mismo artículo (el competidor imprime «12» y «24» por separado). */
@@ -215,6 +247,28 @@ export function consolidateItems(items: ItemLine[]): ItemLine[] {
     else map.set(key, { ...item })
   }
   return [...map.values()]
+}
+
+/** Herrajes de una ventana por hoja o paño (los mismos artículos de una hoja se suman). Sin hoja conocida, rótulo vacío. */
+export function itemsByPane(window: WorkshopWindow, kind: ItemLine['kind'] = 'hardware'): { label: string; items: ItemLine[] }[] {
+  const labels = new Map(window.bom.glass.map((g) => [g.nodeId, g.label]))
+  const panes = new Map<string, ItemLine[]>()
+  for (const item of window.bom.items) {
+    if (item.kind !== kind) continue
+    const label = (item.nodeId && labels.get(item.nodeId)) || ''
+    panes.set(label, [...(panes.get(label) ?? []), item])
+  }
+  return [...panes.entries()].map(([label, items]) => ({ label, items: consolidateItems(items) }))
+}
+
+/** Mosquiteros de una ventana (en un conjunto, los de cada unidad). */
+export function windowScreens(window: WorkshopWindow): { type: string; unit?: string }[] {
+  const of = (extras: WorkshopWindow['design']['extras'], unit?: string) => {
+    const type = extras?.insectScreen?.type ?? (extras?.screen ? 'fixed' : undefined)
+    return type ? [{ type, ...(unit ? { unit } : {}) }] : []
+  }
+  const units = assemblyUnits(window.design)
+  return units.length > 0 ? units.flatMap((u) => of(u.design.extras, u.id)) : of(window.design.extras)
 }
 
 export function chunk<T>(list: T[], size: number): T[][] {

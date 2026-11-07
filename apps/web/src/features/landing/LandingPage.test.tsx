@@ -1,8 +1,9 @@
-import { PLANS } from '@framezen/shared'
+import { PLANS, QUOTE_PRESET_IDS } from '@dekopen/shared'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import LandingPage from './LandingPage'
+import { resetI18nForTests, setLocale } from '../../lib/i18n/runtime'
 import { formatClp } from './lib/format'
 
 beforeAll(() => {
@@ -31,7 +32,10 @@ beforeAll(() => {
   }
 })
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  resetI18nForTests()
+})
 
 function renderLanding() {
   return render(
@@ -41,78 +45,91 @@ function renderLanding() {
   )
 }
 
+const money = (text: string | null) => Number((text ?? '').replace(/[^\d−-]/g, '').replace('−', '-'))
+
 describe('LandingPage', () => {
-  it('presenta la propuesta y lleva a crear cuenta y entrar', () => {
+  it('presenta la propuesta en una frase y lleva a crear cuenta y entrar', () => {
     renderLanding()
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('Cotiza en minutos.')
-    const signup = screen.getAllByRole('link').filter((link) => link.getAttribute('href')?.startsWith('/crear-cuenta'))
-    const login = screen.getAllByRole('link').filter((link) => link.getAttribute('href') === '/entrar')
-    expect(signup.length).toBeGreaterThan(3)
-    expect(login.length).toBeGreaterThan(0)
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Cotiza ventanas de PVC con tus precios y pasa los cortes al taller.')
+    const links = screen.getAllByRole('link')
+    expect(links.filter((link) => link.getAttribute('href')?.startsWith('/crear-cuenta')).length).toBeGreaterThan(3)
+    expect(links.filter((link) => link.getAttribute('href') === '/entrar').length).toBeGreaterThan(0)
   })
 
-  it('el mini diseñador cambia de tipología y acepta medidas escritas', () => {
+  it('no promete tiempos ni cifras que no salgan del producto', () => {
     renderLanding()
-    const designer = screen.getByRole('group', { name: 'Mini diseñador de ventanas' })
+    const text = document.body.textContent ?? ''
+    expect(text).not.toMatch(/\b3 minutos|un minuto|\d+ talleres|\d+ %\s+(más|menos) de/i)
+    // Promesas retiradas por no tener función detrás, e instrucciones internas publicadas como ventaja.
+    expect(text).not.toMatch(/soporte prioritario|exportar tus datos|terreno|aluminio|el total, al final|familia rojas|ventanas del sur/i)
+  })
+
+  it('la prueba cambia de tipología y acepta medidas escritas', () => {
+    renderLanding()
+    const designer = screen.getByRole('group', { name: 'Prueba de ventana' })
     const typologies = within(designer).getByRole('radiogroup', { name: 'Tipología' })
     expect(within(typologies).getAllByRole('radio')).toHaveLength(5)
 
     fireEvent.click(within(typologies).getByRole('radio', { name: /Puerta/ }))
-    expect(within(designer).getByText('Puerta 1 hoja')).toBeTruthy()
-
     const width = within(designer).getByLabelText('Ancho') as HTMLInputElement
     const height = within(designer).getByLabelText('Alto') as HTMLInputElement
+    expect(width.value).toBe('900')
     fireEvent.change(width, { target: { value: '1000x2200' } })
     expect(width.value).toBe('1.000')
     expect(height.value).toBe('2.200')
 
     fireEvent.change(width, { target: { value: '90' } })
-    expect(within(designer).getByText(/Para este ejemplo usa entre/)).toBeTruthy()
+    expect(within(designer).getByText(/En esta prueba usa entre/)).toBeTruthy()
   })
 
-  it('muestra los 4 planes con selector mensual/anual y Pro recomendado', () => {
+  it('el desglose suma exactamente el precio de la ventana', () => {
     renderLanding()
-    const pricing = screen.getByRole('region', { name: /Precios claros/ })
+    const rows = within(screen.getByTestId('price-breakdown')).getAllByRole('definition').map((dd) => money(dd.textContent))
+    const total = money(screen.getByTestId('example-price').textContent)
+    expect(rows.length).toBeGreaterThan(4)
+    expect(total).toBeGreaterThan(0)
+    expect(rows.reduce((sum, value) => sum + value, 0)).toBe(total)
+  })
+
+  it('ofrece las 5 plantillas de cotización', () => {
+    renderLanding()
+    const templates = screen.getByRole('radiogroup', { name: 'Plantilla de la cotización' })
+    expect(within(templates).getAllByRole('radio')).toHaveLength(QUOTE_PRESET_IDS.length)
+    expect(QUOTE_PRESET_IDS).toHaveLength(5)
+  })
+
+  it('compara los 4 planes en tabla con precios de @dekopen/shared', () => {
+    renderLanding()
+    const plans = screen.getByRole('region', { name: /Elige tu plan/ })
+    const table = within(plans).getByRole('table')
     for (const plan of Object.values(PLANS)) {
-      expect(within(pricing).getByRole('heading', { name: plan.name })).toBeTruthy()
+      expect(within(table).getAllByRole('columnheader', { name: new RegExp('^' + plan.name) }).length).toBeGreaterThan(0)
     }
-    expect(within(pricing).getByText('Recomendado')).toBeTruthy()
-    expect(within(pricing).getAllByText(formatClp(PLANS.pro.monthly)).length).toBeGreaterThan(0)
-
+    expect(within(table).getByText(formatClp(PLANS.pro.monthly))).toBeTruthy()
     act(() => {
-      fireEvent.click(within(pricing).getByRole('radio', { name: 'Anual' }))
+      fireEvent.click(within(plans).getByRole('radio', { name: /Anual/ }))
     })
-    expect(within(pricing).getAllByText(formatClp(PLANS.pro.yearlyMonthly * 12)).length).toBeGreaterThan(0)
+    expect(within(table).getByText(formatClp(PLANS.pro.yearlyMonthly))).toBeTruthy()
   })
 
-  it('compara cortar ventana por ventana con la optimización', () => {
+  it('el taller muestra los cortes que calcula el optimizador', () => {
     renderLanding()
-    const workshop = screen.getByRole('region', { name: /Un taller sin errores/ })
-    const bars = () => within(workshop).getByText('Barras').nextElementSibling?.textContent ?? ''
-    expect(bars()).toContain('5')
-    act(() => {
-      fireEvent.click(within(workshop).getByRole('radio', { name: 'Ventana por ventana' }))
-    })
-    expect(bars()).toContain('7')
+    const workshop = screen.getByRole('region', { name: /el taller ya sabe qué cortar/ })
+    const bars = within(workshop).getByText('Barras').parentElement?.textContent ?? ''
+    expect(Number(bars.replace(/\D/g, ''))).toBeGreaterThan(0)
+    expect(within(workshop).getAllByRole('listitem', { name: /^Barra con cortes de/ }).length).toBeGreaterThan(0)
   })
 
-  it('Marco aplica una frase y permite deshacerla', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    try {
-      renderLanding()
-      const marco = screen.getByRole('region', { name: /Cotiza conversando/ })
-      fireEvent.click(within(marco).getByRole('button', { name: /agrega una corredera/ }))
-      act(() => {
-        vi.advanceTimersByTime(2000)
-      })
-      vi.useRealTimers()
-      expect(await within(marco).findByText(/Agregué la V4/)).toBeTruthy()
-      expect(within(marco).getByText('V4')).toBeTruthy()
-      fireEvent.click(within(marco).getByRole('button', { name: 'Deshacer' }))
-      expect(await within(marco).findByText(/Todo quedó como estaba/)).toBeTruthy()
-    } finally {
-      vi.useRealTimers()
-    }
+  it('Marco aplica una frase, recalcula y permite deshacerla', async () => {
+    renderLanding()
+    const marco = screen.getByRole('region', { name: /Escríbele a Marco/ })
+    const net = () => money(within(marco).getByTestId('assistant-net').textContent)
+    const before = net()
+    fireEvent.click(within(marco).getByRole('button', { name: /descuento 5/ }))
+    expect(await within(marco).findByText(/Apliqué un 5 %/)).toBeTruthy()
+    expect(net()).toBeLessThan(before)
+    fireEvent.click(within(marco).getByRole('button', { name: 'Deshacer' }))
+    expect(net()).toBe(before)
   })
 
   it('abre una pregunta frecuente', () => {
@@ -121,18 +138,32 @@ describe('LandingPage', () => {
     fireEvent.click(trigger)
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
   })
+})
 
-  it('habla de «versión» como el resto del producto y la píldora «Aceptada» llega a AA', () => {
+describe('LandingPage en otros idiomas', () => {
+  it.each([
+    ['en', 'Quote PVC windows'],
+    ['de', 'PVC-Fenster'],
+    ['tr', 'PVC pencere'],
+  ] as const)('%s: titular y navegación traducidos, sin restos en español', async (locale, title) => {
     renderLanding()
-    expect(screen.getByText('Versión B automática si cambias algo')).toBeTruthy()
-    const faq = screen.getByRole('button', { name: '¿Puedo cambiar una cotización después de enviarla?' })
-    fireEvent.click(faq)
-    expect(screen.getByText(/guarda la versión B/)).toBeTruthy()
-    expect(document.body.textContent ?? '').not.toMatch(/revisi[oó]n/i)
+    await act(async () => {
+      await setLocale(locale)
+    })
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toContain(title)
+    expect(screen.queryByRole('link', { name: 'Cotización' })).toBeNull()
+    expect(screen.queryByText('Preguntas frecuentes')).toBeNull()
+    expect(document.documentElement.lang).toMatch(new RegExp(`^${locale}-`))
+  })
 
-    // ok-600 sobre ok-50 queda en 4,38:1; ok-800 da 7,9:1 (claro) y 10,1:1 (oscuro).
-    const pill = screen.getByText('Aceptada')
-    expect(pill.className).toContain('text-ok-800')
-    expect(pill.className).not.toContain('text-ok-600')
+  it('los precios siguen en pesos chilenos aunque cambie el idioma', async () => {
+    renderLanding()
+    await act(async () => {
+      await setLocale('en')
+    })
+    const plans = screen.getByRole('region', { name: /Choose your plan/ })
+    const text = (plans.textContent ?? '').replace(/\s/g, ' ')
+    expect(text).toContain(`CLP ${new Intl.NumberFormat('en-US').format(PLANS.pro.monthly)}`)
+    expect(text).not.toMatch(/USD|€/)
   })
 })

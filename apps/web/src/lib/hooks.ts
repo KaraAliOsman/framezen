@@ -1,9 +1,11 @@
 /**
  * Hooks de datos (TanStack Query) sobre `api`. Las páginas consumen solo estos hooks.
  */
+import { useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { Client, Me, OrgSettings, Quote, QuoteSaveBody } from '@framezen/shared'
+import { localizeCatalogColors, type CatalogResponse, type Client, type Locale, type Me, type OrgSettings, type Quote, type QuoteSaveBody } from '@dekopen/shared'
 import { api, ApiRequestError, type ClientInput, type QuoteListParams } from './api'
+import { useLocale } from './i18n'
 import { qk } from './queryClient'
 
 /** Sesión actual. `null` = sin sesión (401). Otros errores se propagan (p. ej. sin conexión). */
@@ -22,8 +24,30 @@ export function useMe() {
   })
 }
 
+const localizedCatalogs = new Map<Locale, WeakMap<CatalogResponse, CatalogResponse>>()
+
+/**
+ * Catálogo con los nombres conocidos de colores en el idioma de la interfaz («Nogal» → «Walnut»);
+ * los colores propios y los nombres que no se reconocen quedan como se escribieron. Memoizado por
+ * respuesta e idioma (todas las pantallas comparten el mismo objeto).
+ */
+export function localizedCatalog(data: CatalogResponse, locale: Locale): CatalogResponse {
+  let byData = localizedCatalogs.get(locale)
+  if (!byData) localizedCatalogs.set(locale, (byData = new WeakMap()))
+  let out = byData.get(data)
+  if (!out) byData.set(data, (out = localizeCatalogColors(data, locale)))
+  return out
+}
+
+/** `select` de TanStack para el catálogo en el idioma actual. */
+export function useCatalogSelect(): (data: CatalogResponse) => CatalogResponse {
+  const { locale } = useLocale()
+  return useCallback((data: CatalogResponse) => localizedCatalog(data, locale), [locale])
+}
+
 export function useCatalog() {
-  return useQuery({ queryKey: qk.catalog, queryFn: api.catalog.get, staleTime: 5 * 60_000 })
+  const select = useCatalogSelect()
+  return useQuery({ queryKey: qk.catalog, queryFn: api.catalog.get, staleTime: 5 * 60_000, select })
 }
 
 export function useSettings() {

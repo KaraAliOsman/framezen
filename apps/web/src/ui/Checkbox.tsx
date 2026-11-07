@@ -16,15 +16,17 @@ export function Checkbox({ label, description, className, id, ...props }: Checkb
     <RadixCheckbox.Root
       id={boxId}
       className={cn(
-        'peer inline-flex size-4 shrink-0 items-center justify-center rounded-xs border border-paper-350 bg-paper-0',
-        'transition-colors duration-120 ease-out hover:border-paper-600',
-        'data-[state=checked]:border-ink-600 data-[state=checked]:bg-ink-600 data-[state=indeterminate]:border-ink-600 data-[state=indeterminate]:bg-ink-600',
-        'disabled:opacity-50 touch:size-5',
+        'peer relative inline-flex size-4 shrink-0 items-center justify-center rounded-xs border border-control bg-surface',
+        'transition-[background-color,border-color,box-shadow] duration-100 ease-out hover:border-control-hover',
+        'data-[state=checked]:border-accent data-[state=checked]:bg-accent data-[state=indeterminate]:border-accent data-[state=indeterminate]:bg-accent',
+        'aria-[invalid=true]:border-danger disabled:cursor-not-allowed disabled:opacity-45 touch:size-5',
+        // Área táctil de 32 px sin cambiar el tamaño visible.
+        "after:absolute after:-inset-2 after:content-['']",
         !label && className,
       )}
       {...props}
     >
-      <RadixCheckbox.Indicator className="text-paper-0">
+      <RadixCheckbox.Indicator className="fz-check text-fg-on-accent">
         {props.checked === 'indeterminate' ? (
           <Minus aria-hidden strokeWidth={3} className="size-3" />
         ) : (
@@ -37,9 +39,9 @@ export function Checkbox({ label, description, className, id, ...props }: Checkb
   return (
     <div className={cn('flex items-start gap-2.5', className)}>
       <div className="pt-0.5">{box}</div>
-      <label htmlFor={boxId} className="min-w-0 cursor-pointer select-none">
-        <span className="block text-base text-paper-900">{label}</span>
-        {description ? <span className="block text-[13px] leading-[18px] text-paper-600">{description}</span> : null}
+      <label htmlFor={boxId} className="min-w-0 cursor-pointer select-none peer-disabled:cursor-not-allowed peer-disabled:opacity-60">
+        <span className="block text-base text-fg">{label}</span>
+        {description ? <span className="block text-table text-fg-muted">{description}</span> : null}
       </label>
     </div>
   )

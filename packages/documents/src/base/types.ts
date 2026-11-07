@@ -1,4 +1,4 @@
-import type { Org, Client } from '@framezen/shared'
+import type { Org, Client } from '@dekopen/shared'
 
 /** Datos de la empresa que aparecen en los documentos (mismo recorte que el portal). */
 export type DocOrg = Pick<Org, 'name' | 'legalName' | 'rut' | 'address' | 'city' | 'phone' | 'email' | 'website' | 'logo' | 'accent'>

@@ -1,7 +1,9 @@
-import type { ActivityEvent } from '@framezen/shared'
+import { and, eq, inArray } from 'drizzle-orm'
+import type { ActivityEvent } from '@dekopen/shared'
 import type { Db } from '../db/client'
 import { activity } from '../db/schema'
 import { newId } from '../lib/crypto'
+import { activityMetaFromDispatch } from '../lib/request-context'
 
 export interface ActivityInput {
   orgId: string
@@ -16,6 +18,9 @@ export interface ActivityInput {
 
 /** Registra un evento. Nunca interrumpe la operación principal si falla. */
 export async function logActivity(db: Db, input: ActivityInput): Promise<void> {
+  // Acciones del asistente (services/dispatch.ts): quedan marcadas con via 'assistant'.
+  const via = activityMetaFromDispatch()
+  if (via) input = { ...input, meta: { ...input.meta, ...via } }
   try {
     await db.insert(activity).values({
       id: newId(),
@@ -33,6 +38,14 @@ export async function logActivity(db: Db, input: ActivityInput): Promise<void> {
   } catch (error) {
     console.error('No se pudo registrar la actividad', error)
   }
+}
+
+/** Marca como atendidos los avisos de una cotización (p. ej. al reenviarla, «pidió cambios» queda hecho). */
+export async function resolveQuoteNotices(db: Db, orgId: string, quoteId: string, kinds: string[]): Promise<void> {
+  await db
+    .update(activity)
+    .set({ pending: false })
+    .where(and(eq(activity.orgId, orgId), eq(activity.subjectId, quoteId), eq(activity.pending, true), inArray(activity.kind, kinds)))
 }
 
 export function toActivityEvent(row: typeof activity.$inferSelect): ActivityEvent & { pending?: boolean; meta?: Record<string, unknown> } {

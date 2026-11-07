@@ -1,7 +1,7 @@
 /*
  * Adaptado de bloub (https://github.com/jeremy-prt/bloub)
  * Copyright (c) 2026 Jérémy Perret — Licencia MIT (ver THIRD_PARTY_NOTICES.md)
- * Modificaciones (c) 2026 Framezen: sin giro hacia un panel (TURN = 0), objetivos
+ * Modificaciones (c) 2026 DEKOPEN: sin giro hacia un panel (TURN = 0), objetivos
  * explícitos (input, tarjeta) y negación suave con la cabeza.
  */
 import { TAU, clamp } from './math'

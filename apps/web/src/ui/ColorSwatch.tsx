@@ -12,32 +12,45 @@ function isLight(hex: string): boolean {
 
 export interface ColorSwatchProps {
   hex: string
-  /** Segundo color para bicolor (mitad diagonal). */
+  /** Segundo color para bicolor (mitad diagonal: exterior / interior). */
   hexIn?: string
+  /**
+   * Imagen de la textura (foliado de madera, metálico…): URL de datos o de objeto de una tesela.
+   * Si existe, se muestra sobre el color (que queda como respaldo mientras carga).
+   */
+  image?: string
   name?: string
-  size?: 'sm' | 'md' | 'lg'
+  /** sm 16 · md 24 · lg 32 · xl 48 (muestras de material en el catálogo). */
+  size?: 'sm' | 'md' | 'lg' | 'xl'
   className?: string
 }
 
-const sizes = { sm: 'size-4', md: 'size-6', lg: 'size-8' }
+const sizes = { sm: 'size-4 rounded-[3px]', md: 'size-6 rounded-xs', lg: 'size-8 rounded-xs', xl: 'size-12 rounded-sm' }
 
-/** Muestra de color de material (marco PVC, foliado). */
-export function ColorSwatch({ hex, hexIn, name, size = 'md', className }: ColorSwatchProps) {
+/**
+ * Muestra de material (marco PVC, foliado): cuadrada como una muestra física, con un brillo de canto
+ * muy sutil. Nunca un círculo de color plano para un foliado con veta: pasa `image`.
+ */
+export function ColorSwatch({ hex, hexIn, image, name, size = 'md', className }: ColorSwatchProps) {
+  const base = hexIn ? `linear-gradient(135deg, ${hex} 0 50%, ${hexIn} 50% 100%)` : hex
   return (
     <span
       role={name ? 'img' : undefined}
       aria-label={name}
       aria-hidden={name ? undefined : true}
       className={cn(
-        'inline-block shrink-0 rounded-full border',
-        isLight(hex) ? 'border-paper-350/70' : 'border-black/10',
+        'relative inline-block shrink-0 overflow-hidden border',
+        isLight(hex) && !image ? 'border-control/60' : 'border-black/15 dark:border-white/15',
         sizes[size],
         className,
       )}
       style={{
-        background: hexIn ? `linear-gradient(135deg, ${hex} 0 50%, ${hexIn} 50% 100%)` : hex,
+        background: image ? `center / cover no-repeat url("${image}"), ${hex}` : base,
       }}
-    />
+    >
+      {/* Brillo de canto (luz arriba a la izquierda), como en los dibujos realistas. */}
+      <span aria-hidden className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgb(255_255_255/0.22),transparent_45%,rgb(0_0_0/0.08))]" />
+    </span>
   )
 }
 
@@ -45,18 +58,20 @@ export interface ColorOption {
   id: string
   name: string
   hex: string
+  /** Tesela de textura opcional (ver ColorSwatch.image). */
+  image?: string
 }
 
 export interface ColorSwatchGroupProps {
   value: string | undefined
   onValueChange: (id: string) => void
   colors: ColorOption[]
-  size?: 'md' | 'lg'
+  size?: 'md' | 'lg' | 'xl'
   className?: string
   'aria-label': string
 }
 
-/** Selector de color con muestras (teclado: flechas). */
+/** Selector de color con muestras (teclado: flechas). La elegida lleva aro de acento separado. */
 export function ColorSwatchGroup({ value, onValueChange, colors, size = 'md', className, ...aria }: ColorSwatchGroupProps) {
   return (
     <RadioGroup.Root
@@ -72,11 +87,12 @@ export function ColorSwatchGroup({ value, onValueChange, colors, size = 'md', cl
             value={color.id}
             aria-label={color.name}
             className={cn(
-              'relative inline-flex items-center justify-center rounded-full p-0.5 ring-offset-0 transition-shadow duration-120 ease-out',
-              'data-[state=checked]:shadow-[0_0_0_2px_var(--paper-0),0_0_0_3.5px_var(--ink-600)]',
+              'relative inline-flex items-center justify-center rounded-sm p-[3px] transition-shadow duration-100 ease-out',
+              'hover:shadow-[0_0_0_1px_var(--dk-divider-strong)] focus-visible:outline-offset-1',
+              'data-[state=checked]:shadow-[0_0_0_2px_var(--dk-accent)]',
             )}
           >
-            <ColorSwatch hex={color.hex} size={size} />
+            <ColorSwatch hex={color.hex} image={color.image} size={size} />
           </RadioGroup.Item>
         </Tooltip>
       ))}

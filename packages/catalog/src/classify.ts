@@ -3,7 +3,7 @@
  * relleno, rol de perfil, tipo y unidad de herrajes/accesorios, vidrios y rangos de
  * medida escritos en los nombres («Cremona abatir E25 1200-1400»).
  */
-import type { GlassKind, HardwareUnit, Item, LineKind, ProfileRole } from '@framezen/engine'
+import type { GlassKind, HardwareUnit, Item, LineKind, ProfileRole } from '@dekopen/engine'
 import { normalizeKey, parseDecimal, round1 } from './text'
 
 /** Filas que el proveedor marcó para no usar. */
@@ -97,7 +97,7 @@ const SUBTYPE_FAMILY: Record<string, ProfileFamily> = {
  * mosquiteros, alféizares, soportes… Nunca se eligen como marco, hoja, travesaño ni junquillo.
  */
 export const COMPLEMENT_PATTERN =
-  /MOSQUITER|\bROTULA\b|\bADAPTADOR\b|\bTAPA\b|^(ALFEIZ|CORNIZA|VIERTEAGUA|BOTAGUA|CUBRE|ELEVADOR|SOPORTE|ALETA|PANEL|ENSANCH|TAPAJUNTA|COVERTOR|PREMARCO|CLIP INFERIOR|PERFIL ALUM\.? ENCUENTRO|ENCUENTRO|ACOPLE CUARTA|PERFIL INVERSOR 4|INVERSOR 4|ESCUADRA|ANGULO|PERFIL H\b|PERFIL U\b)/
+  /MOSQUITER|\bROTULA\b|\bADAPTADOR\b|\bTAPA\b|^(COMPLEMENTO|ALFEIZ|CORNIZA|VIERTEAGUA|BOTAGUA|CUBRE|ELEVADOR|SOPORTE|ALETA|PANEL|ENSANCH|TAPAJUNTA|COVERTOR|PREMARCO|CLIP INFERIOR|PERFIL ALUM\.? ENCUENTRO|ENCUENTRO|ACOPLE CUARTA|PERFIL INVERSOR 4|INVERSOR 4|ESCUADRA|ANGULO|PERFIL H\b|PERFIL U\b)/
 
 /** true si el nombre describe un perfil complementario (no estructural). */
 export function isComplementProfile(description: string): boolean {
@@ -123,10 +123,11 @@ export function profileFamily(subtype: string, description: string): ProfileFami
   if (COMPLEMENT_PATTERN.test(raw)) return 'other'
   const text = raw.replace(BRAND_PREFIX, '')
   if (/^(JUNQUILLO|CONTRAVIDRIO|JUNQ)/.test(text)) return 'bead'
-  if (/^(TRASLAPO|CLIP DE TRASLAPO|CLIP TRASLAPO|ENGANCHE)/.test(text)) return 'interlock'
+  if (/^TRASLAPO FALSO/.test(text)) return 'french_mullion'
+  if (/^(TRASLAPO|TRASLAPE|CLIP DE TRASLAPO|CLIP TRASLAPO|ENGANCHE|REMATE CENTRAL)/.test(text)) return 'interlock'
   if (/^(RIEL|GUIA)/.test(text)) return 'guide'
   if (/^(SOLERA|UMBRAL|PERFIL SOLERA|ZOCALO|ZAPATA)/.test(text) || /\bSOLERA\b|\bUMBRAL\b/.test(text)) return 'threshold'
-  if (/^(BATIENTE|INVERSOR)/.test(text) || /^(POSTE|PILAR)\b.*\b(INVERSOR|BATIENTE)/.test(text)) return 'french_mullion'
+  if (/^(BATIENTE|INVERSOR)/.test(text) || /^(POSTER?|PILAR)\b.*\b(INVERSOR|BATIENTE)/.test(text) || /\bPERFIL( DE)? (BATIENTE|INVERSOR)\b/.test(text)) return 'french_mullion'
   if (/^(TRAVESA|POSTE|PALILLO|MULLION|MONTANTE|BARRA T)/.test(text) || /^PILAR\s*\/\s*POSTE/.test(text)) return 'mullion'
   if (/^(UNION|ACOPLE|ESQUINERO|TUBULAR|PILAR|CONECTOR DE MARCOS|CONECTOR MARCOS|COMPENSADOR|AUXILIAR|MARCO\s*\/\s*MARCO)/.test(text)) return 'coupler'
   if (/^HOJA/.test(text)) return /PUERTA|PTA\b|PTA\./.test(text) ? 'door_sash' : 'sash'

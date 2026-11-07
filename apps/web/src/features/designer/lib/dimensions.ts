@@ -4,13 +4,15 @@
  *   parcial { nodeId, i }  → setNodeSize
  *   flecha del arco / alturas del trapecio (informativas en el motor) → setShape
  */
-import { setNodeSize, setShape, setSize, type Layout, type LayoutDimension, type Rect, type WindowDesign } from '@framezen/engine'
-import { placeDimensions, visibleDimensions, type Viewport } from '@framezen/documents'
-import { formatNumber } from '../../../lib/format'
+import { findUnit, setNodeSize, setShape, setSize, setUnitSize, type Catalog, type Layout, type LayoutDimension, type Rect, type WindowDesign } from '@dekopen/engine'
+import { placeDimensions, visibleDimensions, type Viewport } from '@dekopen/documents'
+import { getFormatter } from '../../../lib/i18n'
+import { undoLabel, type UndoLabel } from './undo'
 
 export type DimensionTarget =
   | { kind: 'width' }
   | { kind: 'height' }
+  | { kind: 'unit'; unitId: string; axis: 'width' | 'height' }
   | { kind: 'partial'; nodeId: string; index: number }
   | { kind: 'arch-rise' }
   | { kind: 'trapezoid'; side: 'leftHeight' | 'rightHeight' }
@@ -20,7 +22,7 @@ const near = (a: number, b: number) => Math.abs(a - b) < 0.6
 /** ¿Qué modifica esta cota? null = informativa (no editable). */
 export function dimensionTarget(design: WindowDesign, dim: LayoutDimension): DimensionTarget | null {
   const t = dim.target
-  if (t && 'kind' in t) return { kind: t.kind }
+  if (t && 'kind' in t) return t.unitId ? { kind: 'unit', unitId: t.unitId, axis: t.kind } : { kind: t.kind }
   if (t && 'nodeId' in t) return { kind: 'partial', nodeId: t.nodeId, index: t.index }
   const shape = design.shape
   if (dim.axis === 'y' && shape?.kind === 'arch' && near(dim.from, 0) && near(dim.value, Math.min(shape.rise, design.height))) {
@@ -39,58 +41,67 @@ export function isEditableDimension(design: WindowDesign, dim: LayoutDimension):
 
 export interface DimensionChange {
   design: WindowDesign
-  /** Texto para el historial («Cambiar ancho»). */
+  /** Texto para el historial («Ancho 1.500 mm»), en el idioma actual. */
   label: string
+  /** Clave estable del paso (ver `undoText`). */
+  undo: UndoLabel
 }
-
-const fmt = (mm: number) => `${formatNumber(mm, 1)} mm`
 
 /**
  * Aplica `value` (mm) a la cota. Devuelve null si no corresponde o si no cambia nada
  * (el motor devuelve la misma referencia cuando la operación no aplica).
  */
-export function applyDimension(design: WindowDesign, dim: LayoutDimension, value: number): DimensionChange | null {
+export function applyDimension(design: WindowDesign, dim: LayoutDimension, value: number, catalog?: Catalog): DimensionChange | null {
   if (!Number.isFinite(value) || value <= 0) return null
   const target = dimensionTarget(design, dim)
   if (!target) return null
   let next: WindowDesign
-  let label: string
+  let step: { label: string; undo: UndoLabel }
   switch (target.kind) {
+    case 'unit': {
+      const unit = findUnit(design, target.unitId)
+      if (!unit || !catalog) return null
+      const width = target.axis === 'width' ? value : unit.design.width
+      const height = target.axis === 'height' ? value : unit.design.height
+      next = setUnitSize(design, target.unitId, width, height, catalog)
+      step = target.axis === 'width' ? undoLabel('widthTo', { width }) : undoLabel('heightTo', { height })
+      break
+    }
     case 'width':
       next = setSize(design, { width: value })
-      label = `Ancho ${fmt(next.width)}`
+      step = undoLabel('widthTo', { width: next.width })
       break
     case 'height':
       next = setSize(design, { height: value })
-      label = `Alto ${fmt(next.height)}`
+      step = undoLabel('heightTo', { height: next.height })
       break
     case 'partial':
       next = setNodeSize(design, target.nodeId, target.index, value)
-      label = 'Medida del paño'
+      step = undoLabel('paneSize')
       break
     case 'arch-rise': {
       const rise = Math.min(value, design.height)
       next = setShape(design, { kind: 'arch', rise })
-      label = `Flecha del arco ${fmt(rise)}`
+      step = undoLabel('archRiseTo', { rise })
       break
     }
     case 'trapezoid': {
       const shape = design.shape
       if (shape?.kind !== 'trapezoid') return null
       next = setShape(design, { ...shape, [target.side]: Math.min(value, design.height) })
-      label = target.side === 'leftHeight' ? 'Altura izquierda' : 'Altura derecha'
+      step = undoLabel(target.side === 'leftHeight' ? 'trapezoidLeft' : 'trapezoidRight')
       break
     }
   }
   if (next === design) return null
-  return { design: next, label }
+  return { design: next, ...step }
 }
 
 /** Ancho y alto juntos desde una cota total («1500x1200» escrito en el ancho). */
 export function applySizePair(design: WindowDesign, size: { width: number; height: number }): DimensionChange | null {
   const next = setSize(design, size)
   if (next === design) return null
-  return { design: next, label: `Medidas ${fmt(next.width)} × ${fmt(next.height)}` }
+  return { design: next, ...undoLabel('sizeTo', { width: next.width, height: next.height }) }
 }
 
 export function isTotalDimension(dim: LayoutDimension): boolean {
@@ -126,7 +137,7 @@ export function dimensionAnchor(layout: Layout, vp: Viewport, dim: LayoutDimensi
 export function dimensionTextBox(layout: Layout, vp: Viewport, dim: LayoutDimension): Rect | null {
   const anchor = dimensionAnchor(layout, vp, dim)
   if (!anchor) return null
-  const text = formatNumber(dim.value, 1)
+  const text = getFormatter().mm(dim.value)
   const tw = text.length * vp.font * 0.55 + 8
   const th = vp.font + 6
   return anchor.vertical

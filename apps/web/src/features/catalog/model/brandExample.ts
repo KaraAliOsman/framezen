@@ -7,10 +7,8 @@ import {
   computeBom,
   createDesign,
   DEFAULT_CUT,
-  formatSize,
   optimizeCuts,
   priceItem,
-  TYPOLOGIES,
   type BrandSettings,
   type Catalog,
   type Id,
@@ -18,7 +16,10 @@ import {
   type Line,
   type PricingSettings,
   type TypologyId,
-} from '@framezen/engine'
+} from '@dekopen/engine'
+import type { Locale } from '@dekopen/shared'
+import { getFormatter, getGlossary, translate } from '../../../lib/i18n'
+import es from '../i18n/es'
 
 const COMPLETENESS_RANK: Record<NonNullable<Line['completeness']>, number> = { verified: 0, complete: 1, partial: 2 }
 
@@ -73,16 +74,21 @@ export function neutralSettings(settings: BrandSettings): BrandSettings {
   return { ...rest, discounts: { profiles: 0, reinforcement: 0, hardware: 0, glass: 0, accessories: 0 } }
 }
 
+/** Título del ejemplo en el idioma de la interfaz: «Oscilobatiente 1.200 × 1.200 mm». */
+export function exampleTitle(typologyId: TypologyId, width: number, height: number, locale?: Locale): string {
+  return translate(es, 'sheet.exampleTitle', { typology: getGlossary(locale).typology(typologyId), size: getFormatter({ locale }).size(width, height) }, locale)
+}
+
 export function brandExample(
   catalog: Catalog,
   settings: BrandSettings,
   pricing: Partial<PricingSettings>,
   defaults: { glassId?: Id; colorId?: Id } = {},
+  locale?: Locale,
 ): BrandExample | null {
   const line = pickExampleLine(catalog, settings.brandId)
   if (!line) return null
   const typologyId = exampleTypology(line)
-  const typology = TYPOLOGIES.find((t) => t.id === typologyId)
   const width = line.kind === 'sliding' ? 1500 : 1200
   const height = 1200
   const colorId = defaults.colorId && line.colorIds.includes(defaults.colorId) ? defaults.colorId : (line.colorIds[0] ?? catalog.colors[0]?.id ?? 'blanco')
@@ -94,13 +100,54 @@ export function brandExample(
     const list = priceItem(bom, design, catalog, pricing, { brandSettings: neutralSettings(settings) })
     const mine = priceItem(bom, design, catalog, pricing, { brandSettings: settings })
     return {
-      title: `${typology?.name ?? 'Ventana'} ${formatSize(width, height)}`,
+      title: exampleTitle(typologyId, width, height, locale),
       lineName: line.name,
       colorName: catalog.colors.find((c) => c.id === colorId)?.name ?? colorId,
       glassName: catalog.glass.find((g) => g.id === glassId)?.name ?? '',
       list,
       mine,
     }
+  } catch {
+    return null
+  }
+}
+
+export interface LineReference {
+  typologyId: TypologyId
+  width: number
+  height: number
+  colorId: Id
+  glassId: Id
+  /** Precio de venta neto por unidad (sin IVA), del motor con los precios del taller. */
+  unitNet: number
+  /** Algún artículo de esta ventana no tiene precio (entra en $0). */
+  missingPrices: boolean
+}
+
+/**
+ * Precio de referencia de una línea: su tipología más representativa en una medida típica
+ * (1.200 × 1.200 mm practicable, 1.500 × 1.200 mm corredera), calculado por el motor con los
+ * precios y descuentos del taller. Null si la línea no se puede cotizar.
+ */
+export function lineReference(
+  catalog: Catalog,
+  line: Line,
+  pricing: Partial<PricingSettings>,
+  defaults: { glassId?: Id; colorId?: Id } = {},
+): LineReference | null {
+  const typologyId = exampleTypology(line)
+  const width = line.kind === 'sliding' ? 1500 : 1200
+  const height = 1200
+  const colorId = defaults.colorId && line.colorIds.includes(defaults.colorId) ? defaults.colorId : (line.colorIds[0] ?? catalog.colors[0]?.id)
+  const glassId = exampleGlassId(catalog, defaults.glassId)
+  if (!colorId || !glassId) return null
+  try {
+    const design = createDesign(typologyId, { lineId: line.id, width, height, colorId, glassId })
+    const bom = computeBom(design, catalog)
+    // Los «Mis precios» de la marca (descuentos, margen) ya vienen en `catalog.brandSettings`.
+    const price = priceItem(bom, design, catalog, pricing)
+    if (!(price.unitNet > 0)) return null
+    return { typologyId, width, height, colorId, glassId, unitNet: price.unitNet, missingPrices: price.warnings.some((w) => w.code === 'price_missing') }
   } catch {
     return null
   }

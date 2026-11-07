@@ -2,9 +2,11 @@ import { cloneElement, isValidElement, useId, type ReactElement, type ReactNode 
 import { Label as RadixLabel } from 'radix-ui'
 import { CircleAlert } from 'lucide-react'
 import { cn } from '../lib/cn'
+import { useT } from '../lib/i18n'
+import es from './i18n/es'
 
 export function Label({ className, ...props }: React.ComponentProps<typeof RadixLabel.Root>) {
-  return <RadixLabel.Root className={cn('text-[13px] font-medium text-paper-900', className)} {...props} />
+  return <RadixLabel.Root className={cn('text-table font-medium text-fg', className)} {...props} />
 }
 
 export interface FieldProps {
@@ -21,8 +23,9 @@ export interface FieldProps {
   children: ReactElement<Record<string, unknown>>
 }
 
-/** Etiqueta + control + ayuda/error con la accesibilidad resuelta. */
+/** Etiqueta + control + ayuda/error con la accesibilidad resuelta. Ritmo: 6 px etiqueta-control. */
 export function Field({ label, hint, error, aside, optional, className, children }: FieldProps) {
+  const t = useT(es)
   const autoId = useId()
   const id = (isValidElement(children) && (children.props.id as string | undefined)) || `f${autoId}`
   const hintId = hint ? `${id}-hint` : undefined
@@ -43,22 +46,22 @@ export function Field({ label, hint, error, aside, optional, className, children
           {label ? (
             <Label htmlFor={id}>
               {label}
-              {optional ? <span className="ml-1 font-normal text-paper-600">(opcional)</span> : null}
+              {optional ? <span className="ml-1 font-normal text-fg-muted">{t('common.optional')}</span> : null}
             </Label>
           ) : (
             <span />
           )}
-          {aside ? <div className="text-[13px]">{aside}</div> : null}
+          {aside ? <div className="text-table text-fg-muted">{aside}</div> : null}
         </div>
       ) : null}
       {control}
       {error ? (
-        <p id={errorId} className="flex items-start gap-1.5 text-[13px] leading-[18px] text-bad-600" role="alert">
-          <CircleAlert aria-hidden className="mt-px size-3.5 shrink-0" strokeWidth={2} />
+        <p id={errorId} className="flex items-start gap-1.5 text-table text-danger" role="alert">
+          <CircleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" strokeWidth={2} />
           <span>{error}</span>
         </p>
       ) : hint ? (
-        <p id={hintId} className="text-[13px] leading-[18px] text-paper-600">
+        <p id={hintId} className="text-table text-fg-muted">
           {hint}
         </p>
       ) : null}

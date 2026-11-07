@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
-import type { AssistantChatResponse } from '@framezen/shared'
+import type { AssistantChatResponse } from '@dekopen/shared'
 import { aiUsage, subscriptions } from '../src/db/schema'
 import { newId } from '../src/lib/crypto'
 import { toOpenAiMessages } from '../src/services/ai/openai'
@@ -170,7 +170,7 @@ describe('POST /api/assistant/chat', () => {
     const res = await agent.post<AssistantChatResponse>('/api/assistant/chat', ask('descuento 5%', { route: '/cotizaciones/abc', quoteId: 'abc' }))
     expect(res.status).toBe(200)
     expect(res.body).toMatchObject({ mode: 'local', reason: 'ai_error', creditsUsed: 0 })
-    expect(res.body.notice).toMatch(/modo local/)
+    expect(res.body.notice).toMatch(/sin IA/)
     expect(JSON.parse(res.body.message.toolCalls![0].arguments)).toEqual({ percent: 5 })
 
     mockFetch(() => new Response('{}', { status: 401 }))
@@ -217,8 +217,11 @@ describe('POST /api/assistant/chat', () => {
   it('pedidos simultáneos no sobregiran los créditos ni llaman a la IA sin saldo que los respalde', async () => {
     withAi()
     const { agent, me } = await signup(server)
-    // Quedan 3 de 500; cada respuesta de la IA cuesta 5 créditos (5.000 tokens) y demora.
-    await server.deps.db.insert(aiUsage).values({ id: newId(), orgId: me.org.id, userId: me.user.id, credits: 497, mode: 'ai', model: 'x' })
+    // Quedan 3 de 500; cada respuesta de la IA cuesta 5 créditos (5.000 tokens) y demora. El gasto
+    // previo es de días anteriores del período (el tope diario de la prueba, 200, no interviene).
+    const day = 86_400_000
+    await server.deps.db.update(subscriptions).set({ createdAt: new Date(Date.now() - 5 * day) }).where(eq(subscriptions.orgId, me.org.id))
+    await server.deps.db.insert(aiUsage).values({ id: newId(), orgId: me.org.id, userId: me.user.id, credits: 497, mode: 'ai', model: 'x', createdAt: new Date(Date.now() - 2 * day) })
     const { fn } = mockFetch(async () => {
       await new Promise((resolve) => setTimeout(resolve, 300))
       return aiReply({ content: 'Listo.' }, { total_tokens: 5000 })
@@ -273,9 +276,10 @@ describe('POST /api/assistant/chat', () => {
   it('GET /api/assistant/status informa modo y saldo', async () => {
     const { agent, me } = await signup(server)
     expect((await server.agent().get('/api/assistant/status')).status).toBe(401)
-    expect((await agent.get('/api/assistant/status')).body).toEqual({ mode: 'local', reason: 'no_key', creditsLeft: 500, creditsIncluded: 500 })
+    expect((await agent.get('/api/assistant/status')).body).toEqual({ mode: 'local', reason: 'no_key', provider: 'no_key', creditsLeft: 500, creditsIncluded: 500 })
     withAi()
-    expect((await agent.get('/api/assistant/status')).body).toEqual({ mode: 'ai', creditsLeft: 500, creditsIncluded: 500 })
+    vi.stubGlobal('fetch', async () => Response.json({ data: [{ id: 'modelo-prueba' }] }))
+    expect((await agent.get('/api/assistant/status')).body).toEqual({ mode: 'ai', provider: 'connected', creditsLeft: 500, creditsIncluded: 500 })
     await server.deps.db.update(subscriptions).set({ plan: 'taller', status: 'active' }).where(eq(subscriptions.orgId, me.org.id))
     expect((await agent.get('/api/assistant/status')).body).toMatchObject({ mode: 'local', reason: 'plan', creditsIncluded: 0 })
   })
@@ -288,7 +292,21 @@ describe('servicios de IA', () => {
       apiKey: 'k',
       baseUrl: 'https://x.test/v1',
       model: 'm',
-      timeoutMs: 25000,
+      visionModel: 'm',
+      timeoutMs: 45000,
+      maxDurationMs: 240000,
+      maxCompletionTokens: 8192,
+      thinking: 'disabled',
+      agentThinking: true,
+      learning: true,
+    })
+    // Ningún proveedor por defecto: con clave también hacen falta dirección y modelo.
+    expect(aiConfigFromEnv({ AI_API_KEY: 'sk-x' })).toBeNull()
+    // Topes acotados: nunca una salida diminuta.
+    expect(aiConfigFromEnv({ AI_API_KEY: 'k', AI_BASE_URL: 'https://x.test/v1', AI_MODEL: 'm', AI_MAX_COMPLETION_TOKENS: '700', AI_THINKING: 'disabled', AI_VISION_MODEL: 'v' })).toMatchObject({
+      maxCompletionTokens: 4096,
+      thinking: 'disabled',
+      visionModel: 'v',
     })
   })
 

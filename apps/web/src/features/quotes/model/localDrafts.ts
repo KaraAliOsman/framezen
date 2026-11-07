@@ -3,7 +3,7 @@
  * (localStorage). Si la pestaña se cierra, se recarga o el navegador la descarta sin conexión,
  * al volver a abrir la cotización el editor los recupera y los vuelve a guardar.
  */
-import type { Id } from '@framezen/engine'
+import type { Id } from '@dekopen/engine'
 import type { QuoteDoc } from './doc'
 
 export interface LocalDraft {

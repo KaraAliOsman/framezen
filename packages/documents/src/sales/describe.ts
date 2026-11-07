@@ -1,4 +1,5 @@
-import type { DesignNode, LeafNode, WindowDesign } from '@framezen/engine'
+import { designName } from '@dekopen/engine'
+import type { DesignNode, LeafNode, WindowDesign } from '@dekopen/engine'
 
 /** Cómo abre una ventana, en palabras de cliente (vista interior). */
 
@@ -33,6 +34,8 @@ function leaves(node: DesignNode | null | undefined, out: LeafNode[] = [], depth
 }
 
 export function describeOpening(design: WindowDesign): string {
+  // Un conjunto se describe por lo que es: su `root` es solo un paño de reserva.
+  if (design?.assembly) return designName(design)
   const root = design?.root
   if (!root || typeof root !== 'object') return 'Fijo'
   if (root.type === 'sliding') {

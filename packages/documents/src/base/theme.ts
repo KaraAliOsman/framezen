@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import type { DocumentPrefs } from '@framezen/shared'
+import type { DocumentPrefs } from '@dekopen/shared'
 import { ensureContrast, isHex, mix, readableOn, toHex, parseHex } from './color'
 
 export type DocFont = 'instrument' | 'serif' | 'grotesk'
@@ -42,10 +42,10 @@ export function pageContentWidth(paper: DocPaper): number {
 
 export const FOOTER_HEIGHT = 28
 
-export const FONT_STACKS: Record<'instrument' | 'fraunces' | 'interTight', string> = {
+export const FONT_STACKS: Record<'instrument' | 'literata' | 'interTight', string> = {
   // Inter Tight completa los signos que Instrument Sans no trae (², ³, ½): sin depender del sistema.
   instrument: "'Instrument Sans Variable', 'Instrument Sans', 'Inter Tight Variable', ui-sans-serif, system-ui, sans-serif",
-  fraunces: "'Fraunces Variable', 'Fraunces', ui-serif, Georgia, serif",
+  literata: "'Literata Variable', 'Literata', ui-serif, Georgia, serif",
   interTight: "'Inter Tight Variable', 'Inter Tight', ui-sans-serif, system-ui, sans-serif",
 }
 
@@ -53,7 +53,7 @@ export const FONT_STACKS: Record<'instrument' | 'fraunces' | 'interTight', strin
 export function themeFonts(font: DocFont): { display: string; text: string } {
   switch (font) {
     case 'serif':
-      return { display: FONT_STACKS.fraunces, text: FONT_STACKS.instrument }
+      return { display: FONT_STACKS.literata, text: FONT_STACKS.instrument }
     case 'grotesk':
       return { display: FONT_STACKS.interTight, text: FONT_STACKS.interTight }
     default:

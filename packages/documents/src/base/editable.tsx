@@ -1,4 +1,4 @@
-import { createElement, useLayoutEffect, useRef, type FocusEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { createElement, useLayoutEffect, useRef, useState, type FocusEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { clsx } from './clsx'
 import { parseRichText, type RichSpan } from './text'
 
@@ -44,6 +44,11 @@ export interface EditableTextProps {
   inline?: boolean
   placeholder?: string
   className?: string
+  /**
+   * Cómo se ve sin el foco: lo mismo que imprime el PDF (marcadores resueltos, listas, negritas). Al
+   * entrar se cambia por el texto fuente, en el mismo elemento, y al salir vuelve.
+   */
+  display?: ReactNode
 }
 
 /**
@@ -60,14 +65,34 @@ export function EditableText({
   inline = false,
   placeholder,
   className,
+  display,
 }: EditableTextProps) {
   const isOn = editable && !!onChange
   const ref = useRef<HTMLElement | null>(null)
+  const [focused, setFocused] = useState(false)
+  const source = focused || display === undefined
+  const press = useRef<{ x: number; y: number } | null>(null)
+  // Al pasar al texto fuente el DOM cambia: el cursor se pone donde se hizo clic (o al final, con teclado).
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!focused || display === undefined || !el) return
+    const doc = el.ownerDocument
+    const selection = doc.getSelection()
+    const at = press.current && typeof doc.caretRangeFromPoint === 'function' ? doc.caretRangeFromPoint(press.current.x, press.current.y) : null
+    press.current = null
+    const range = at && el.contains(at.startContainer) ? at : doc.createRange()
+    if (range !== at) {
+      range.selectNodeContents(el)
+      range.collapse(false)
+    }
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+  }, [focused, display])
   // Si el valor no cambió para React (p. ej. una edición que no se aplicó), el DOM puede seguir
   // mostrando lo escrito: al volver a dibujar, sin foco, se repone el valor vigente.
   useLayoutEffect(() => {
     const el = ref.current
-    if (!isOn || !el || el === el.ownerDocument.activeElement) return
+    if (!isOn || !el || el === el.ownerDocument.activeElement || display !== undefined) return
     if (el.textContent !== value) el.textContent = value
   })
   if (!isOn) {
@@ -77,7 +102,10 @@ export function EditableText({
     return createElement(as, { className: clsx(!inline && 'fzd-pre', className), 'data-field': field }, value)
   }
   const commit = (event: FocusEvent<HTMLElement>) => {
+    // Se fue sin haber llegado al texto fuente: lo que hay en el DOM es la vista, no lo escrito.
+    if (!source) return
     const next = (event.currentTarget.innerText ?? '').replace(/ /g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+    setFocused(false)
     if (next !== value.trim()) onChange?.(next, field)
   }
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
@@ -97,7 +125,7 @@ export function EditableText({
       // muestra el valor vigente.
       key: value,
       ref,
-      className: clsx('fzd-editable', 'fzd-editable--on', inline ? 'fzd-editable--inline' : 'fzd-pre', className),
+      className: clsx('fzd-editable', 'fzd-editable--on', inline ? 'fzd-editable--inline' : source && 'fzd-pre', className),
       contentEditable: 'plaintext-only' as const,
       suppressContentEditableWarning: true,
       spellCheck: true,
@@ -106,9 +134,24 @@ export function EditableText({
       'aria-label': placeholder,
       'data-field': field,
       'data-placeholder': placeholder,
+      // Con el mouse se cambia al soltar: si el DOM cambia en medio del clic, el navegador pierde el cursor.
+      onMouseDown: (event: MouseEvent) => {
+        if (display === undefined || focused) return
+        press.current = { x: event.clientX, y: event.clientY }
+        const win = event.currentTarget.ownerDocument.defaultView
+        const up = (done: globalThis.MouseEvent) => {
+          win?.removeEventListener('mouseup', up)
+          if (press.current) press.current = { x: done.clientX, y: done.clientY }
+          if (ref.current === ref.current?.ownerDocument.activeElement) setFocused(true)
+        }
+        win?.addEventListener('mouseup', up)
+      },
+      onFocus: () => {
+        if (!press.current) setFocused(true)
+      },
       onBlur: commit,
       onKeyDown,
     },
-    value,
+    source ? value : display,
   )
 }

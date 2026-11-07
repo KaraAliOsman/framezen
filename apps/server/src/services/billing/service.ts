@@ -1,5 +1,5 @@
 /**
- * Cobros de Framezen: prueba de 14 días, planes mensuales/anuales, cambio de plan con
+ * Cobros de DEKOPEN: prueba de 14 días, planes mensuales/anuales, cambio de plan con
  * prorrateo simple, cancelación a fin de período y modo lectura al vencer.
  *
  * Proveedores:
@@ -10,15 +10,15 @@
  *   estado firmado en Flow, y cada intento se aplica una sola vez (idempotente).
  */
 import { and, eq, inArray, lte } from 'drizzle-orm'
-import { formatCLP } from '@framezen/engine'
-import { formatDateLong } from '@framezen/documents'
+import { formatCLP } from '@dekopen/engine'
+import { formatDateLong } from '@dekopen/documents'
 import {
   PLANS,
   type BillingActionResult,
   type BillingStateDetail,
   type CheckoutResult as SharedCheckoutResult,
   type PlanChangeSummary,
-} from '@framezen/shared'
+} from '@dekopen/shared'
 import type { AppDeps } from '../../context'
 import { subscriptions } from '../../db/schema'
 import { newId } from '../../lib/crypto'
@@ -50,7 +50,7 @@ import {
 
 export type BillingGateway = { kind: 'dev' } | { kind: 'flow'; client: FlowClient }
 
-// Estado del plan, cambio de plan y resultados: tipos del contrato (@framezen/shared).
+// Estado del plan, cambio de plan y resultados: tipos del contrato (@dekopen/shared).
 export type { BillingActionResult, BillingStateDetail, PlanChangeSummary }
 
 /** Respuesta de checkout del servidor: el contrato, con `billing` y `message` siempre presentes. */
@@ -335,7 +335,7 @@ export class BillingService {
   /** Plan de Flow para (plan, período, monto): se crea solo la primera vez. */
   private async ensureFlowPlan(plan: PaidPlan, period: BillingPeriod): Promise<string> {
     const amount = planGross(plan, period)
-    const planId = `framezen-${plan}-${period}-${amount}`
+    const planId = `dekopen-${plan}-${period}-${amount}`
     if (this.flowPlans.has(planId)) return planId
     try {
       await this.flow.getPlan(planId)
@@ -343,7 +343,7 @@ export class BillingService {
       if (!(error instanceof FlowError) || error.status < 400 || error.status >= 500) throw error
       await this.flow.createPlan({
         planId,
-        name: `Framezen ${planLabel(plan, period)}`,
+        name: `DEKOPEN ${planLabel(plan, period)}`,
         amount,
         interval: period === 'yearly' ? FLOW_INTERVAL.yearly : FLOW_INTERVAL.monthly,
         urlCallback: this.url('confirm'),
@@ -395,7 +395,7 @@ export class BillingService {
     try {
       const customerId = await this.ensureFlowCustomer(actor, sub)
       if (account?.cardLast4) {
-        // Tarjeta ya registrada: se suscribe directo, sin salir de Framezen.
+        // Tarjeta ya registrada: se suscribe directo, sin salir de DEKOPEN.
         await this.retireFlowSubscriptions(actor.org.id)
         const remote = await this.flowSubscribe(plan, period, customerId)
         const checkoutId = await this.insertCheckout({ ...base, method: 'direct', status: 'applied', meta: { subscriptionId: remote.subscriptionId } })
@@ -472,7 +472,7 @@ export class BillingService {
         const checkoutId = await this.insertCheckout({ ...base, method: 'payment', amount: p.chargeNow, credit, status: 'pending', meta })
         const payment = await this.flow.createPayment({
           commerceOrder: checkoutId,
-          subject: `Framezen · cambio a ${planLabel(plan, period)}`,
+          subject: `DEKOPEN · cambio a ${planLabel(plan, period)}`,
           amount: p.chargeNow,
           email: actor.user.email,
           urlConfirmation: this.url('confirm'),
@@ -560,7 +560,7 @@ export class BillingService {
     if (sub.plan === 'trial') {
       return {
         billing: await this.state(actor.org.id),
-        message: `Estás en la prueba gratis: no hay cobros que cancelar. Termina el ${day(sub.trialEndsAt)} y después la cuenta queda en modo lectura, con todo disponible.`,
+        message: `Estás en la prueba gratis: no hay cobros que cancelar. Termina el ${day(sub.trialEndsAt)} y después la cuenta queda en modo lectura y puedes descargar tus PDF.`,
       }
     }
     if (!sub.currentPeriodEnd || sub.currentPeriodEnd <= now || sub.status === 'expired') {
@@ -582,7 +582,7 @@ export class BillingService {
     await this.log(actor, 'billing.canceled', `${firstName(actor.user.name)} canceló el plan ${PLANS[sub.plan as PaidPlan].name}; sigue activo hasta el ${day(sub.currentPeriodEnd)}`)
     return {
       billing: await this.state(actor.org.id),
-      message: `Listo: no habrá más cobros. Tu plan sigue activo hasta el ${day(sub.currentPeriodEnd)}; después la cuenta queda en modo lectura, con todo disponible para descargar.`,
+      message: `Listo: no habrá más cobros. Tu plan sigue activo hasta el ${day(sub.currentPeriodEnd)}; después la cuenta queda en modo lectura y puedes descargar tus PDF.`,
     }
   }
 

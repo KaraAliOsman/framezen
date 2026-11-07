@@ -10,24 +10,29 @@
  *   con flechas cuando están enfocados.
  * - Vista interior/exterior, avisos del despiece como marcadores discretos, accesible por teclado.
  *
- * El dibujo es WindowDrawing de @framezen/documents (mismo SVG que documentos y portal); las capas
+ * El dibujo es WindowDrawing de @dekopen/documents (mismo SVG que documentos y portal); las capas
  * de interacción usan su mismo Viewport, así que calzan al píxel.
  */
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { Minus, Plus, Scan } from 'lucide-react'
-import { computeBom, computeLayout, setMullionAxis, type Catalog, type Layout, type LayoutDimension, type LayoutMullion, type Rect, type WindowDesign } from '@framezen/engine'
-import { WindowDrawing, type DrawingView, type Viewport } from '@framezen/documents'
+import { computeBom, computeLayout, isAssembly, type Catalog, type Layout, type LayoutDimension, type LayoutMullion, type Rect, type WindowDesign } from '@dekopen/engine'
+import { AssemblyPlan, slidingVisibleRect, WindowDrawing, type DrawingView, type Viewport } from '@dekopen/documents'
 import { cn } from '../../lib/cn'
-import { formatNumber } from '../../lib/format'
+import { useFormat, useLocale, useT } from '../../lib/i18n'
 import { isTypingTarget } from '../../lib/useShortcut'
 import { SegmentedControl } from '../../ui/SegmentedControl'
+import { Toolbar, ToolbarButton, ToolbarSeparator } from '../../ui/Toolbar'
 import { Tooltip } from '../../ui/Tooltip'
+import { AssemblyLayer } from './canvas/AssemblyLayer'
 import { ContextToolbar } from './canvas/ContextToolbar'
 import { DimensionEditor } from './canvas/DimensionEditor'
 import { WarningMarkerButton, WarningSummary } from './canvas/WarningLayer'
+import es from './i18n/es'
+import { moveMullion, scopeOf, unitSegment } from './lib/assembly'
 import { canRemoveDivision, nodeSummary, nodeTitle, removeDivision, resolveSelection, splitAction, type Change } from './lib/actions'
 import { applyDimension, applySizePair, dimensionAnchor, dimensionTarget, isTotalDimension } from './lib/dimensions'
-import { focusCameFromTab, useElementSize } from './lib/hooks'
+import { focusCameFromTab, useElementSize, useMediaQuery } from './lib/hooks'
+import { undoLabel, type UndoLabel } from './lib/undo'
 import { arrowDirection, nextInDirection, type NavTarget } from './lib/navigation'
 import { keyboardStep, snapMullion, type SnapResult } from './lib/snap'
 import {
@@ -41,7 +46,6 @@ import {
   toStage,
   unionRect,
   zoomAt,
-  zoomLabel,
   type Insets,
   type Pan,
 } from './lib/viewport'
@@ -50,8 +54,11 @@ import { nodeRect, splitWarnings } from './lib/warnings'
 export interface DesignCanvasProps {
   design: WindowDesign
   catalog: Catalog
-  /** Cada cambio llega con un texto corto para el historial («Dividir en 2 (vertical)»). */
-  onChange: (next: WindowDesign, label: string) => void
+  /**
+   * Cada cambio llega con el texto del paso en el idioma actual («Dividir en 2 (vertical)») y su
+   * clave estable (`undo`, para agrupar el historial y volver a traducirlo: ver `undoText`).
+   */
+  onChange: (next: WindowDesign, label: string, undo?: UndoLabel) => void
   selectedNodeId: string | null
   onSelect: (id: string | null) => void
   view?: DrawingView
@@ -106,6 +113,8 @@ function insetsFor(width: number): Insets {
 
 /** Segmentos del tramo de un travesaño (eje anterior y siguiente) desde las cotas parciales. */
 function mullionSegment(layout: Layout, m: LayoutMullion): { segStart: number; segEnd: number } {
+  const unit = unitSegment(layout, m)
+  if (unit) return unit
   const before = layout.dimensions.find((d) => d.target && 'nodeId' in d.target && d.target.nodeId === m.nodeId && d.target.index === m.index)
   const after = layout.dimensions.find((d) => d.target && 'nodeId' in d.target && d.target.nodeId === m.nodeId && d.target.index === m.index + 1)
   const extent = m.dir === 'vertical' ? layout.width : layout.height
@@ -120,46 +129,25 @@ function matchesFocusVisible(el: Element): boolean {
   }
 }
 
-/** Anillo doble de selección: separación de papel + 2 px de tinta (DESIGN.md, foco). */
+/**
+ * Selección con el canto de vidrio (DESIGN §14): filo azul de 2 px (`--dk-select`, solo en el lienzo) con
+ * halo y un velo muy suave. Hover: contorno fino. Foco de teclado: contorno discontinuo.
+ */
 function SelectionRing({ r, kind }: { r: Rect; kind: 'select' | 'hover' | 'focus' }) {
   if (kind === 'hover') {
-    return <rect x={r.x + 0.5} y={r.y + 0.5} width={Math.max(0, r.w - 1)} height={Math.max(0, r.h - 1)} rx={1.5} fill="var(--ink-50)" fillOpacity={0.28} stroke="var(--ink-500)" strokeOpacity={0.55} strokeWidth={1} />
+    return <rect x={r.x + 0.5} y={r.y + 0.5} width={Math.max(0, r.w - 1)} height={Math.max(0, r.h - 1)} rx={1.5} fill="var(--dk-select)" fillOpacity={0.06} stroke="var(--dk-select)" strokeOpacity={0.55} strokeWidth={1} />
   }
   if (kind === 'focus') {
-    return <rect x={r.x - 2} y={r.y - 2} width={r.w + 4} height={r.h + 4} rx={3} fill="none" stroke="var(--ink-500)" strokeWidth={1.5} strokeDasharray="4 3" />
+    return <rect x={r.x - 2} y={r.y - 2} width={r.w + 4} height={r.h + 4} rx={3} fill="none" stroke="var(--dk-focus)" strokeWidth={1.5} strokeDasharray="4 3" />
   }
   return (
     <g>
-      <rect className="fz-sel-tint" x={r.x} y={r.y} width={r.w} height={r.h} fill="var(--ink-50)" fillOpacity={0.4} />
-      <rect x={r.x - 1} y={r.y - 1} width={r.w + 2} height={r.h + 2} rx={2} fill="none" stroke="var(--paper-0)" strokeWidth={2} />
-      <rect x={r.x - 3} y={r.y - 3} width={r.w + 6} height={r.h + 6} rx={3.5} fill="none" stroke="var(--ink-500)" strokeWidth={2} />
+      <rect className="fz-sel-tint" x={r.x} y={r.y} width={r.w} height={r.h} fill="var(--dk-select)" fillOpacity={0.09} />
+      <rect x={r.x - 3} y={r.y - 3} width={r.w + 6} height={r.h + 6} rx={3.5} fill="none" stroke="var(--dk-select-ring)" strokeWidth={4} />
+      <rect x={r.x - 1} y={r.y - 1} width={r.w + 2} height={r.h + 2} rx={2} fill="none" stroke="var(--dk-select)" strokeWidth={2} />
     </g>
   )
 }
-
-/** Cuadrícula de 100 mm a escala, alineada con el marco (se aclara al alejarse). */
-const Grid = memo(function Grid({ scale, originX, originY, frame }: { scale: number; originX: number; originY: number; frame: Rect }) {
-  let stepMm = 100
-  while (stepMm * scale < 9 && stepMm < 100000) stepMm *= stepMm === 100 ? 5 : 2
-  const step = stepMm * scale
-  const major = step * (stepMm === 100 ? 10 : 5)
-  const id = useMemo(() => `fzg${Math.random().toString(36).slice(2, 8)}`, [])
-  return (
-    <svg aria-hidden className="pointer-events-none absolute inset-0 h-full w-full" shapeRendering="crispEdges">
-      <defs>
-        <pattern id={`${id}a`} width={step} height={step} patternUnits="userSpaceOnUse" x={originX} y={originY}>
-          <path d={`M${step} 0V${step}M0 ${step}H${step}`} fill="none" stroke="var(--paper-200)" strokeOpacity={0.5} strokeWidth={1} />
-        </pattern>
-        <pattern id={`${id}b`} width={major} height={major} patternUnits="userSpaceOnUse" x={originX} y={originY}>
-          <path d={`M${major} 0V${major}M0 ${major}H${major}`} fill="none" stroke="var(--paper-200)" strokeOpacity={0.85} strokeWidth={1} />
-        </pattern>
-      </defs>
-      <rect width="100%" height="100%" fill={`url(#${id}a)`} />
-      <rect width="100%" height="100%" fill={`url(#${id}b)`} />
-      <rect x={frame.x} y={frame.y} width={frame.w} height={frame.h} fill="var(--paper-50)" />
-    </svg>
-  )
-})
 
 /** Coloca un elemento flotante sobre (o bajo) un rectángulo, dentro del lienzo. */
 function Floating({ anchor, container, children, compact, gap = 14 }: { anchor: Rect; container: { width: number; height: number }; children: ReactNode; compact?: boolean; gap?: number }) {
@@ -189,7 +177,7 @@ function Floating({ anchor, container, children, compact, gap = 14 }: { anchor: 
   const left = Math.min(Math.max(8, anchor.x + anchor.w / 2 - own.w / 2), Math.max(8, container.width - own.w - 8))
   // Arriba de la selección; si no cabe (o choca con el selector de vista), adentro arriba; si
   // la selección es baja, debajo.
-  const clashesView = (t: number) => t < 48 && left < 200
+  const clashesView = (t: number) => t < 48 && left + own.w > container.width - 200
   let top = anchor.y - own.h - gap
   if (top < 8 || clashesView(top)) {
     const inside = Math.max(anchor.y, 8) + 10
@@ -204,43 +192,71 @@ function Floating({ anchor, container, children, compact, gap = 14 }: { anchor: 
 }
 
 function ZoomControls({ zoom, onZoom, onFit, compact }: { zoom: number; onZoom: (factor: number) => void; onFit: () => void; compact: boolean }) {
-  const btn =
-    'inline-flex size-8 items-center justify-center rounded-sm text-paper-600 outline-none transition-colors duration-120 hover:bg-paper-100 hover:text-paper-900 focus-visible:shadow-[0_0_0_2px_var(--ink-500)] touch:size-10'
+  const t = useT(es)
+  const fmt = useFormat()
+  const btn = 'inline-flex size-8 items-center justify-center rounded-sm text-fg-muted outline-none transition-colors duration-100 hover:bg-hover hover:text-fg-strong touch:size-10'
+  const zoomText = fmt.pct(Math.round(zoom * 100))
   return (
-    <div data-canvas-ui="" className="flex items-center gap-0.5 rounded-md border border-paper-200 bg-paper-0 p-0.5 shadow-[0_1px_2px_rgb(31_28_24/0.06)]">
+    <Toolbar variant="floating" aria-label={t('canvas.zoom')} data-canvas-ui="" className="h-10 gap-0.5 px-1 touch:h-12">
       {!compact ? (
-        <Tooltip content="Alejar" shortcut="-">
-          <button type="button" aria-label="Alejar" className={btn} onClick={() => onZoom(1 / 1.25)}>
-            <Minus aria-hidden strokeWidth={1.75} className="size-4" />
-          </button>
+        <Tooltip content={t('canvas.zoomOut')} shortcut="-">
+          <ToolbarButton asChild>
+            <button type="button" aria-label={t('canvas.zoomOut')} className={btn} onClick={() => onZoom(1 / 1.25)}>
+              <Minus aria-hidden strokeWidth={1.75} className="size-4" />
+            </button>
+          </ToolbarButton>
         </Tooltip>
       ) : null}
-      <Tooltip content="Encuadrar" shortcut="f">
-        <button type="button" aria-label={`Zoom ${zoomLabel(zoom)}. Encuadrar`} className={cn(btn, 'w-auto min-w-14 px-1.5 text-[12px] font-medium tabular')} onClick={onFit}>
-          {zoomLabel(zoom)}
-        </button>
+      <Tooltip content={t('canvas.fit')} shortcut="f">
+        <ToolbarButton asChild>
+          <button type="button" aria-label={t('canvas.zoomFit', { zoom: zoomText })} className={cn(btn, 'w-auto min-w-14 px-1.5 text-meta font-medium tabular')} onClick={onFit}>
+            {zoomText}
+          </button>
+        </ToolbarButton>
       </Tooltip>
       {!compact ? (
-        <Tooltip content="Acercar" shortcut="+">
-          <button type="button" aria-label="Acercar" className={btn} onClick={() => onZoom(1.25)}>
-            <Plus aria-hidden strokeWidth={1.75} className="size-4" />
-          </button>
+        <Tooltip content={t('canvas.zoomIn')} shortcut="+">
+          <ToolbarButton asChild>
+            <button type="button" aria-label={t('canvas.zoomIn')} className={btn} onClick={() => onZoom(1.25)}>
+              <Plus aria-hidden strokeWidth={1.75} className="size-4" />
+            </button>
+          </ToolbarButton>
         </Tooltip>
       ) : null}
-      <span aria-hidden className="mx-0.5 h-5 w-px bg-paper-200" />
-      <Tooltip content="Encuadrar" shortcut="f">
-        <button type="button" aria-label="Encuadrar la ventana" className={btn} onClick={onFit}>
-          <Scan aria-hidden strokeWidth={1.75} className="size-4" />
-        </button>
+      <ToolbarSeparator className="mx-0.5" />
+      <Tooltip content={t('canvas.fit')} shortcut="f">
+        <ToolbarButton asChild>
+          <button type="button" aria-label={t('canvas.fitWindow')} className={btn} onClick={onFit}>
+            <Scan aria-hidden strokeWidth={1.75} className="size-4" />
+          </button>
+        </ToolbarButton>
       </Tooltip>
-    </div>
+    </Toolbar>
   )
 }
 
+/** Nombre del campo al editar una cota (total, parcial, flecha del arco, alturas del trapecio). */
+function dimensionLabel(design: WindowDesign, dim: LayoutDimension, t: (key: 'dimension.totalWidth' | 'dimension.totalHeight' | 'dimension.archRise' | 'dimension.leftHeight' | 'dimension.rightHeight' | 'dimension.pane') => string): string {
+  if (isTotalDimension(dim)) return dim.axis === 'x' ? t('dimension.totalWidth') : t('dimension.totalHeight')
+  const target = dimensionTarget(design, dim)
+  if (target?.kind === 'arch-rise') return t('dimension.archRise')
+  if (target?.kind === 'trapezoid') return target.side === 'leftHeight' ? t('dimension.leftHeight') : t('dimension.rightHeight')
+  return t('dimension.pane')
+}
+
 export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSelect, view: viewProp, onViewChange, readOnly = false, className }: DesignCanvasProps) {
+  const t = useT(es)
+  const fmt = useFormat()
+  const { locale } = useLocale()
+  const coarse = useMediaQuery('(pointer: coarse)')
   const [containerRef, size] = useElementSize<HTMLDivElement>(FALLBACK_SIZE)
   const compact = size.width < 600
-  const insets = insetsFor(size.width)
+  // En un conjunto quebrado la planta ocupa la esquina superior: el dibujo parte bajo ella.
+  const broken = (design.assembly?.kind ?? 'flat') !== 'flat'
+  const insets = useMemo(() => {
+    const base = insetsFor(size.width)
+    return broken && size.width >= 600 && size.height >= 560 ? { ...base, top: 228 } : base
+  }, [size.width, size.height, broken])
   const box = fitBox(size, insets)
 
   const [viewState, setViewState] = useState<DrawingView>('interior')
@@ -268,9 +284,12 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
   const [hoverId, setHoverId] = useState<string | null>(null)
   const [focusId, setFocusId] = useState<string | null>(null)
   const [mullionSel, setMullionSel] = useState<{ splitId: string; index: number } | null>(null)
+  const [hoverMullion, setHoverMullion] = useState<string | null>(null)
   const [panning, setPanning] = useState(false)
   const [spaceHeld, setSpaceHeld] = useState(false)
   const [ring, setRing] = useState(false)
+  // Conjunto quebrado: se edita en el desarrollo y se revisa en volumen.
+  const [volumeMode, setVolumeMode] = useState(false)
 
   const shown = draft ?? design
   const baseLayout = useMemo(() => computeLayout(design, catalog), [design, catalog])
@@ -293,6 +312,8 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
   const spacePanned = useRef(false)
   const hitRefs = useRef(new Map<string, SVGRectElement>())
 
+  // En un conjunto, las acciones trabajan sobre la unidad elegida y `scoped.lift` arma el conjunto.
+  const scoped = useMemo(() => scopeOf(design, selectedNodeId, catalog), [design, selectedNodeId, catalog])
   const selection = useMemo(() => resolveSelection(design, selectedNodeId), [design, selectedNodeId])
   const mullionIndex = mullionSel && mullionSel.splitId === selectedNodeId ? mullionSel.index : null
   const editable = !readOnly
@@ -324,14 +345,19 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
   const apply = useCallback(
     (change: Change | null, nextSelected?: string | null) => {
       if (!change || readOnly) return
-      onChange(change.design, change.label)
+      onChange(change.design, change.label, change.undo)
       if (nextSelected !== undefined) select(nextSelected)
       else if (selectedNodeId && !resolveSelection(change.design, selectedNodeId)) select(successorOf(selectedNodeId, change.design))
     },
     [onChange, readOnly, select, selectedNodeId],
   )
 
-  const onFix = useCallback((next: WindowDesign, label: string) => apply({ design: next, label }), [apply])
+  const applyScoped = (change: Change | null, nextLocal?: string | null) => {
+    if (!change) return
+    apply({ ...change, design: scoped.lift(change.design) }, nextLocal === undefined ? undefined : nextLocal === null ? null : scoped.outer(nextLocal))
+  }
+
+  const onFix = useCallback((next: WindowDesign, label: string, undo?: UndoLabel) => apply({ design: next, label, undo: undo ?? { key: 'fix', params: { label } } }), [apply])
 
   // ── Cámara ────────────────────────────────────────────────────────────────
   const fit = useCallback(() => setCam({ zoom: 1, pan: null }), [])
@@ -374,7 +400,7 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
 
   // ── Objetivos (paños / hojas) en px del escenario ──────────────────────────
   const targets = useMemo<(NavTarget & { kind: 'cell' | 'panel' })[]>(() => {
-    if (layout.sliding.length) return layout.sliding.map((p) => ({ id: p.panelId, rect: toStage(vp, layout, p.rect), kind: 'panel' as const }))
+    if (layout.sliding.length && !layout.assembly) return layout.sliding.map((p) => ({ id: p.panelId, rect: toStage(vp, layout, slidingVisibleRect(layout, p)), kind: 'panel' as const }))
     return layout.cells.map((c) => ({ id: c.nodeId, rect: toStage(vp, layout, c.rect), kind: 'cell' as const }))
   }, [layout, vp])
 
@@ -393,7 +419,8 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
     [targets, layout, vp],
   )
 
-  const selectedRects = rectsFor(selectedNodeId, mullionIndex)
+  const volume = volumeMode && Boolean(layout.assembly?.plan)
+  const selectedRects = volume ? [] : rectsFor(selectedNodeId, mullionIndex)
   const anchor = unionRect(selectedRects)
 
   // ── Avisos ────────────────────────────────────────────────────────────────
@@ -401,22 +428,22 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
 
   // ── Teclado ───────────────────────────────────────────────────────────────
   const removeSelected = (): boolean => {
-    if (!selectedNodeId || !canRemoveDivision(design, selectedNodeId)) return false
-    const sel = resolveSelection(design, selectedNodeId)
+    if (!scoped.nodeId || !canRemoveDivision(scoped.design, scoped.nodeId)) return false
+    const sel = resolveSelection(scoped.design, scoped.nodeId)
     if (!sel) return false
     if (sel.kind === 'leaf' && sel.parent) {
       const siblings = sel.parent.node.children
       const neighbor = siblings[sel.parent.index > 0 ? sel.parent.index - 1 : sel.parent.index + 1]
-      const change = removeDivision(design, selectedNodeId)
+      const change = removeDivision(scoped.design, scoped.nodeId)
       const keep = neighbor?.type === 'leaf' ? neighbor.id : null
-      apply(change, keep)
+      applyScoped(change, keep)
       return Boolean(change)
     }
     if (sel.kind === 'split') {
       const index = mullionIndex
       const keepNode = index !== null ? sel.node.children[index] : sel.node.children[0]
-      const change = removeDivision(design, sel.node.id, index ?? undefined)
-      apply(change, keepNode?.type === 'leaf' ? keepNode.id : null)
+      const change = removeDivision(scoped.design, sel.node.id, index ?? undefined)
+      applyScoped(change, keepNode?.type === 'leaf' ? keepNode.id : null)
       return Boolean(change)
     }
     return false
@@ -486,7 +513,7 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
       case 'H':
         if (editable && selection?.kind === 'leaf') {
           e.preventDefault()
-          apply(splitAction(design, selection.node.id, e.key.toLowerCase() === 'v' ? 'vertical' : 'horizontal', e.shiftKey ? 3 : 2))
+          applyScoped(splitAction(scoped.design, selection.node.id, e.key.toLowerCase() === 'v' ? 'vertical' : 'horizontal', e.shiftKey ? 3 : 2))
         }
         return
       case 'Enter':
@@ -609,7 +636,7 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
     const raw = d.mullion.dir === 'vertical' ? mm.x : mm.y
     const result = snapMullion({ raw, segStart: d.segStart, segEnd: d.segEnd, min: d.mullion.min, max: d.mullion.max, pxPerMm: d.vp.scale, free: e.altKey })
     setSnap({ ...result, mullion: d.mullion })
-    setDraft(setMullionAxis(design, d.mullion.nodeId, d.mullion.index, result.axis))
+    setDraft(moveMullion(design, d.mullion, result.axis, d.layout, catalog))
   }
 
   const onMullionUp = (e: ReactPointerEvent<SVGRectElement>, cancelled = false) => {
@@ -621,7 +648,10 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
     setDraft(null)
     setSnap(null)
     if (cancelled) return
-    if (d.moved && next && next !== design) onChange(next, 'Mover travesaño')
+    if (d.moved && next && next !== design) {
+      const step = undoLabel('moveMullion')
+      onChange(next, step.label, step.undo)
+    }
     else if (!d.moved) select(d.mullion.nodeId, { splitId: d.mullion.nodeId, index: d.mullion.index })
   }
 
@@ -635,8 +665,11 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
       e.preventDefault()
       e.stopPropagation()
       const axis = Math.min(m.max, Math.max(m.min, m.axis + delta * keyboardStep(e)))
-      const next = setMullionAxis(design, m.nodeId, m.index, axis)
-      if (next !== design) onChange(next, 'Mover travesaño')
+      const next = moveMullion(design, m, axis, layout, catalog)
+      if (next !== design) {
+        const step = undoLabel('moveMullion')
+        onChange(next, step.label, step.undo)
+      }
       return
     }
     if (e.key === 'Enter') {
@@ -648,7 +681,10 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
       e.stopPropagation()
       const node = resolveSelection(design, m.nodeId)
       const keep = node?.kind === 'split' ? node.node.children[m.index] : undefined
-      apply(removeDivision(design, m.nodeId, m.index), keep?.type === 'leaf' ? keep.id : null)
+      const scope = scopeOf(design, m.nodeId, catalog)
+      if (!scope.nodeId) return
+      const change = removeDivision(scope.design, scope.nodeId, m.index)
+      if (change) apply({ ...change, design: scope.lift(change.design) }, keep?.type === 'leaf' ? scope.outer(keep.id) : null)
     }
   }
 
@@ -676,25 +712,31 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
         dimensions="all"
         width={stage.width}
         height={stage.height}
-        onDimensionClick={readOnly ? undefined : onDimensionClick}
+        onDimensionClick={readOnly || volume ? undefined : onDimensionClick}
         className="block select-none"
+        assemblyView={volume ? 'perspective' : 'developed'}
+        plan={false}
       />
     ),
-    [layout, shown, catalog, view, stage.width, stage.height, readOnly, onDimensionClick],
+    // El idioma entra en la memoria: el dibujo trae textos accesibles («Editar medida de…»).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layout, shown, catalog, view, stage.width, stage.height, readOnly, onDimensionClick, locale, volume],
   )
 
-  const frameRect = offsetRect(toStage(vp, layout, layout.frame.rect), pan)
   const cursor = panning ? 'cursor-grabbing' : spaceHeld ? 'cursor-grab' : ''
-  const announce = selectedNodeId && selection ? `${nodeTitle(design, selectedNodeId)} seleccionado: ${nodeSummary(design, selectedNodeId, catalog)}` : ''
+  const announce = selectedNodeId && selection ? t('canvas.selected', { title: nodeTitle(design, selectedNodeId), summary: nodeSummary(design, selectedNodeId, catalog) }) : ''
   const dragging = Boolean(snap)
+  // Etiqueta flotante del elemento elegido: «Paño 2 · 600 × 1.200 mm» (medidas del motor, en mm).
+  const selectedMm = selectedNodeId && selection && selection.kind !== 'split' ? nodeRect(layout, selectedNodeId) : null
+  const tag = selectedNodeId && selectedMm && anchor && !editing && !dragging && !compact ? t('canvas.tag', { title: nodeTitle(design, selectedNodeId), size: fmt.size(selectedMm.w, selectedMm.h) }) : null
 
   return (
     <div
       ref={containerRef}
       tabIndex={0}
       role="group"
-      aria-roledescription="lienzo de diseño"
-      aria-label={readOnly ? 'Dibujo de la ventana' : 'Lienzo de la ventana. Flechas para elegir paño, Supr quita división, F encuadra.'}
+      aria-roledescription={t('canvas.roleDescription')}
+      aria-label={readOnly ? t('canvas.labelReadOnly') : t('canvas.label')}
       onKeyDown={onKeyDown}
       onKeyUp={onKeyUp}
       onPointerDown={onPointerDown}
@@ -711,22 +753,19 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
         if (panning) e.preventDefault()
       }}
       className={cn(
-        'relative isolate min-h-[320px] touch-none overflow-hidden bg-paper-50 outline-none select-none',
-        ring && 'shadow-[inset_0_0_0_2px_var(--ink-500)]',
-        // Cotas: se ven clicables (fondo tinta suave al pasar, anillo al enfocar con teclado).
-        '[&_[data-layer=dimensions]_[role=button]_rect]:transition-[fill] [&_[data-layer=dimensions]_[role=button]_rect]:duration-120',
-        '[&_[data-layer=dimensions]_[role=button]:hover_rect]:fill-ink-50 [&_[data-layer=dimensions]_[role=button]:hover_text]:fill-ink-600',
-        '[&_[data-layer=dimensions]_[role=button]:focus-visible_rect]:fill-ink-50 [&_[data-layer=dimensions]_[role=button]:focus-visible_rect]:stroke-ink-500',
-        // Modo oscuro: el dibujo trae colores de papel; las cotas pasan a tinta clara para leerse.
-        'dark:[&_[data-layer=dimensions]_text]:fill-ink-700 dark:[&_[data-layer=dimensions]_path]:stroke-ink-700',
-        'dark:[&_.fz-sel-tint]:fill-ink-500 dark:[&_.fz-sel-tint]:[fill-opacity:0.14]',
+        'relative isolate min-h-80 touch-none overflow-hidden bg-canvas outline-none select-none',
+        ring && 'ring-2 ring-focus ring-inset',
+        // Cotas con los tokens de dibujo (neutros, legibles en claro y oscuro).
+        '[&_[data-layer=dimensions]_text]:fill-dimension-text [&_[data-layer=dimensions]_path]:stroke-dimension [&_[data-layer=dimensions]_line]:stroke-dimension',
+        // Cotas editables: se ven clicables (velo de acento al pasar, contorno al enfocar con teclado).
+        '[&_[data-layer=dimensions]_[role=button]_rect]:transition-[fill] [&_[data-layer=dimensions]_[role=button]_rect]:duration-100',
+        '[&_[data-layer=dimensions]_[role=button]:hover_rect]:fill-select-ring [&_[data-layer=dimensions]_[role=button]:hover_text]:fill-select',
+        '[&_[data-layer=dimensions]_[role=button]:focus-visible_rect]:fill-select-ring [&_[data-layer=dimensions]_[role=button]:focus-visible_rect]:stroke-focus',
         cursor,
         className,
       )}
       data-designer-canvas=""
     >
-      <Grid scale={vp.scale} originX={pan.x + vp.ox} originY={pan.y + vp.oy} frame={frameRect} />
-
       {/* Escenario: dibujo + capas de interacción, trasladado por el paneo. */}
       <div className="absolute top-0 left-0 will-change-transform" style={{ transform: `translate3d(${Math.round(pan.x)}px, ${Math.round(pan.y)}px, 0)`, width: vp.width, height: vp.height }}>
         {drawing}
@@ -736,7 +775,7 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
             <SelectionRing key={`s${i}`} r={r} kind="select" />
           ))}
           {focusId && focusId !== selectedNodeId ? rectsFor(focusId).map((r, i) => <SelectionRing key={`f${i}`} r={r} kind="focus" />) : null}
-          {!readOnly ? (
+          {!readOnly && !volume ? (
             <g data-layer="hits">
               {targets.map((t) => {
                 const selected = t.id === selectedNodeId
@@ -781,7 +820,6 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
                 const seg = mullionSegment(layout, m)
                 const before = m.axis - seg.segStart
                 const after = seg.segEnd - m.axis
-                const word = vertical ? 'Montante' : 'Travesaño'
                 const active = selectedNodeId === m.nodeId && (mullionIndex === null || mullionIndex === m.index)
                 return (
                   <rect
@@ -792,17 +830,19 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
                     y={hit.y}
                     width={hit.w}
                     height={hit.h}
-                    fill={active ? 'var(--ink-500)' : 'transparent'}
-                    fillOpacity={active ? 0.12 : 0}
+                    fill={active ? 'var(--dk-select)' : 'transparent'}
+                    fillOpacity={active ? 0.14 : 0}
                     role="slider"
                     tabIndex={0}
                     aria-orientation={vertical ? 'horizontal' : 'vertical'}
-                    aria-label={`${word} ${m.kind === 'french' ? '(unión francesa)' : ''}`.trim()}
+                    aria-label={t('canvas.mullion', { dir: m.dir, joint: m.kind ?? 'mullion' })}
                     aria-valuemin={Math.round(m.min - seg.segStart)}
                     aria-valuemax={Math.round(m.max - seg.segStart)}
                     aria-valuenow={Math.round(before)}
-                    aria-valuetext={`${formatNumber(before, 1)} mm ${vertical ? 'a la izquierda' : 'arriba'}, ${formatNumber(after, 1)} mm ${vertical ? 'a la derecha' : 'abajo'}`}
+                    aria-valuetext={t('canvas.mullionValue', { before: fmt.mm(before), after: fmt.mm(after), dir: m.dir })}
                     style={{ pointerEvents: 'all', cursor: vertical ? 'col-resize' : 'row-resize', outline: 'none' }}
+                    onPointerEnter={(e) => e.pointerType === 'mouse' && setHoverMullion(`${m.nodeId}:${m.index}`)}
+                    onPointerLeave={() => setHoverMullion((h) => (h === `${m.nodeId}:${m.index}` ? null : h))}
                     onPointerDown={(e) => onMullionDown(e, m)}
                     onPointerMove={onMullionMove}
                     onPointerUp={(e) => onMullionUp(e)}
@@ -815,11 +855,52 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
               })}
             </g>
           ) : null}
+          {!readOnly && !volume ? (
+            <g data-layer="handles" aria-hidden>
+              {layout.mullions.map((m) => {
+                const key = `${m.nodeId}:${m.index}`
+                const active = (selectedNodeId === m.nodeId && (mullionIndex === null || mullionIndex === m.index)) || (snap?.mullion.nodeId === m.nodeId && snap.mullion.index === m.index)
+                const shown = active || hoverMullion === key || focusId === m.nodeId || coarse
+                if (!shown) return null
+                const r = toStage(vp, layout, m.rect)
+                const vertical = m.dir === 'vertical'
+                const cx = r.x + r.w / 2
+                const cy = r.y + r.h / 2
+                const radius = coarse ? 7 : 5
+                return (
+                  <g key={`hd-${key}`}>
+                    {active ? <circle cx={cx} cy={cy} r={radius + 4} fill="var(--dk-select-ring)" /> : null}
+                    <circle cx={cx} cy={cy} r={radius} fill="var(--dk-surface)" stroke="var(--dk-select)" strokeWidth={2} />
+                    <path
+                      d={vertical ? `M${cx - 1.5} ${cy - 2.5}v5M${cx + 1.5} ${cy - 2.5}v5` : `M${cx - 2.5} ${cy - 1.5}h5M${cx - 2.5} ${cy + 1.5}h5`}
+                      stroke="var(--dk-select)"
+                      strokeWidth={1.2}
+                      strokeLinecap="round"
+                    />
+                  </g>
+                )
+              })}
+            </g>
+          ) : null}
         </svg>
+        {editable && !volume ? (
+          <AssemblyLayer design={design} layout={layout} catalog={catalog} vp={vp} mirror={mirror} coarse={coarse} compact={compact} selectedNodeId={selectedNodeId} quiet={dragging || panning || Boolean(editing)} onApply={apply} />
+        ) : null}
       </div>
 
+      {/* Etiqueta del elemento elegido (arriba a la izquierda, dentro de su contorno). */}
+      {tag && anchor ? (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute z-10 max-w-60 truncate rounded-xs bg-inverse px-1.5 py-0.5 text-micro font-medium text-fg-inverse shadow-xs"
+          style={{ left: Math.max(4, anchor.x + pan.x + 6), top: Math.max(4, anchor.y + pan.y + 6) }}
+        >
+          {tag}
+        </div>
+      ) : null}
+
       {/* Avisos sobre los paños afectados. */}
-      {!dragging
+      {!dragging && !volume
         ? warnings.markers.map((mk) => {
             const r = offsetRect(toStage(vp, layout, mk.rect), pan)
             const inset = Math.min(16, r.w / 4, r.h / 4)
@@ -846,14 +927,14 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
             const [first, second] = vertical && mirror ? [snap.after, snap.before] : [snap.before, snap.after]
             return (
               <div
-                className="pointer-events-none absolute z-30 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-sm bg-paper-900 px-2 py-1 text-[12px] font-medium text-paper-0 tabular shadow-float"
+                className="dim pointer-events-none absolute z-30 flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-sm bg-inverse px-2 py-1 text-meta font-medium text-fg-inverse shadow-float"
                 style={{ left: r.x + r.w / 2, top: vertical ? Math.max(18, r.y + r.h / 2) : r.y + r.h / 2 }}
                 aria-hidden
               >
-                <span>{formatNumber(first, 1)}</span>
+                <span>{fmt.mm(first)}</span>
                 <span className="opacity-50">{vertical ? '|' : '/'}</span>
-                <span>{formatNumber(second, 1)}</span>
-                {snap.kind === 'center' ? <span className="ml-0.5 rounded-xs bg-paper-0/15 px-1 text-[11px]">mitad</span> : null}
+                <span>{fmt.mm(second)}</span>
+                {snap.kind === 'center' ? <span className="ml-0.5 rounded-xs bg-fg-inverse/15 px-1 font-sans text-micro">{t('canvas.half')}</span> : null}
               </div>
             )
           })()
@@ -867,14 +948,14 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
           y={editAnchor.y + pan.y}
           value={editing.value}
           container={size}
-          label={isTotalDimension(editing) ? (editing.axis === 'x' ? 'Ancho total' : 'Alto total') : 'Medida del paño'}
+          label={dimensionLabel(design, editing, t)}
           allowPair={isTotalDimension(editing)}
           onCancel={() => {
             setEditing(null)
             containerRef.current?.focus({ preventScroll: true })
           }}
           onCommit={(value) => {
-            const change = applyDimension(design, editing, value)
+            const change = applyDimension(design, editing, value, catalog)
             setEditing(null)
             apply(change)
             containerRef.current?.focus({ preventScroll: true })
@@ -888,22 +969,41 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
       ) : null}
 
       {/* Barra contextual del paño seleccionado. */}
-      {editable && selection && anchor && !editing && !dragging && !panning ? (
+      {editable && selection && anchor && !editing && !dragging && !panning && !volume ? (
         <Floating key={`${selectedNodeId}-${mullionIndex ?? ''}`} anchor={offsetRect(anchor, pan)} container={size} compact={compact}>
-          <ContextToolbar design={design} catalog={catalog} selection={selection} view={view} mullionIndex={mullionIndex} onApply={(c) => apply(c)} compact={compact} />
+          <ContextToolbar design={scoped.design} catalog={catalog} selection={selection} view={view} mullionIndex={mullionIndex} onApply={(c) => applyScoped(c)} compact={compact} />
         </Floating>
       ) : null}
 
+      {/* Planta del conjunto: el lienzo edita el desarrollo, la planta muestra cómo se quiebra. */}
+      {layout.assembly?.plan && !compact ? (
+        <div data-canvas-ui="" className="pointer-events-none absolute top-14 right-3 z-10 rounded-sm bg-surface/95 shadow-xs">
+          <AssemblyPlan plan={layout.assembly.plan} width={260} height={156} locale={locale} />
+        </div>
+      ) : null}
+
       {/* Controles fijos. */}
-      <div data-canvas-ui="" className={cn('absolute top-3 left-3 z-10', compact && 'top-2 left-2')}>
+      <div data-canvas-ui="" className={cn('absolute top-3 right-3 z-10 flex items-center gap-2', compact && 'top-2 right-auto left-2')}>
+        {layout.assembly?.plan ? (
+          <SegmentedControl
+            aria-label={t('canvas.assemblyView')}
+            size="sm"
+            value={volume ? 'volume' : 'developed'}
+            onValueChange={(v) => setVolumeMode(v === 'volume')}
+            options={[
+              { value: 'developed', label: t('canvas.developed') },
+              { value: 'volume', label: t('canvas.volume') },
+            ]}
+          />
+        ) : null}
         <SegmentedControl
-          aria-label="Vista"
+          aria-label={t('canvas.view')}
           size="sm"
           value={view}
           onValueChange={setView}
           options={[
-            { value: 'interior', label: 'Interior' },
-            { value: 'exterior', label: 'Exterior' },
+            { value: 'interior', label: t('canvas.interior') },
+            { value: 'exterior', label: t('canvas.exterior') },
           ]}
         />
       </div>
@@ -914,20 +1014,20 @@ export function DesignCanvas({ design, catalog, onChange, selectedNodeId, onSele
       <div
         className={cn(
           'pointer-events-none absolute bottom-3 left-3 z-10 flex min-w-0 items-center gap-3 *:pointer-events-auto',
-          compact ? 'right-2 bottom-2 left-2' : 'right-[196px]',
+          compact ? 'right-28 bottom-2 left-2' : 'right-56',
           compact && selection && editable && 'hidden',
         )}
       >
         <WarningSummary warnings={warnings.general} design={design} onFix={onFix} readOnly={readOnly} />
         {!compact && !selection && editable ? (
-          <p className="min-w-0 truncate text-[12px] text-paper-600 pointer-events-none!">
-            {size.width >= 900 ? 'Clic en un paño para editarlo · clic en una cota para cambiarla · arrastra los travesaños' : 'Clic en un paño o en una cota para editar'}
+          <p className="min-w-0 truncate text-meta text-fg-muted pointer-events-none!">
+            {coarse ? t('canvas.hintTouch') : size.width >= 900 ? t('canvas.hintWide') : t('canvas.hintNarrow')}
           </p>
         ) : null}
       </div>
 
       <div className="sr-only" aria-live="polite">
-        {snap ? `${formatNumber(snap.before, 1)} y ${formatNumber(snap.after, 1)} milímetros` : announce}
+        {snap ? t('canvas.snapLive', { before: fmt.mm(snap.before), after: fmt.mm(snap.after) }) : announce}
       </div>
     </div>
   )

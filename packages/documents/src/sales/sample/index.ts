@@ -1,5 +1,5 @@
-import type { Catalog, Layout, QuoteExtra, QuoteTotals, TypologyId, WindowDesign } from '@framezen/engine'
-import type { DocumentPrefs } from '@framezen/shared'
+import type { Catalog, Layout, QuoteExtra, QuoteTotals, TypologyId, WindowDesign } from '@dekopen/engine'
+import type { DocumentPrefs } from '@dekopen/shared'
 import type { DocOrg } from '../../base/types'
 import { addDays } from '../../base/format'
 import { TYPOLOGY_ICON_LABELS } from '../../drawing/TypologyIcon'
@@ -96,6 +96,8 @@ export function buildSampleQuoteDoc(options: SampleQuoteOptions = {}): QuoteDocD
     const colorName = row.colorInId && row.colorInId !== row.colorId ? `${COLOR_NAME(catalog, row.colorId)} exterior, ${COLOR_NAME(catalog, row.colorInId).toLowerCase()} interior` : COLOR_NAME(catalog, row.colorId)
     return {
       ref: `V${i + 1}`,
+      // El id de la tipología permite nombrarla en el idioma del documento (glosario).
+      typologyId: row.typologyId,
       name: row.name,
       location: lap ? `${row.location} ${lap + 1}` : row.location,
       qty: row.qty,
@@ -141,11 +143,11 @@ export function buildSampleQuoteDoc(options: SampleQuoteOptions = {}): QuoteDocD
     client: SAMPLE_CLIENT,
     quote: {
       number: 412,
-      title: 'Casa Muñoz · Puerto Varas',
+      title: 'Obra de ejemplo',
       revision: 1,
       date,
       validUntil: addDays(date, prefs.validityDays || 15),
-      portalUrl: 'https://framezen.cl/c/demo',
+      portalUrl: 'https://dekopen.cl/c/demo',
     },
     items,
     totals,

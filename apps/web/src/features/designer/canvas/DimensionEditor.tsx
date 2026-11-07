@@ -4,6 +4,8 @@
  */
 import { useEffect, useId, useRef, useState } from 'react'
 import { cn } from '../../../lib/cn'
+import { useLocale, useT } from '../../../lib/i18n'
+import es from '../i18n/es'
 import { measureDraft, parseMeasureExpression, parseSizeExpression } from '../lib/measure'
 
 export interface DimensionEditorProps {
@@ -21,8 +23,10 @@ export interface DimensionEditorProps {
 }
 
 export function DimensionEditor({ x, y, value, label, allowPair, onCommit, onCommitPair, onCancel, container }: DimensionEditorProps) {
+  const t = useT(es)
+  const { locale } = useLocale()
   const ref = useRef<HTMLInputElement>(null)
-  const [text, setText] = useState(() => measureDraft(value))
+  const [text, setText] = useState(() => measureDraft(value, locale))
   const [invalid, setInvalid] = useState(false)
   const done = useRef(false)
   const hintId = useId()
@@ -37,7 +41,7 @@ export function DimensionEditor({ x, y, value, label, allowPair, onCommit, onCom
   const commit = (): boolean => {
     if (done.current) return true
     const raw = text.trim()
-    if (!raw || raw === measureDraft(value)) {
+    if (!raw || raw === measureDraft(value, locale)) {
       done.current = true
       onCancel()
       return true
@@ -60,17 +64,17 @@ export function DimensionEditor({ x, y, value, label, allowPair, onCommit, onCom
     return true
   }
 
-  const width = 112
+  const width = 120
   const height = 32
   const left = Math.min(Math.max(8, x - width / 2), Math.max(8, container.width - width - 8))
   const top = Math.min(Math.max(8, y - height / 2), Math.max(8, container.height - height - 28))
 
   return (
-    <div data-canvas-ui="" className="absolute z-20" style={{ left, top, width }}>
+    <div data-canvas-ui="" className="fz-pop absolute z-20" data-state="open" style={{ left, top, width }}>
       <div
         className={cn(
-          'relative flex h-8 items-center rounded-sm border bg-paper-0 shadow-float transition-[border-color,box-shadow] duration-120',
-          invalid ? 'border-bad-600 shadow-[0_0_0_3px_var(--bad-50)]' : 'border-ink-500 shadow-[0_0_0_3px_var(--ink-100)]',
+          'relative flex h-8 items-center rounded-sm border bg-raised shadow-float transition-[border-color,box-shadow] duration-100 touch:h-11',
+          invalid ? 'border-danger ring-3 ring-danger-bg' : 'ring-focus',
         )}
       >
         <input
@@ -103,20 +107,20 @@ export function DimensionEditor({ x, y, value, label, allowPair, onCommit, onCom
               onCancel()
             }
           }}
-          className="h-full w-full rounded-sm bg-transparent pr-9 pl-2.5 text-center text-[14px] font-medium tabular text-paper-900 outline-none touch:text-lead"
+          className="dim h-full w-full rounded-sm bg-transparent pr-9 pl-2.5 text-center text-base font-medium text-fg-strong outline-none touch:text-lead"
         />
-        <span aria-hidden className="pointer-events-none absolute right-2.5 text-[12px] text-paper-600">
+        <span aria-hidden className="dim pointer-events-none absolute right-2.5 text-meta text-fg-muted">
           mm
         </span>
       </div>
       <p
         id={hintId}
         className={cn(
-          'mt-1 w-max max-w-56 rounded-xs px-1.5 py-0.5 text-[11px] leading-4',
-          invalid ? 'bg-bad-50 text-bad-800' : 'bg-paper-900/85 text-paper-0',
+          'mt-1 w-max max-w-60 rounded-xs px-1.5 py-0.5 text-micro',
+          invalid ? 'border border-danger-line bg-danger-bg text-danger' : 'bg-inverse text-fg-inverse',
         )}
       >
-        {invalid ? 'Escribe una medida, como 1200 o 2400/2' : allowPair ? 'Enter aplica · admite 2400/2 o 1500x1200' : 'Enter aplica · Esc cancela'}
+        {invalid ? t('dimension.invalid') : allowPair ? t('dimension.hintPair') : t('dimension.hint')}
       </p>
     </div>
   )

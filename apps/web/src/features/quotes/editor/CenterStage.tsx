@@ -1,21 +1,30 @@
 /**
- * Centro del editor: segmentado Diseño | Documento.
- * Diseño = lienzo interactivo de la ventana seleccionada. Documento = vista previa en vivo.
+ * Centro del editor sobre el fondo hundido: Diseño | Documento, deshacer y 3D arriba; debajo el
+ * dibujo de la ventana elegida, centrado y sin cuadrícula, o el documento en vivo para el cliente.
  */
 import { useRef, useState } from 'react'
-import { AppWindow, Download, FileText, Link2, Mail, MessageCircle, Plus, Redo2, SlidersHorizontal, Undo2 } from 'lucide-react'
-import { designName, formatSize } from '@framezen/engine'
+import { AppWindow, Box, Download, FileText, Link2, Mail, MessageCircle, PenLine, Plus, Redo2, SlidersHorizontal, Undo2 } from 'lucide-react'
+import { useSession } from '../../../lib/auth'
 import { cn } from '../../../lib/cn'
-import { Button, IconButton, SaveIndicator, SegmentedControl, Kbd, useToastArea } from '../../../ui'
-import { DesignCanvas } from '../../designer'
+import { useT } from '../../../lib/i18n'
+import { Button, EmptyState, IconButton, SaveIndicator, SegmentedControl, Toolbar, ToolbarSeparator, useToastArea } from '../../../ui'
+import { cachedLayout, DesignCanvas } from '../../designer'
+import { IconCutBars } from '../../../ui/icons'
+import { Window3DLazy } from '../../viewer3d/lazy'
+import es from '../i18n/es'
+import { undoText } from '../model/history'
 import { useEditor, useEditorShallow, useEditorState, useEditorUi, useSelectedItem } from './context'
-import { DocumentPreview, TemplatePicker } from './DocumentPreview'
+import { DocumentLanguagePicker, DocumentPreview } from './DocumentPreview'
+import { TemplateGalleryButton } from './TemplateGallery'
+import { designUndoLabel } from './names'
 import { editorSaveLabel } from './saveLabel'
 import { useQuoteActions } from './useQuoteActions'
+import { useQuoteWorkOrder } from './useQuoteStage'
 import { useShareState } from './useQuoteStage'
 import { CanvasBoundary, DocumentBoundary } from './ZoneBoundary'
 
 export function HistoryButtons({ size = 'sm' }: { size?: 'sm' | 'md' }) {
+  const t = useT(es)
   const editor = useEditor()
   const { undoLabel, redoLabel } = useEditorShallow((s) => ({
     undoLabel: s.past[s.past.length - 1]?.label ?? null,
@@ -26,7 +35,7 @@ export function HistoryButtons({ size = 'sm' }: { size?: 'sm' | 'md' }) {
       <IconButton
         icon={Undo2}
         size={size}
-        label={undoLabel ? `Deshacer: ${undoLabel}` : 'Nada que deshacer'}
+        label={undoLabel ? t('stage.undo', { label: undoText(undoLabel, t.locale) }) : t('stage.nothingUndo')}
         shortcut="mod+z"
         disabled={!undoLabel}
         onClick={() => editor.undo()}
@@ -34,7 +43,7 @@ export function HistoryButtons({ size = 'sm' }: { size?: 'sm' | 'md' }) {
       <IconButton
         icon={Redo2}
         size={size}
-        label={redoLabel ? `Rehacer: ${redoLabel}` : 'Nada que rehacer'}
+        label={redoLabel ? t('stage.redo', { label: undoText(redoLabel, t.locale) }) : t('stage.nothingRedo')}
         shortcut="shift+mod+z"
         disabled={!redoLabel}
         onClick={() => editor.redo()}
@@ -44,6 +53,7 @@ export function HistoryButtons({ size = 'sm' }: { size?: 'sm' | 'md' }) {
 }
 
 export function EditorSaveIndicator({ className }: { className?: string }) {
+  useT(es) // se vuelve a dibujar al cambiar el idioma (la etiqueta propia se traduce aquí)
   const save = useEditorShallow((s) => ({
     status: s.save.status,
     savedAt: s.save.savedAt,
@@ -58,40 +68,78 @@ export function EditorSaveIndicator({ className }: { className?: string }) {
 }
 
 export function CenterStage({ className, showInspectorToggle }: { className?: string; showInspectorToggle?: boolean }) {
+  const t = useT(es)
   const editor = useEditor()
   const view = useEditorState((s) => s.view)
+  const hasWindows = useEditorState((s) => s.doc.items.length > 0)
+  const actions = useQuoteActions()
+  const { order } = useQuoteWorkOrder()
   const setUi = useEditorUi((s) => s.set)
   const docView = view === 'document'
-  // Avisos del editor (arriba): centrados sobre el lienzo, bajo su cabecera y la fila Interior | Exterior.
+  const session = useSession()
+  const can3d = (session.billing?.features ?? []).includes('client3d')
+  const [mode, setMode] = useState<'2d' | '3d'>('2d')
+  // Avisos del editor (arriba): centrados sobre el lienzo, bajo su barra.
   const stageRef = useRef<HTMLElement>(null)
   useToastArea(stageRef)
 
   return (
-    <section
-      ref={stageRef}
-      aria-label={docView ? 'Documento para el cliente' : 'Diseño de la ventana'}
-      className={cn('@container flex min-h-0 min-w-0 flex-col bg-paper-50', className)}
-    >
-      <div className="flex h-12 shrink-0 items-center gap-3 border-b border-paper-200 bg-paper-50 px-3">
+    <section ref={stageRef} aria-label={docView ? t('stage.document') : t('stage.design')} className={cn('@container flex min-h-0 min-w-0 flex-col', className)}>
+      <Toolbar aria-label={t('stage.view')} variant="plain" className="h-12 shrink-0 gap-3 px-3">
         <SegmentedControl
-          aria-label="Vista"
+          size="sm"
+          aria-label={t('stage.view')}
           value={view}
           onValueChange={(v) => editor.setView(v)}
           className="shrink-0"
           options={[
-            { value: 'design', label: 'Diseño', icon: AppWindow },
-            { value: 'document', label: 'Documento', icon: FileText },
+            { value: 'design', label: t('stage.viewDesign'), icon: AppWindow },
+            { value: 'document', label: t('stage.viewDocument'), icon: FileText },
           ]}
         />
-        {/* El centro cede espacio: el selector de plantilla se encoge antes de tocar los botones. */}
-        <div className="min-w-0 flex-1">{docView ? <TemplatePicker /> : <SelectedSummary />}</div>
-        <div className="ml-auto flex shrink-0 items-center gap-1">
-          <HistoryButtons />
-          {showInspectorToggle && !docView ? (
-            <IconButton icon={SlidersHorizontal} size="sm" variant="secondary" label="Ajustes de la ventana" onClick={() => setUi({ inspectorOpen: true })} />
+        {hasWindows ? (
+          <Button size="sm" variant="ghost" icon={IconCutBars} className="shrink-0" onClick={() => void actions.openCuts(order)}>
+            {t('stage.viewCuts')}
+          </Button>
+        ) : null}
+        {/* El centro cede espacio: los selectores se encogen antes de tocar los botones. */}
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {docView ? (
+            <>
+              <TemplateGalleryButton className="min-w-0 shrink" />
+              {/* Con la columna de ajustes a la vista, el idioma vive ahí; sin ella, queda a mano en la barra. */}
+              {showInspectorToggle ? <DocumentLanguagePicker className="min-w-0 shrink" /> : null}
+            </>
           ) : null}
         </div>
-      </div>
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {!docView && can3d ? (
+            <>
+              <IconButton
+                icon={mode === '3d' ? PenLine : Box}
+                size="sm"
+                label={mode === '3d' ? t('stage.show2d') : t('stage.show3d')}
+                aria-pressed={mode === '3d'}
+                onClick={() => setMode((m) => (m === '3d' ? '2d' : '3d'))}
+              />
+              <ToolbarSeparator className="@max-[440px]:hidden" />
+            </>
+          ) : null}
+          {/* Con el escenario angosto, Ctrl+Z sigue a mano: lo que no se corta es el resto de la barra. */}
+          <div className="@max-[440px]:hidden">
+            <HistoryButtons />
+          </div>
+          {showInspectorToggle ? (
+            <IconButton
+              icon={SlidersHorizontal}
+              size="sm"
+              variant="secondary"
+              label={docView ? t('doc.settings') : t('stage.inspector')}
+              onClick={() => setUi({ inspectorOpen: true, inspectorTab: 'item' })}
+            />
+          ) : null}
+        </div>
+      </Toolbar>
       {docView ? <DocumentToolbar /> : null}
       <div className="relative min-h-0 flex-1">
         {docView ? (
@@ -99,9 +147,7 @@ export function CenterStage({ className, showInspectorToggle }: { className?: st
             <DocumentPreview />
           </DocumentBoundary>
         ) : (
-          <CanvasBoundary>
-            <DesignStage />
-          </CanvasBoundary>
+          <CanvasBoundary>{mode === '3d' && can3d ? <Stage3D /> : <DesignStage />}</CanvasBoundary>
         )}
       </div>
     </section>
@@ -114,6 +160,7 @@ export function CenterStage({ className, showInspectorToggle }: { className?: st
  * «Enviar al cliente», que crea la versión siguiente.
  */
 function DocumentToolbar() {
+  const t = useT(es)
   const zoom = useEditorUi((s) => s.docZoom)
   const setUi = useEditorUi((s) => s.set)
   const actions = useQuoteActions()
@@ -126,47 +173,47 @@ function DocumentToolbar() {
   const iconClass = '@max-2xl:px-2'
 
   return (
-    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-paper-200 bg-paper-0 px-3">
+    <div className="flex h-11 shrink-0 items-center gap-2 px-3">
       <SegmentedControl
         size="sm"
-        aria-label="Escala del documento"
+        aria-label={t('doc.zoom')}
         value={zoom}
         onValueChange={(v) => setUi({ docZoom: v })}
         className="shrink-0"
         options={[
-          { value: 'fit', label: 'Ajustar al ancho' },
-          { value: 'actual', label: '100 %' },
+          { value: 'fit', label: t('doc.fit') },
+          { value: 'actual', label: t('doc.actual') },
         ]}
       />
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        <Button size="sm" icon={Download} onClick={() => void actions.downloadPdf()} loading={actions.busy === 'pdf'} title="Descargar PDF" className={iconClass}>
-          {label('Descargar PDF')}
+        <Button size="sm" icon={Download} onClick={() => void actions.downloadPdf()} loading={actions.busy === 'pdf'} title={t('doc.pdf')} className={iconClass}>
+          {label(t('doc.pdf'))}
         </Button>
-        <Button size="sm" icon={Link2} onClick={() => void copy()} title="Copiar enlace" className={iconClass}>
-          {label('Copiar enlace')}
+        <Button size="sm" icon={Link2} onClick={() => void copy()} title={t('doc.copy')} className={iconClass}>
+          {label(t('doc.copy'))}
         </Button>
         {share.whatsappHref ? (
           <Button asChild size="sm" className={iconClass}>
-            <a href={share.whatsappHref} target="_blank" rel="noreferrer" title="WhatsApp">
+            <a href={share.whatsappHref} target="_blank" rel="noreferrer" title={t('doc.whatsapp')}>
               <MessageCircle aria-hidden strokeWidth={1.75} />
-              {label('WhatsApp')}
+              {label(t('doc.whatsapp'))}
             </a>
           </Button>
         ) : (
-          <Button size="sm" icon={MessageCircle} onClick={actions.openSend} title="WhatsApp" className={iconClass}>
-            {label('WhatsApp')}
+          <Button size="sm" icon={MessageCircle} onClick={actions.openSend} title={t('doc.whatsapp')} className={iconClass}>
+            {label(t('doc.whatsapp'))}
           </Button>
         )}
         {share.mailtoHref ? (
           <Button asChild size="sm" className={iconClass}>
-            <a href={share.mailtoHref} title="Correo">
+            <a href={share.mailtoHref} title={t('doc.mail')}>
               <Mail aria-hidden strokeWidth={1.75} />
-              {label('Correo')}
+              {label(t('doc.mail'))}
             </a>
           </Button>
         ) : (
-          <Button size="sm" icon={Mail} onClick={actions.openSend} title="Correo" className={iconClass}>
-            {label('Correo')}
+          <Button size="sm" icon={Mail} onClick={actions.openSend} title={t('doc.mail')} className={iconClass}>
+            {label(t('doc.mail'))}
           </Button>
         )}
       </div>
@@ -174,44 +221,32 @@ function DocumentToolbar() {
   )
 }
 
-function SelectedSummary() {
-  const { item } = useSelectedItem()
-  if (!item) return null
+function EmptyStage() {
+  const t = useT(es)
+  const count = useEditorState((s) => s.doc.items.length)
+  const setUi = useEditorUi((s) => s.set)
   return (
-    <p className="truncate text-[13px] text-paper-600">
-      <span className="font-semibold text-paper-900">{item.ref}</span>
-      <span className="mx-1.5 text-paper-350">·</span>
-      {item.name?.trim() || designName(item.design)}
-      <span className="mx-1.5 text-paper-350 max-2xl:hidden">·</span>
-      <span className="tabular max-2xl:hidden">{formatSize(item.design.width, item.design.height)}</span>
-    </p>
+    <div className="grid h-full place-items-center p-8">
+      <EmptyState
+        title={count ? t('stage.chooseItem') : t('stage.firstItem')}
+        description={count ? t('stage.chooseItemHint') : t('stage.firstItemHint')}
+        action={
+          <Button variant={count ? 'secondary' : 'primary'} icon={Plus} shortcut="a" onClick={() => setUi({ pickerOpen: true })}>
+            {t('items.add')}
+          </Button>
+        }
+      />
+    </div>
   )
 }
 
 function DesignStage() {
   const editor = useEditor()
   const { item } = useSelectedItem()
-  const { catalog, selectedNodeId, count } = useEditorShallow((s) => ({ catalog: s.catalog, selectedNodeId: s.selectedNodeId, count: s.doc.items.length }))
-  const setUi = useEditorUi((s) => s.set)
+  const { catalog, selectedNodeId } = useEditorShallow((s) => ({ catalog: s.catalog, selectedNodeId: s.selectedNodeId }))
   const [view, setView] = useState<'interior' | 'exterior'>('interior')
 
-  if (!item) {
-    return (
-      <div className="grid h-full place-items-center p-8">
-        <div className="flex max-w-sm flex-col items-center text-center">
-          <EmptyBlueprint />
-          <h2 className="mt-5 text-h3 font-semibold tracking-[-0.01em] text-paper-900">{count ? 'Elige una ventana de la lista' : 'Diseña la primera ventana'}</h2>
-          <p className="mt-1.5 text-paper-600">
-            {count ? 'O agrega otra: tipología, medidas y Enter.' : 'Elige la tipología, escribe ancho × alto y presiona Enter. El precio aparece al instante.'}
-          </p>
-          <Button variant="primary" size="lg" icon={Plus} className="mt-5" onClick={() => setUi({ pickerOpen: true })}>
-            Agregar ventana
-            <Kbd combo="a" tone="inverse" className="ml-1" />
-          </Button>
-        </div>
-      </div>
-    )
-  }
+  if (!item) return <EmptyStage />
 
   return (
     <div data-quote-canvas className="absolute inset-0">
@@ -219,34 +254,28 @@ function DesignStage() {
         key={item.id}
         design={item.design}
         catalog={catalog}
-        onChange={(next, label) => editor.updateDesign(item.id, () => next, label ? `${label} (${item.ref})` : undefined)}
+        onChange={(next, label, ...rest: unknown[]) => editor.updateDesign(item.id, () => next, designUndoLabel(label, rest[0], item.ref))}
         selectedNodeId={selectedNodeId}
         onSelect={(id) => editor.selectNode(id)}
         view={view}
         onViewChange={setView}
-        className="h-full w-full"
+        className="h-full w-full bg-sunken!"
       />
     </div>
   )
 }
 
-/** Plano en trazo fino (estado vacío del lienzo): marco con cotas, sin relleno. */
-function EmptyBlueprint() {
+/** Vista 3D de la ventana elegida (plan con visor 3D): misma geometría y colores que el dibujo. */
+function Stage3D() {
+  const { item } = useSelectedItem()
+  const catalog = useEditorState((s) => s.catalog)
+  if (!item) return <EmptyStage />
+  const layout = cachedLayout(item.design, catalog)
+  // Sin geometría (diseño a medio armar) se queda en el dibujo, que sabe mostrar el aviso.
+  if (!layout) return <DesignStage />
   return (
-    <svg width="168" height="132" viewBox="0 0 168 132" fill="none" aria-hidden className="text-paper-350">
-      <rect x="34" y="14" width="100" height="96" rx="2" stroke="currentColor" strokeWidth="1.5" />
-      <rect x="42" y="22" width="84" height="80" rx="1" stroke="currentColor" strokeWidth="1" strokeDasharray="4 3" />
-      <line x1="84" y1="22" x2="84" y2="102" stroke="currentColor" strokeWidth="1" strokeDasharray="4 3" />
-      <path d="M34 122 H134" stroke="var(--ink-600)" strokeWidth="1" />
-      <path d="M31 125 L37 119 M131 125 L137 119" stroke="var(--ink-600)" strokeWidth="1" />
-      <path d="M20 14 V110" stroke="var(--ink-600)" strokeWidth="1" />
-      <path d="M17 17 L23 11 M17 113 L23 107" stroke="var(--ink-600)" strokeWidth="1" />
-      <text x="84" y="131" textAnchor="middle" fontSize="8" fill="var(--ink-700)" style={{ fontVariantNumeric: 'tabular-nums' }}>
-        ancho
-      </text>
-      <text x="12" y="64" textAnchor="middle" fontSize="8" fill="var(--ink-700)" transform="rotate(-90 12 64)">
-        alto
-      </text>
-    </svg>
+    <div className="absolute inset-0 p-4">
+      <Window3DLazy key={item.id} layout={layout} design={item.design} catalog={catalog} height="100%" className="h-full w-full rounded-md" />
+    </div>
   )
 }

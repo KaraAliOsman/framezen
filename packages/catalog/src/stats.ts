@@ -1,4 +1,4 @@
-import type { Catalog } from '@framezen/engine'
+import type { Catalog } from '@dekopen/engine'
 
 export interface CatalogStats {
   brands: number

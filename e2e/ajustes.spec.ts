@@ -64,6 +64,9 @@ test('empresa con logo y precios: se guardan solos y cambian el precio', async (
   await page.getByLabel('Ciudad').click()
   await expect(page.getByText(/dígito|verificador|revisa el RUT|no calza|parece/i).first()).toBeVisible()
   await page.getByLabel('RUT de la empresa').fill('76086428-5')
+  await page.getByLabel('Ciudad').click()
+  await expect(page.getByLabel('RUT de la empresa')).toHaveValue('76.086.428-5')
+  await expect.poll(async () => (await api<Org>(page.request, 'GET', '/org')).rut, { timeout: 15_000 }).toBe('76.086.428-5')
 
   // ── Precios ──
   await page.goto('/ajustes/precios')
@@ -116,10 +119,12 @@ test('empresa con logo y precios: se guardan solos y cambian el precio', async (
   await page.goto(`/cotizaciones/${quoteId}`)
   await waitEditorReady(page)
 
-  // El documento de la cotización lleva el logo y la razón social.
+  // El documento de la cotización lleva el logo, la razón social y el RUT (quién emite).
   await page.getByRole('radiogroup', { name: 'Vista' }).getByRole('radio', { name: 'Documento' }).click()
   const preview = page.locator('section[aria-label="Documento para el cliente"]')
-  await expect(preview.locator('img[src^="data:image"]').first()).toBeVisible()
+  // Las plantillas repiten el logo en cabeceras de página ocultas: se comprueba el que se ve.
+  await expect(preview.locator('img[src^="data:image"]:visible').first()).toBeVisible()
   await expect(preview).toContainText('Ventanas Martínez SpA')
+  await expect(preview).toContainText('76.086.428-5')
   await shot(page, 'ajustes-04-documento-con-logo')
 })

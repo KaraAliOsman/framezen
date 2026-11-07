@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { SAMPLE_CATALOG } from '@framezen/catalog'
-import { computeLayout, createDesign, type Catalog, type Warning } from '@framezen/engine'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
+import { computeLayout, createDesign, type Catalog, type Warning } from '@dekopen/engine'
 import { availableTypologies, glassGroups, lineColors, linesByBrand, pickColor, pickGlass } from './catalog'
-import { defaultLineFor, matchesQuery, readLineUsage, readRecentTypologies, rememberLine, rememberTypology, typologySections } from './typologies'
+import { TYPOLOGY_GROUPS, defaultLineFor, matchesQuery, readLineUsage, readOnlyMine, readRecentTypologies, rememberLine, rememberTypology, typologyGroup, typologySections, writeOnlyMine } from './typologies'
 import { splitWarnings, worstLevel } from './warnings'
-import { TYPOLOGIES } from '@framezen/engine'
+import { TYPOLOGIES } from '@dekopen/engine'
 
 const catalog = SAMPLE_CATALOG
 const slidingOnly: Catalog = { ...catalog, lines: catalog.lines.filter((l) => l.kind === 'sliding') }
@@ -14,8 +14,8 @@ describe('catálogo', () => {
     const groups = linesByBrand(catalog)
     expect(groups).toHaveLength(1)
     expect(groups[0].brandName).toBe('Perfiles de ejemplo')
-    expect(groups[0].lines.map((l) => l.name)).toEqual(['Serie 60 Practicable', 'Serie 70 Corredera', 'Serie Puerta 70'])
-    expect(linesByBrand(catalog, (l) => l.kind === 'sliding')[0].lines).toHaveLength(1)
+    expect(groups[0].lines.map((l) => l.name)).toEqual(['Serie 60 Practicable', 'Serie 70 Corredera', 'Serie 85 Elevadora', 'Serie Puerta 70'])
+    expect(linesByBrand(catalog, (l) => l.kind === 'sliding')[0].lines.map((l) => l.id)).toEqual(['serie-70-corredera', 'serie-85-elevadora'])
     expect(linesByBrand(undefined)).toEqual([])
   })
 
@@ -44,29 +44,78 @@ describe('catálogo', () => {
 describe('galería de tipologías', () => {
   beforeEach(() => localStorage.clear())
 
-  it('muestra los cuatro grupos con todas las tipologías del catálogo', () => {
+  it('agrupa por Typology.group del motor (con elevables/paralelas y pivotantes aparte) y muestra todas', () => {
     const sections = typologySections(catalog, '')
-    expect(sections.map((s) => s.label)).toEqual(['Ventanas', 'Puertas', 'Correderas', 'Formas'])
+    expect(sections.map((s) => s.label)).toEqual(['Ventanas', 'Puertas', 'Correderas', 'Elevadoras y paralelas', 'Plegables', 'Pivotantes', 'Formas'])
     expect(sections.flatMap((s) => s.items)).toHaveLength(TYPOLOGIES.length)
+    for (const t of TYPOLOGIES) expect(TYPOLOGY_GROUPS.map((g) => g.id)).toContain(typologyGroup(t))
+    const groupOf = (id: string) => typologyGroup(TYPOLOGIES.find((t) => t.id === id)!)
+    expect(groupOf('lift_slide_2')).toBe('liftParallel')
+    expect(groupOf('tilt_slide')).toBe('liftParallel')
+    expect(groupOf('parallel_slide')).toBe('liftParallel')
+    expect(groupOf('sliding_6')).toBe('sliding')
+    expect(groupOf('pivot_h')).toBe('pivot')
+    expect(groupOf('folding_5')).toBe('folding')
+    expect(groupOf('gable')).toBe('shapes')
+    expect(groupOf('entrance_door')).toBe('doors')
+    expect(groupOf('french_tilt_turn')).toBe('windows')
   })
 
-  it('filtra por las líneas disponibles', () => {
+  it('muestra todas las tipologías: las que ninguna línea declara van al final de su grupo y marcadas', () => {
     const sections = typologySections(slidingOnly, '')
-    expect(sections.map((s) => s.label)).toEqual(['Correderas'])
+    expect(sections.map((s) => s.label)).toEqual(['Ventanas', 'Puertas', 'Correderas', 'Elevadoras y paralelas', 'Plegables', 'Pivotantes', 'Formas'])
+    expect(sections.flatMap((s) => s.items)).toHaveLength(TYPOLOGIES.length)
+    const sliding = sections.find((s) => s.id === 'sliding')!
+    const lift = sections.find((s) => s.id === 'liftParallel')!
+    expect(lift.items.slice(0, 3).map((i) => i.id)).toEqual(['lift_slide_2', 'lift_slide_3', 'lift_slide_4'])
+    // Lo que fabrican las líneas va primero; lo demás, marcado.
+    expect([...sliding.unavailable].every((id) => !availableTypologies(slidingOnly)!.has(id))).toBe(true)
+    const doors = sections.find((s) => s.id === 'doors')!
+    expect(doors.unavailable.has('door')).toBe(true)
+    expect(sections.find((s) => s.id === 'windows')!.unavailable.has('fixed')).toBe(true)
+    const firstFlag = sliding.items.findIndex((i) => sliding.unavailable.has(i.id))
+    if (firstFlag >= 0) expect(sliding.items.slice(firstFlag).every((i) => sliding.unavailable.has(i.id))).toBe(true)
   })
 
-  it('busca sin tildes y por etiquetas', () => {
+  it('con «solo mis líneas» oculta las que ninguna línea declara', () => {
+    const sections = typologySections(slidingOnly, '', [], undefined, { onlyAvailable: true })
+    expect(sections.map((s) => s.label)).toEqual(['Correderas', 'Elevadoras y paralelas'])
+    expect(sections[1].items.map((i) => i.id)).toEqual(['lift_slide_2', 'lift_slide_3', 'lift_slide_4'])
+    expect(sections.every((s) => s.unavailable.size === 0)).toBe(true)
+    expect(readOnlyMine()).toBe(false)
+    writeOnlyMine(true)
+    expect(readOnlyMine()).toBe(true)
+    writeOnlyMine(false)
+    expect(readOnlyMine()).toBe(false)
+  })
+
+  it('busca sin tildes, por etiquetas y por relevancia (Enter elige la primera)', () => {
     const t = TYPOLOGIES.find((x) => x.id === 'tilt_turn')!
     expect(matchesQuery(t, 'oscilo')).toBe(true)
     expect(matchesQuery(t, 'OSCILOBATIENTE')).toBe(true)
-    expect(typologySections(catalog, 'puerta').flatMap((s) => s.items.map((i) => i.id))).toEqual(['door', 'door_double', 'door_sidelight', 'door_transom'])
+    const first = (q: string) => typologySections(catalog, q)[0]?.items[0]?.id
+    expect(first('puerta')).toBe('door')
+    expect(first('fijo')).toBe('fixed')
+    expect(first('corredera')).toBe('sliding_2')
+    expect(first('corredera 2')).toBe('sliding_2')
+    expect(first('oscilo')).toBe('tilt_turn')
+    expect(first('hst')).toBe('lift_slide_2')
+    expect(first('psk')).toBe('tilt_slide')
+    expect(first('acordeon')).toBe('folding_3')
+    expect(first('ojo de buey')).toBe('round')
+    const doors = typologySections(catalog, 'puerta')
+    expect(doors[0]).toMatchObject({ id: 'doors' })
+    expect(doors[0].items.map((i) => i.id)).toContain('balcony_door')
     expect(typologySections(catalog, 'triangulo').flatMap((s) => s.items.map((i) => i.id))).toEqual(['triangle'])
+    expect(typologySections(catalog, 'zzz')).toEqual([])
   })
 
-  it('con búsqueda también ofrece las que ninguna línea declara (atenuadas)', () => {
+  it('con búsqueda también ofrece las que ninguna línea declara (marcadas), después de las que sí', () => {
     const sections = typologySections(slidingOnly, 'puerta')
-    expect(sections).toHaveLength(1)
-    expect(sections[0]).toMatchObject({ id: 'other', muted: true })
+    const doors = sections.find((s) => s.id === 'doors')!
+    expect(doors.items.map((i) => i.id)).toContain('door')
+    expect(doors.unavailable.has('door')).toBe(true)
+    expect(typologySections(slidingOnly, 'puerta', [], undefined, { onlyAvailable: true }).flatMap((s) => s.items.map((i) => i.id))).not.toContain('door')
   })
 
   it('recuerda las últimas tipologías y las muestra primero', () => {

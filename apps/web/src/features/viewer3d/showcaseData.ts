@@ -1,5 +1,5 @@
-import { SAMPLE_CATALOG } from '@framezen/catalog'
-import { computeLayout, createDesign, TYPOLOGIES, type Catalog, type Layout, type Line, type TypologyId, type WindowDesign } from '@framezen/engine'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
+import { computeLayout, createDesign, TYPOLOGIES, type Catalog, type Layout, type Line, type TypologyId, type WindowDesign } from '@dekopen/engine'
 import { FIXTURE_TYPOLOGIES, type FixtureTypologyId, fixtureWindow } from './fixtures'
 
 /** Datos de la ruta /dev/3d: el motor real con el catálogo de ejemplo. */

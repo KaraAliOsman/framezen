@@ -13,20 +13,24 @@ export interface PaymentStep {
  */
 export function paymentSchedule(text: string | undefined, total: number): PaymentStep[] | null {
   if (!text || !(total > 0)) return null
-  const re = /(\d{1,3}(?:[.,]\d+)?)\s*%/g
+  // El turco escribe el signo antes del número («%50»).
+  const re = /(\d{1,3}(?:[.,]\d+)?)\s*%|%\s*(\d{1,3}(?:[.,]\d+)?)/g
   const matches = [...text.matchAll(re)]
   if (matches.length < 2) return null
+  // «Teklifin kabulünde %50, teslimatta %50 ödenir»: ahí la descripción va antes de cada cifra.
+  const labelFirst = matches.every((m) => m[2] !== undefined) && /\p{L}/u.test(text.slice(0, matches[0].index ?? 0))
   const steps = matches.map((m, i) => {
-    const start = (m.index ?? 0) + m[0].length
-    const end = i + 1 < matches.length ? (matches[i + 1].index ?? text.length) : text.length
+    const after = (m.index ?? 0) + m[0].length
+    const start = labelFirst ? (i === 0 ? 0 : (matches[i - 1].index ?? 0) + matches[i - 1][0].length) : after
+    const end = labelFirst ? (m.index ?? 0) : i + 1 < matches.length ? (matches[i + 1].index ?? text.length) : text.length
     const raw = text
       .slice(start, end)
-      .replace(/^[\s:–—-]+/, '')
-      .replace(/(\s+(y|e)\s*|[\s,;/.+–—-]+)$/i, '')
-      .replace(/\s+(y|e)$/i, '')
+      .replace(/^[\s,;:–—-]+/, '')
+      .replace(/(\s+(y|e|and|et|und|ve)\s*|[\s,;/.+–—-]+)$/i, '')
+      .replace(/\s+(y|e|and|et|und|ve)$/i, '')
       .trim()
     const label = raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : `Cuota ${i + 1}`
-    return { pct: Number(m[1].replace(',', '.')), label, amount: 0 }
+    return { pct: Number((m[1] ?? m[2]).replace(',', '.')), label, amount: 0 }
   })
   const sum = steps.reduce((acc, s) => acc + s.pct, 0)
   if (Math.abs(sum - 100) > 0.5) return null

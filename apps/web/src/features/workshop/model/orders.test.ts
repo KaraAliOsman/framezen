@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { WorkOrder } from '@framezen/shared'
+import type { WorkOrder } from '@dekopen/shared'
 import {
   daysUntil,
   dueInfo,
@@ -42,7 +42,9 @@ describe('fechas comprometidas', () => {
     expect(dueInfo('2026-10-30', { now: NOW }).label).toBe('Atrasada 1 día')
     expect(dueInfo('2026-10-31', { now: NOW })).toMatchObject({ tone: 'soon', label: 'Vence hoy' })
     expect(dueInfo('2026-11-01', { now: NOW })).toMatchObject({ tone: 'soon', label: 'Vence mañana' })
-    expect(dueInfo('2026-11-03', { now: NOW })).toMatchObject({ tone: 'soon', label: 'En 3 días' })
+    // Ámbar solo a dos días o menos (design-v5 §7); a tres días ya es «en calma».
+    expect(dueInfo('2026-11-02', { now: NOW })).toMatchObject({ tone: 'soon', label: 'En 2 días' })
+    expect(dueInfo('2026-11-03', { now: NOW })).toMatchObject({ tone: 'calm', label: 'En 3 días' })
     expect(dueInfo('2026-11-20', { now: NOW })).toMatchObject({ tone: 'calm', label: 'En 20 días', date: '20 nov' })
     expect(dueInfo(undefined, { now: NOW })).toMatchObject({ tone: 'none', label: 'Por definir' })
     expect(dueInfo('mañana', { now: NOW }).tone).toBe('none')

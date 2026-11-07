@@ -1,11 +1,11 @@
 /**
  * Datos del catálogo del taller: marcas con su resumen, precios propios, importación de
- * «MisPrecios» y edición de pautas. Los tipos que aún no están en `@framezen/shared` se
+ * «MisPrecios» y edición de pautas. Los tipos que aún no están en `@dekopen/shared` se
  * declaran aquí con la forma exacta que devuelve el servidor (apps/server/src/routes/catalog.ts).
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { Brand, BrandSettings, Catalog, Id, Line, Pauta } from '@framezen/engine'
-import type { CatalogResponse, PriceOverride } from '@framezen/shared'
+import type { Brand, BrandSettings, Catalog, Id, Line, Pauta } from '@dekopen/engine'
+import type { CatalogResponse, PriceOverride } from '@dekopen/shared'
 import { request } from '../../lib/api'
 import { qk } from '../../lib/queryClient'
 import { applyOverridesToCatalog, overrideKey } from './model/prices'

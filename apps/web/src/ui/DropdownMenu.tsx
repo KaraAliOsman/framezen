@@ -4,6 +4,7 @@ import { Check, ChevronRight } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../lib/cn'
 import { Kbd } from './Kbd'
+import { floatingClass } from './Popover'
 
 export const DropdownMenu = RadixMenu.Root
 export const DropdownMenuTrigger = RadixMenu.Trigger
@@ -11,13 +12,11 @@ export const DropdownMenuGroup = RadixMenu.Group
 export const DropdownMenuSub = RadixMenu.Sub
 export const DropdownMenuRadioGroup = RadixMenu.RadioGroup
 
-const contentClass =
-  'fz-pop z-50 min-w-48 overflow-hidden rounded-md border border-paper-200 bg-paper-0 p-1 text-paper-900 shadow-float ' +
-  'origin-[var(--radix-dropdown-menu-content-transform-origin)]'
+const contentClass = cn('fz-pop min-w-48 overflow-hidden p-1', floatingClass, 'origin-[var(--radix-dropdown-menu-content-transform-origin)]')
 
 const itemClass =
-  'relative flex h-8 cursor-default select-none items-center gap-2 rounded-sm px-2 text-base outline-none ' +
-  'data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-paper-100 touch:h-10'
+  'relative flex h-8 cursor-default select-none items-center gap-2 rounded-xs px-2 text-base outline-none ' +
+  'data-[disabled]:pointer-events-none data-[disabled]:opacity-45 data-[highlighted]:bg-hover touch:h-10'
 
 export function DropdownMenuContent({
   className,
@@ -50,14 +49,12 @@ export interface DropdownMenuItemProps extends ComponentProps<typeof RadixMenu.I
 export function DropdownMenuItem({ icon: Icon, shortcut, danger, hint, className, children, ...props }: DropdownMenuItemProps) {
   return (
     <RadixMenu.Item
-      className={cn(itemClass, danger && 'text-bad-600 data-[highlighted]:bg-bad-50', className)}
+      className={cn(itemClass, danger && 'text-danger data-[highlighted]:bg-danger-bg', className)}
       {...props}
     >
-      {Icon ? (
-        <Icon aria-hidden strokeWidth={1.75} className={cn('size-4 shrink-0', danger ? '' : 'text-paper-600')} />
-      ) : null}
+      {Icon ? <Icon aria-hidden strokeWidth={1.75} className={cn('size-4 shrink-0', danger ? '' : 'text-fg-muted')} /> : null}
       <span className="min-w-0 flex-1 truncate">{children}</span>
-      {hint ? <span className="text-meta text-paper-600">{hint}</span> : null}
+      {hint ? <span className="text-meta text-fg-muted">{hint}</span> : null}
       {shortcut ? <Kbd combo={shortcut} /> : null}
     </RadixMenu.Item>
   )
@@ -66,7 +63,7 @@ export function DropdownMenuItem({ icon: Icon, shortcut, danger, hint, className
 export function DropdownMenuCheckboxItem({ className, children, ...props }: ComponentProps<typeof RadixMenu.CheckboxItem>) {
   return (
     <RadixMenu.CheckboxItem className={cn(itemClass, 'pl-8', className)} {...props}>
-      <RadixMenu.ItemIndicator className="absolute left-2 inline-flex text-ink-600">
+      <RadixMenu.ItemIndicator className="absolute left-2 inline-flex text-accent">
         <Check aria-hidden strokeWidth={2} className="size-4" />
       </RadixMenu.ItemIndicator>
       {children}
@@ -77,7 +74,7 @@ export function DropdownMenuCheckboxItem({ className, children, ...props }: Comp
 export function DropdownMenuRadioItem({ className, children, ...props }: ComponentProps<typeof RadixMenu.RadioItem>) {
   return (
     <RadixMenu.RadioItem className={cn(itemClass, 'pl-8', className)} {...props}>
-      <RadixMenu.ItemIndicator className="absolute left-2 inline-flex text-ink-600">
+      <RadixMenu.ItemIndicator className="absolute left-2 inline-flex text-accent">
         <Check aria-hidden strokeWidth={2} className="size-4" />
       </RadixMenu.ItemIndicator>
       {children}
@@ -92,10 +89,10 @@ export function DropdownMenuSubTrigger({
   ...props
 }: ComponentProps<typeof RadixMenu.SubTrigger> & { icon?: LucideIcon }) {
   return (
-    <RadixMenu.SubTrigger className={cn(itemClass, 'data-[state=open]:bg-paper-100', className)} {...props}>
-      {Icon ? <Icon aria-hidden strokeWidth={1.75} className="size-4 shrink-0 text-paper-600" /> : null}
+    <RadixMenu.SubTrigger className={cn(itemClass, 'data-[state=open]:bg-hover', className)} {...props}>
+      {Icon ? <Icon aria-hidden strokeWidth={1.75} className="size-4 shrink-0 text-fg-muted" /> : null}
       <span className="min-w-0 flex-1 truncate">{children}</span>
-      <ChevronRight aria-hidden strokeWidth={1.75} className="size-4 text-paper-600" />
+      <ChevronRight aria-hidden strokeWidth={1.75} className="size-4 text-fg-muted" />
     </RadixMenu.SubTrigger>
   )
 }
@@ -109,9 +106,9 @@ export function DropdownMenuSubContent({ className, ...props }: ComponentProps<t
 }
 
 export function DropdownMenuLabel({ className, ...props }: ComponentProps<typeof RadixMenu.Label>) {
-  return <RadixMenu.Label className={cn('px-2 pt-1.5 pb-1 text-meta font-medium text-paper-600', className)} {...props} />
+  return <RadixMenu.Label className={cn('px-2 pt-2 pb-1 text-meta font-medium text-fg-muted', className)} {...props} />
 }
 
 export function DropdownMenuSeparator({ className, ...props }: ComponentProps<typeof RadixMenu.Separator>) {
-  return <RadixMenu.Separator className={cn('-mx-1 my-1 h-px bg-paper-200', className)} {...props} />
+  return <RadixMenu.Separator className={cn('-mx-1 my-1 h-px bg-divider', className)} {...props} />
 }

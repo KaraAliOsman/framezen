@@ -97,7 +97,7 @@ export const test = base.extend<Fixtures>({
 let counter = 0
 export function uniqueEmail(tag: string) {
   counter++
-  return `e2e-${tag}-${Date.now().toString(36)}-${process.pid}-${counter}@framezen.test`
+  return `e2e-${tag}-${Date.now().toString(36)}-${process.pid}-${counter}@dekopen.test`
 }
 
 export function newAccount(tag: string, overrides: Partial<Account> = {}): Account {

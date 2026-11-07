@@ -1,11 +1,11 @@
 import '../../../test/setup'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@framezen/catalog'
-import { createDesign, findNode, type LeafNode, type SplitNode, type TypologyId, type WindowDesign } from '@framezen/engine'
+import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@dekopen/catalog'
+import { assemblyUnits, createDesign, findNode, joinWindow, TYPOLOGY_IDS, type Catalog, type LeafNode, type Profile, type SplitNode, type TypologyId, type WindowDesign } from '@dekopen/engine'
 import { TooltipProvider } from '../../ui/Tooltip'
-import { DesignCanvas, DesignThumbnail, NodeInspector, TypologyPicker, WindowSettings } from './index'
+import { DesignCanvas, DesignThumbnail, NodeInspector, TypologyPicker, WindowSettings, type TypologyPickerProps } from './index'
 
 const catalog = SAMPLE_CATALOG
 const make = (t: TypologyId, width = 1200, height = 1200): WindowDesign =>
@@ -56,11 +56,11 @@ describe('DesignCanvas', () => {
     clickHit(first)
     expect(screen.getByTestId('selected').textContent).toBe(first.getAttribute('data-node-id'))
     expect(first.getAttribute('aria-pressed')).toBe('true')
-    const toolbar = screen.getByRole('toolbar')
+    const toolbar = screen.getByRole('toolbar', { name: 'Opciones del paño' })
     expect(within(toolbar).getByRole('group', { name: 'Apertura' })).toBeTruthy()
     fireEvent.keyDown(canvasEl(container), { key: 'Escape' })
     expect(screen.getByTestId('selected').textContent).toBe('')
-    expect(screen.queryByRole('toolbar')).toBeNull()
+    expect(screen.queryByRole('toolbar', { name: 'Opciones del paño' })).toBeNull()
   })
 
   it('la barra cambia la apertura y avisa con un texto para deshacer', () => {
@@ -69,7 +69,7 @@ describe('DesignCanvas', () => {
     const [first] = cells(container)
     const id = first.getAttribute('data-node-id')!
     clickHit(first)
-    fireEvent.click(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Abatible, bisagras a la derecha' }))
+    fireEvent.click(within(screen.getByRole('toolbar', { name: 'Opciones del paño' })).getByRole('button', { name: 'Abatible, bisagras a la derecha' }))
     expect(onChange).toHaveBeenCalledTimes(1)
     const [next, label] = onChange.mock.calls[0]
     expect(label).toBe('Apertura: Abatible')
@@ -87,7 +87,7 @@ describe('DesignCanvas', () => {
       )
     }
     render(<Ext />)
-    fireEvent.click(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Abatible, bisagras a la izquierda' }))
+    fireEvent.click(within(screen.getByRole('toolbar', { name: 'Opciones del paño' })).getByRole('button', { name: 'Abatible, bisagras a la izquierda' }))
     expect((onChange.mock.calls[0][0] as WindowDesign).root).toMatchObject({ opening: { kind: 'casement', hinge: 'right' } })
   })
 
@@ -113,7 +113,7 @@ describe('DesignCanvas', () => {
     fireEvent.keyDown(canvasEl(container), { key: 'v', shiftKey: true })
     expect(cells(container)).toHaveLength(3)
     clickHit(cells(container)[2])
-    fireEvent.click(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Quitar división' }))
+    fireEvent.click(within(screen.getByRole('toolbar', { name: 'Opciones del paño' })).getByRole('button', { name: 'Quitar división' }))
     expect(cells(container)).toHaveLength(2)
     expect(screen.getByTestId('selected').textContent).toBe(cells(container)[1].getAttribute('data-node-id'))
   })
@@ -190,7 +190,7 @@ describe('DesignCanvas', () => {
     const onChange = vi.fn()
     const { container } = render(<Harness initial={make('sliding_2', 1500, 1200)} onChange={onChange} />)
     clickHit(cells(container)[0])
-    fireEvent.click(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Hoja fija' }))
+    fireEvent.click(within(screen.getByRole('toolbar', { name: 'Hoja 1' })).getByRole('button', { name: 'Hoja fija' }))
     expect(onChange.mock.calls[0][1]).toBe('Hoja fija')
     const root = onChange.mock.calls[0][0].root
     expect(root.type === 'sliding' && root.panels[0].kind).toBe('fixed')
@@ -258,6 +258,34 @@ describe('TypologyPicker', () => {
     expect(meta).toEqual({ typologyId: 'casement', qty: 3 })
   })
 
+  it('muestra las 58 tipologías: las que ninguna línea declara van con borde punteado y se crean igual', () => {
+    localStorage.clear()
+    const slidingOnly: Catalog = { ...catalog, lines: catalog.lines.filter((l) => l.kind === 'sliding') }
+    const onCreate = vi.fn()
+    render(
+      <TooltipProvider>
+        <TypologyPicker open onOpenChange={vi.fn()} catalog={slidingOnly} defaults={SAMPLE_DEFAULTS} onCreate={onCreate} />
+      </TooltipProvider>,
+    )
+    const tiles = document.querySelectorAll('[data-tile]')
+    expect(tiles).toHaveLength(TYPOLOGY_IDS.length)
+    const door = screen.getByRole('button', { name: 'Puerta' })
+    expect(door.getAttribute('data-no-line')).toBe('true')
+    expect(door.getAttribute('title')).toMatch(/Ninguna de tus líneas la declara/)
+    expect(screen.getByRole('button', { name: 'Corredera 2 hojas' }).hasAttribute('data-no-line')).toBe(false)
+    // El interruptor deja solo lo que fabrican las líneas y recuerda la preferencia.
+    fireEvent.click(screen.getByRole('switch', { name: 'Solo las de mis líneas' }))
+    expect(screen.queryByRole('button', { name: 'Puerta' })).toBeNull()
+    expect(localStorage.getItem('fz-designer-only-mine')).toBe('1')
+    fireEvent.click(screen.getByRole('switch', { name: 'Solo las de mis líneas' }))
+    expect(localStorage.getItem('fz-designer-only-mine')).toBeNull()
+    // Una sin línea se crea igual (nunca bloquea): usa la línea que mejor calza.
+    fireEvent.click(screen.getByRole('button', { name: 'Puerta' }))
+    fireEvent.submit(screen.getByRole('spinbutton', { name: 'Ancho' }).closest('form')!)
+    expect(onCreate).toHaveBeenCalledTimes(1)
+    expect(onCreate.mock.calls[0][1]).toMatchObject({ typologyId: 'door' })
+  })
+
   it('elegir con clic y crear con Enter recuerda la tipología como reciente', () => {
     localStorage.clear()
     const { onCreate } = renderPicker()
@@ -265,6 +293,75 @@ describe('TypologyPicker', () => {
     fireEvent.submit(screen.getByRole('spinbutton', { name: 'Ancho' }).closest('form')!)
     expect(onCreate.mock.calls[0][0]).toMatchObject({ width: 900, height: 2100, lineId: 'serie-puerta-70' })
     expect(JSON.parse(localStorage.getItem('fz-designer-recent-typologies') ?? '[]')).toEqual(['door'])
+  })
+})
+
+describe('TypologyPicker: agregar y seguir', () => {
+  function renderOpen(props: Pick<TypologyPickerProps, 'onCreateMany'> = {}) {
+    localStorage.clear()
+    const onCreate = vi.fn()
+    const onOpenChange = vi.fn()
+    render(
+      <TooltipProvider>
+        <TypologyPicker open onOpenChange={onOpenChange} catalog={catalog} defaults={SAMPLE_DEFAULTS} onCreate={onCreate} onCreateMany={props.onCreateMany} />
+      </TooltipProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Abatible' }))
+    return { onCreate, onOpenChange, width: screen.getByRole('spinbutton', { name: 'Ancho' }) as HTMLInputElement }
+  }
+  const paste = (el: Element, text: string) => fireEvent.paste(el, { clipboardData: { getData: () => text } })
+
+  it('Ctrl+Enter crea, deja el diálogo abierto y conserva tipología, línea y color', async () => {
+    const { onCreate, onOpenChange, width } = renderOpen()
+    fireEvent.focus(width)
+    fireEvent.change(width, { target: { value: '800' } })
+    fireEvent.keyDown(width, { key: 'Enter', ctrlKey: true })
+    expect(onCreate).toHaveBeenCalledTimes(1)
+    expect(onCreate.mock.calls[0][1]).toMatchObject({ typologyId: 'casement', qty: 1, keepOpen: true })
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(screen.getByRole('spinbutton', { name: 'Ancho' })).toBeTruthy()
+    // Sin tocar nada, Enter termina: no repite la misma ventana.
+    expect(screen.getByRole('button', { name: /Listo/ })).toBeTruthy()
+    fireEvent.submit(width.closest('form')!)
+    expect(onCreate).toHaveBeenCalledTimes(1)
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('al cambiar la medida vuelve a ofrecer agregar y Ctrl+Enter suma otra', () => {
+    const { onCreate, width } = renderOpen()
+    fireEvent.keyDown(width, { key: 'Enter', ctrlKey: true })
+    fireEvent.focus(width)
+    fireEvent.change(width, { target: { value: '1000' } })
+    expect(screen.queryByRole('button', { name: /Listo/ })).toBeNull()
+    fireEvent.keyDown(width, { key: 'Enter', metaKey: true })
+    expect(onCreate).toHaveBeenCalledTimes(2)
+    expect(onCreate.mock.calls[1][0]).toMatchObject({ width: 1000 })
+  })
+
+  it('pegar una medida con cantidad llena ancho, alto y cantidad', () => {
+    const { onCreate, width } = renderOpen()
+    paste(width, '1500x1200 x3')
+    fireEvent.submit(width.closest('form')!)
+    expect(onCreate.mock.calls[0][0]).toMatchObject({ width: 1500, height: 1200 })
+    expect(onCreate.mock.calls[0][1]).toMatchObject({ qty: 3 })
+  })
+
+  it('pegar varias líneas pasa a la lista y agrega las que se entienden, de una vez', () => {
+    const onCreateMany = vi.fn<NonNullable<TypologyPickerProps['onCreateMany']>>()
+    const { onCreate, onOpenChange, width } = renderOpen({ onCreateMany })
+    paste(width, '1500x1200 x2\nvitrina\n900x1100')
+    const list = screen.getByRole('textbox', { name: 'Medidas, una por línea' }) as HTMLTextAreaElement
+    expect(list.value).toContain('vitrina')
+    expect(screen.getByText('2 ventanas · 3 unidades')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Agregar 2 ventanas/ })).toBeTruthy()
+    fireEvent.keyDown(list, { key: 'Enter', ctrlKey: true })
+    expect(onCreate).not.toHaveBeenCalled()
+    const entries = onCreateMany.mock.calls[0][0]
+    expect(entries.map((e) => [e.design.width, e.design.height, e.meta.qty])).toEqual([
+      [1500, 1200, 2],
+      [900, 1100, 1],
+    ])
+    expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 })
 
@@ -280,12 +377,38 @@ describe('WindowSettings y NodeInspector', () => {
     const width = screen.getByRole('spinbutton', { name: 'Ancho' })
     fireEvent.focus(width)
     fireEvent.change(width, { target: { value: '750' } })
-    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ width: 750 }), 'Cambiar ancho')
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ width: 750 }), 'Cambiar ancho', { key: 'width' })
     fireEvent.click(screen.getByRole('switch', { name: 'Interior de otro color' }))
     expect(onChange.mock.calls.at(-1)?.[1]).toBe('Bicolor')
     expect(onChange.mock.calls.at(-1)?.[0].colorInId).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Accesorios' }))
     fireEvent.click(screen.getByRole('switch', { name: 'Mosquitero' }))
-    expect(onChange.mock.calls.at(-1)?.[0].extras).toEqual({ screen: true })
+    // v5: mosquitero tipado (el motor lo trata igual que el `screen: true` de v4).
+    expect(onChange.mock.calls.at(-1)?.[0].extras).toEqual({ insectScreen: { type: 'fixed' } })
+    expect(onChange.mock.calls.at(-1)?.[1]).toBe('Con mosquitero')
+  })
+
+  it('accesorios y forma quedan plegados con su estado a la vista', () => {
+    const onChange = vi.fn()
+    const design = make('casement', 800, 1200)
+    const { rerender } = render(
+      <TooltipProvider>
+        <WindowSettings design={design} catalog={catalog} onChange={onChange} />
+      </TooltipProvider>,
+    )
+    expect(screen.queryByRole('radiogroup', { name: 'Forma del marco' })).toBeNull()
+    expect(screen.queryByRole('switch', { name: 'Persiana' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^Forma/ }))
+    const group = screen.getByRole('radiogroup', { name: 'Forma del marco' })
+    fireEvent.click(within(group).getByRole('radio', { name: 'Redonda' }))
+    expect(onChange.mock.calls.at(-1)?.[0].shape).toEqual({ kind: 'round' })
+    rerender(
+      <TooltipProvider>
+        <WindowSettings design={{ ...design, shape: { kind: 'round' }, extras: { sill: true } }} catalog={catalog} onChange={onChange} />
+      </TooltipProvider>,
+    )
+    expect(screen.getByRole('button', { name: /^Forma/ }).textContent).toContain('Redonda')
+    expect(screen.getByRole('button', { name: /^Accesorios/ }).textContent).toContain('Alféizar')
   })
 
   it('el inspector del paño cambia la apertura; sin paño explica qué hacer', () => {
@@ -336,5 +459,96 @@ describe('DesignThumbnail', () => {
     const { cachedLayout } = await import('./DesignThumbnail')
     expect(cachedLayout(design, catalog)).toBe(cachedLayout(design, catalog))
     act(() => {})
+  })
+})
+
+describe('conjuntos y contorno en los ajustes', () => {
+  const withProviders = (node: ReactNode) => <TooltipProvider>{node}</TooltipProvider>
+  const base = { lineId: SAMPLE_DEFAULTS.lineId, colorId: SAMPLE_DEFAULTS.colorId, glassId: SAMPLE_DEFAULTS.glassId }
+  const addon = (id: string, name: string): Profile => ({ id, lineId: base.lineId, code: id, name, role: 'other', barLength: 5800, priceByColor: { blanco: 9000 } })
+  const catalog = { ...SAMPLE_CATALOG, profiles: [...SAMPLE_CATALOG.profiles, addon('P78', 'Premarco pvc 60/70')] } as Catalog
+
+  it('ofrece solo las piezas de contorno que trae la línea y guarda la elegida', () => {
+    const onChange = vi.fn()
+    const design = createDesign('fixed', { ...base, width: 1000, height: 1000 })
+    render(withProviders(<WindowSettings design={design} catalog={catalog} onChange={onChange} />))
+    fireEvent.click(screen.getByRole('button', { name: 'Accesorios' }))
+    expect(screen.queryByRole('switch', { name: 'Ensanche' })).toBeNull()
+    fireEvent.click(screen.getByRole('switch', { name: 'Premarco' }))
+    expect(onChange.mock.calls[0][0].extras.frameAddons).toEqual([{ kind: 'subframe', profileId: 'P78' }])
+  })
+
+  it('el paño elegido en el lienzo deja activa su unidad', () => {
+    const a = createDesign('fixed', { ...base, width: 1000, height: 1200 })
+    const b = createDesign('casement', { ...base, width: 800, height: 1200 })
+    const design = joinWindow(a, b, 'right', catalog)
+    const { rerender } = render(withProviders(<WindowSettings design={design} catalog={catalog} onChange={() => {}} />))
+    expect(screen.getByRole('radio', { name: 'A' }).getAttribute('aria-checked')).toBe('true')
+    rerender(withProviders(<WindowSettings design={design} catalog={catalog} onChange={() => {}} selectedNodeId="B:n1" />))
+    expect(screen.getByRole('radio', { name: 'B' }).getAttribute('aria-checked')).toBe('true')
+  })
+})
+
+describe('unir desde el dibujo', () => {
+  const single = () => make('fixed', 1000, 1200)
+
+  it('el «+» duplica por ese lado y abre el control de la unión', async () => {
+    const onChange = vi.fn()
+    render(<Harness initial={single()} onChange={onChange} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicar esta ventana a la derecha' }))
+    const [next, label] = onChange.mock.calls[0]
+    expect(label).toBe('Unir ventana')
+    expect(assemblyUnits(next).map((u) => u.design.width)).toEqual([1000, 1000])
+    expect(next.assembly.front).toBe('start')
+    const panel = await screen.findByRole('dialog', { name: 'Unión A–B' })
+    fireEvent.click(within(panel).getByRole('radio', { name: '150°' }))
+    expect(onChange.mock.calls.at(-1)?.[0].assembly.root.joints[0].angle).toBe(150)
+    fireEvent.click(within(panel).getByRole('radio', { name: 'Hacia adentro' }))
+    expect(onChange.mock.calls.at(-1)?.[0].assembly.root.joints[0].angle).toBe(210)
+    expect(screen.getByRole('button', { name: 'Unión A–B: 150° Hacia adentro' })).toBeTruthy()
+  })
+
+  it('un ángulo escrito vale al salir del campo, y 0 vuelve a recto', async () => {
+    const onChange = vi.fn()
+    render(<Harness initial={single()} onChange={onChange} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicar esta ventana a la izquierda' }))
+    const panel = await screen.findByRole('dialog', { name: 'Unión A–B' })
+    const field = within(panel).getByRole('textbox', { name: 'Otro ángulo' })
+    fireEvent.focus(field)
+    fireEvent.change(field, { target: { value: '127,5' } })
+    expect(onChange).toHaveBeenCalledTimes(1)
+    fireEvent.blur(field)
+    expect(onChange.mock.calls.at(-1)?.[0].assembly.root.joints[0].angle).toBe(127.5)
+    const again = within(panel).getByRole('textbox', { name: 'Otro ángulo' })
+    fireEvent.focus(again)
+    fireEvent.change(again, { target: { value: '0' } })
+    fireEvent.blur(again)
+    expect(onChange.mock.calls.at(-1)?.[0].assembly.root.joints[0].angle).toBe(180)
+    expect(onChange.mock.calls.at(-1)?.[0].assembly.kind).toBe('flat')
+  })
+
+  it('en la vista exterior, la derecha de la pantalla es la izquierda interior', () => {
+    const onChange = vi.fn()
+    render(<Harness initial={single()} onChange={onChange} />)
+    fireEvent.click(screen.getByRole('radio', { name: 'Exterior' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicar esta ventana a la derecha' }))
+    expect(onChange.mock.calls[0][0].assembly.front).toBe('end')
+  })
+
+  it('tocar un paño del conjunto deja cambiar su tipo o quitarlo', () => {
+    const onChange = vi.fn()
+    const design = joinWindow(make('fixed', 1000, 1200), make('casement', 800, 1200), 'right', SAMPLE_CATALOG)
+    const { container } = render(<Harness initial={design} onChange={onChange} />)
+    clickHit(container.querySelector('[data-hit="cell"][data-node-id^="B:"]')!)
+    expect(screen.getByRole('button', { name: 'Tipo de B' }).textContent).toContain('Abatible')
+    fireEvent.click(screen.getByRole('button', { name: 'Quitar B' }))
+    expect(onChange.mock.calls.at(-1)?.[0].assembly).toBeUndefined()
+    expect(onChange.mock.calls.at(-1)?.[1]).toBe('Quitar ventana del conjunto')
+  })
+
+  it('en solo lectura no hay nada para unir', () => {
+    render(<Harness initial={joinWindow(single(), single(), 'right', SAMPLE_CATALOG)} readOnly />)
+    expect(screen.queryByRole('button', { name: /^Duplicar/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Unión/ })).toBeNull()
   })
 })

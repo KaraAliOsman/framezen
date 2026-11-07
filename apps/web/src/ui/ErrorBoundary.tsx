@@ -1,6 +1,8 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { RotateCcw } from 'lucide-react'
 import { cn } from '../lib/cn'
+import { useT } from '../lib/i18n'
+import es from './i18n/es'
 import { Button } from './Button'
 import { EmptyState } from './EmptyState'
 
@@ -82,25 +84,18 @@ export interface ZoneErrorProps {
 }
 
 /** Aviso estándar de una zona que no se pudo dibujar: explica, tranquiliza y ofrece salidas. */
-export function ZoneError({
-  title = 'No pudimos mostrar esta parte',
-  description = 'Tus datos están a salvo. Reintenta; si vuelve a pasar, escríbenos y lo revisamos.',
-  onRetry,
-  actions,
-  size = 'compact',
-  className,
-}: ZoneErrorProps) {
+export function ZoneError({ title, description, onRetry, actions, size = 'compact', className }: ZoneErrorProps) {
+  const t = useT(es)
   return (
     <div role="alert" className={cn('grid h-full place-items-center', className)}>
       <EmptyState
-        sketch="casement"
         size={size}
-        title={title}
-        description={description}
+        title={title ?? t('error.title')}
+        description={description ?? t('error.description')}
         action={
           onRetry ? (
             <Button variant="secondary" size={size === 'compact' ? 'sm' : 'md'} icon={RotateCcw} onClick={onRetry}>
-              Reintentar
+              {t('common.retry')}
             </Button>
           ) : null
         }

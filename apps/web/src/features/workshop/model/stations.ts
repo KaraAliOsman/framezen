@@ -6,27 +6,33 @@
  * avance de taller); «Instalado» es el paso en obra.
  */
 import type { LucideIcon } from 'lucide-react'
-import { ClipboardCheck, Flame, Frame, House, PackageCheck, Scissors, SquareDashed, Wrench } from 'lucide-react'
-import type { Station, WorkOrder } from '@framezen/shared'
+import { ClipboardCheck, Flame, House, PackageCheck, Wrench } from 'lucide-react'
+import type { Locale, Station, WorkOrder } from '@dekopen/shared'
+import { getGlossary, translate } from '../../../lib/i18n'
+import { IconFrame, IconGlazing, IconMiterSaw } from '../../../ui/icons'
+import es from '../i18n/es'
 
 export interface StationInfo {
   id: Station
-  label: string
-  /** Verbo para avisos: «V2 pasó a Soldadura». */
-  short: string
   icon: LucideIcon
 }
 
+/** Estaciones en orden. El nombre sale del glosario (`stationName` o `useGlossary().station`). */
 export const STATIONS: readonly StationInfo[] = [
-  { id: 'cut', label: 'Corte', short: 'Corte', icon: Scissors },
-  { id: 'weld', label: 'Soldadura', short: 'Soldadura', icon: Flame },
-  { id: 'assembly', label: 'Armado', short: 'Armado', icon: Frame },
-  { id: 'hardware', label: 'Herrajes', short: 'Herrajes', icon: Wrench },
-  { id: 'glazing', label: 'Vidriado', short: 'Vidriado', icon: SquareDashed },
-  { id: 'qc', label: 'Control', short: 'Control', icon: ClipboardCheck },
-  { id: 'ready', label: 'Listo', short: 'Listo', icon: PackageCheck },
-  { id: 'installed', label: 'Instalado', short: 'Instalado', icon: House },
+  { id: 'cut', icon: IconMiterSaw },
+  { id: 'weld', icon: Flame },
+  { id: 'assembly', icon: IconFrame },
+  { id: 'hardware', icon: Wrench },
+  { id: 'glazing', icon: IconGlazing },
+  { id: 'qc', icon: ClipboardCheck },
+  { id: 'ready', icon: PackageCheck },
+  { id: 'installed', icon: House },
 ]
+
+/** Nombre de la estación en el idioma de la interfaz (o el indicado): «Soldadura», «Welding»… */
+export function stationName(station: Station, locale?: Locale): string {
+  return getGlossary(locale).station(station)
+}
 
 export const STATION_IDS: readonly Station[] = STATIONS.map((s) => s.id)
 const READY_INDEX = STATION_IDS.indexOf('ready')
@@ -112,18 +118,19 @@ export function slowestStation(progress: WorkOrder['progress'] | undefined, refs
 }
 
 /** Avance en palabras: «3 de 5 listas · 1 instalada». */
-export function progressText(p: OrderProgress): string {
-  if (p.total === 0) return 'Sin ventanas'
-  if (p.installed === p.total) return p.total === 1 ? 'Instalada' : 'Todas instaladas'
-  if (p.ready === p.total) return p.total === 1 ? 'Lista para instalar' : 'Todas listas para instalar'
-  const base = `${p.ready} de ${p.total} ${p.total === 1 ? 'lista' : 'listas'}`
-  return p.installed > 0 ? `${base} · ${p.installed} ${p.installed === 1 ? 'instalada' : 'instaladas'}` : base
+export function progressText(p: OrderProgress, locale?: Locale): string {
+  if (p.total === 0) return translate(es, 'progress.none', undefined, locale)
+  if (p.installed === p.total) return translate(es, p.total === 1 ? 'progress.installedOne' : 'progress.installedAll', undefined, locale)
+  if (p.ready === p.total) return translate(es, p.total === 1 ? 'progress.readyOne' : 'progress.readyAll', undefined, locale)
+  const base = translate(es, 'progress.ready', { ready: p.ready, total: p.total }, locale)
+  return p.installed > 0 ? translate(es, 'progress.installed', { base, count: p.installed }, locale) : base
 }
 
-export const ORDER_STATUS_COPY: Record<WorkOrder['status'], { label: string; tone: 'neutral' | 'warn' | 'ok' }> = {
-  open: { label: 'Por empezar', tone: 'neutral' },
-  in_progress: { label: 'En fabricación', tone: 'warn' },
-  done: { label: 'Lista', tone: 'ok' },
+/** Tono de cada estado de OT (el nombre sale del glosario: `useGlossary().workOrderStatus`). */
+export const ORDER_STATUS_TONE: Record<WorkOrder['status'], 'neutral' | 'warn' | 'ok'> = {
+  open: 'neutral',
+  in_progress: 'warn',
+  done: 'ok',
 }
 
 /** Mismo criterio que el servidor: todo listo = terminada; algo avanzado = en curso. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SAMPLE_CATALOG } from '@framezen/catalog'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
 import { changePct, forceBrand, isLargeChange, previewImport } from './importPreview'
 
 const brand = SAMPLE_CATALOG.brands.find((b) => SAMPLE_CATALOG.lines.some((l) => l.brandId === b.id))!

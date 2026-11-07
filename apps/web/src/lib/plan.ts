@@ -1,4 +1,4 @@
-import { PLANS, TRIAL_DAYS, planFeatures, type BillingDetailFields, type BillingState, type Feature, type PlanCode, type ReadOnlyReason } from '@framezen/shared'
+import { PLANS, TRIAL_DAYS, planFeatures, type BillingDetailFields, type BillingState, type Feature, type PlanCode, type ReadOnlyReason } from '@dekopen/shared'
 import { useMe } from './hooks'
 
 const DAY = 86_400_000

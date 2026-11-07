@@ -8,6 +8,7 @@ import type {
   OptimizerPiece,
   Warning,
 } from '../types'
+import { warning } from '../warnings'
 import { sanitizeCut } from './defaults'
 import { formatMM, roundHalfUp } from './format'
 
@@ -65,6 +66,15 @@ interface GroupDraft {
 }
 
 const toTenths = (mm: number) => Math.round(mm * 10)
+
+/**
+ * Décimas de mm que ocupa el disco en el eje de la barra después de una pieza: a 90° su espesor y
+ * en inglete `kerf / sen(ángulo)` (4 mm a 45° son 5,66 mm), hacia arriba para que nunca falte material.
+ */
+function kerfTenths(kerf: number, angle: number | undefined): number {
+  if (angle === undefined || !Number.isFinite(angle) || angle <= 0.5 || angle >= 89.95) return toTenths(kerf)
+  return Math.ceil((kerf * 10) / Math.sin((angle * Math.PI) / 180) - 1e-6)
+}
 const ceilTenths = (mm: number) => Math.ceil(mm * 10 - 1e-6)
 const round1 = (n: number) => roundHalfUp(n, 1)
 const round2 = (n: number) => roundHalfUp(n, 2)
@@ -178,11 +188,11 @@ function finishBar(key: string, bar: WorkBar, cut: CutSettings): Bar {
     if (u.ref !== undefined) piece.ref = u.ref
     if (u.angleStart !== undefined) piece.angleStart = u.angleStart
     if (u.angleEnd !== undefined) piece.angleEnd = u.angleEnd
-    cursor += u.length + cut.kerf
+    cursor += u.length + kerfTenths(cut.kerf, u.angleEnd) / 10
     return piece
   })
   const used = units.reduce((sum, u) => sum + u.length, 0)
-  const kerfLoss = units.length * cut.kerf
+  const kerfLoss = units.reduce((sum, u) => sum + kerfTenths(cut.kerf, u.angleEnd) / 10, 0)
   const remainder = Math.max(0, bar.barLength - cut.trimStart - cut.trimEnd - used - kerfLoss)
   return {
     key,
@@ -203,10 +213,9 @@ function optimizeGroup(
   warnings: Warning[],
 ): OptimizationGroup {
   const cut: CutSettings = { ...baseCut, barLength: group.barLength && group.barLength > 0 ? group.barLength : baseCut.barLength }
-  const kerf10 = toTenths(cut.kerf)
   const trims10 = toTenths(cut.trimStart) + toTenths(cut.trimEnd)
   const usable10 = toTenths(cut.barLength) - trims10
-  const size = (u: Unit) => u.tenths + kerf10
+  const size = (u: Unit) => u.tenths + kerfTenths(cut.kerf, u.angleEnd)
 
   let pending = [...group.units].sort(compareUnits)
   const bars: WorkBar[] = []
@@ -233,18 +242,37 @@ function optimizeGroup(
     }
   }
 
+  // Sin largo de barra del perfil ni de Ajustes no hay barra que calcular: se avisa, no se supone una.
+  if (!(cut.barLength > 0)) {
+    if (pending.length > 0) {
+      const profile = group.code || group.key
+      warnings.push(
+        warning({
+          level: 'warn',
+          code: 'bar_length_unknown',
+          message: `${profile} no tiene largo de barra ni en el catálogo ni en Ajustes › Taller: sus cortes no se optimizaron.`,
+          params: { profile },
+        }),
+      )
+    }
+    pending = []
+  }
+
   // 2) Piezas más largas que la barra: barra especial y aviso (nunca excepción).
   const oversize = pending.filter((u) => size(u) > usable10)
   pending = pending.filter((u) => size(u) <= usable10)
   for (const unit of oversize) {
-    const needed = Math.ceil(unit.length + cut.kerf + cut.trimStart + cut.trimEnd - 1e-6)
+    const needed = Math.ceil(unit.length + kerfTenths(cut.kerf, unit.angleEnd) / 10 + cut.trimStart + cut.trimEnd - 1e-6)
     bars.push({ barLength: needed, fromOffcut: false, units: [unit] })
     const who = unit.label ? ` (${unit.label})` : ''
-    warnings.push({
-      level: 'warn',
-      code: 'piece_too_long',
-      message: `La pieza de ${formatMM(unit.length)} mm${who} no cabe en una barra de ${formatMM(cut.barLength)} mm: necesitas una barra especial de al menos ${formatMM(needed)} mm.`,
-    })
+    warnings.push(
+      warning({
+        level: 'warn',
+        code: 'piece_too_long',
+        message: `La pieza de ${formatMM(unit.length)} mm${who} no cabe en una barra de ${formatMM(cut.barLength)} mm: necesitas una barra especial de al menos ${formatMM(needed)} mm.`,
+        params: { length: unit.length, bar: cut.barLength, needed, ...(unit.label ? { variant: 'labeled' as const, label: unit.label } : { variant: 'plain' as const }) },
+      }),
+    )
   }
 
   // 3) Barras nuevas: Best-Fit Decreasing y, en grupos chicos, búsqueda exacta si mejora.
@@ -318,7 +346,8 @@ export function reusableOffcuts(groups: OptimizationGroup[], minReusable: number
 
 /**
  * Optimizador 1D de barras. Agrupa por `key` (perfil + color), usa primero los retazos,
- * aplica despunte de inicio y fin y cobra el disco a cada pieza (también a la última).
+ * aplica despunte de inicio y fin y cobra el disco a cada pieza (también a la última), con lo que
+ * ocupa de verdad en el eje de la barra según el ángulo de su corte final.
  * Best-Fit Decreasing determinista; con ≤ 12 piezas busca el mínimo exacto de barras.
  *
  * `totalBars` cuenta las barras nuevas a comprar (sin retazos); `offcuts` son los sobrantes
@@ -344,11 +373,14 @@ export function optimizeCuts(
     if (rawQty <= 0) continue
     const qty = Math.min(rawQty, MAX_UNITS_PER_PIECE)
     if (qty < rawQty) {
-      warnings.push({
-        level: 'warn',
-        code: 'too_many_units',
-        message: `La pieza ${piece.label || piece.key} pide ${rawQty} unidades: se optimizaron las primeras ${MAX_UNITS_PER_PIECE}.`,
-      })
+      warnings.push(
+        warning({
+          level: 'warn',
+          code: 'too_many_units',
+          message: `La pieza ${piece.label || piece.key} pide ${rawQty} unidades: se optimizaron las primeras ${MAX_UNITS_PER_PIECE}.`,
+          params: { piece: piece.label || piece.key, qty: rawQty, max: MAX_UNITS_PER_PIECE },
+        }),
+      )
     }
     const key = String(piece.key ?? '')
     let group = groups.get(key)
@@ -371,11 +403,14 @@ export function optimizeCuts(
   }
 
   if (invalid > 0) {
-    warnings.push({
-      level: 'warn',
-      code: 'invalid_piece',
-      message: invalid === 1 ? 'Una pieza sin largo válido quedó fuera de la optimización.' : `${invalid} piezas sin largo válido quedaron fuera de la optimización.`,
-    })
+    warnings.push(
+      warning({
+        level: 'warn',
+        code: 'invalid_piece',
+        message: invalid === 1 ? 'Una pieza sin largo válido quedó fuera de la optimización.' : `${invalid} piezas sin largo válido quedaron fuera de la optimización.`,
+        params: { count: invalid },
+      }),
+    )
   }
 
   const result = [...groups.values()].map((g) => optimizeGroup(g, cut, offcuts, warnings))

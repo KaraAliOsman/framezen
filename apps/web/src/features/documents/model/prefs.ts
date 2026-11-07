@@ -2,25 +2,9 @@
  * Preferencias de documentos: textos sugeridos (los mismos con que parte cada cuenta) y cómo se
  * aplica una edición hecha directo sobre el documento.
  */
-import type { QuoteDocField } from '@framezen/documents'
-import type { DocumentPrefs } from '@framezen/shared'
+import type { QuoteDocField } from '@dekopen/documents'
+import type { DocumentPrefs } from '@dekopen/shared'
 
-export type TextKey = 'intro' | 'conditions' | 'paymentTerms' | 'warranty' | 'leadTimeText'
-
-/** Textos con que parte una cuenta nueva (apps/server/src/services/settings.ts › DEFAULT_DOCUMENTS). */
-export const SUGGESTED_TEXTS: Record<TextKey, string> = {
-  intro:
-    'Gracias por confiar en nosotros. Te dejamos el detalle de las ventanas que conversamos: medidas, terminaciones y precio de cada una. Si quieres ajustar algo, escríbenos y lo vemos juntos.',
-  conditions: [
-    '- Precios en pesos chilenos, netos más IVA.',
-    '- Antes de fabricar visitamos la obra y confirmamos las medidas finales.',
-    '- Cada ventana incluye perfiles, vidrio y herrajes indicados en su detalle.',
-    '- La instalación, el retiro de ventanas antiguas y las terminaciones de obra se cobran sólo si aparecen en esta cotización.',
-  ].join('\n'),
-  paymentTerms: '50 % al aceptar la cotización y 50 % contra entrega.',
-  warranty: 'Garantía de 5 años en perfiles y termopaneles, y de 1 año en herrajes e instalación, por defectos de fabricación.',
-  leadTimeText: 'Fabricación e instalación en 15 días hábiles desde la aceptación y el abono.',
-}
 
 export const DEFAULT_PREFS: DocumentPrefs = {
   quoteTemplate: 'esencial',
@@ -33,8 +17,13 @@ export const DEFAULT_PREFS: DocumentPrefs = {
   showColorSwatch: true,
   showExteriorView: false,
   paper: 'letter',
-  validityDays: 15,
-  ...SUGGESTED_TEXTS,
+  // Sin compromisos escritos por DEKOPEN: una sección vacía no se imprime.
+  intro: '',
+  conditions: '',
+  paymentTerms: '',
+  warranty: '',
+  leadTimeText: '',
+  validityDays: 0,
 }
 
 /** Completa lo guardado con los valores por defecto (por si falta alguna clave). */
@@ -52,6 +41,7 @@ export function applyDocEdit(prefs: DocumentPrefs, field: QuoteDocField, value: 
   switch (field) {
     case 'title':
     case 'notes':
+    case 'docTitle':
       return { ignored: 'quote-field' }
     case 'validityDays': {
       const days = Number.parseInt(value.replace(/\D+/g, ''), 10)

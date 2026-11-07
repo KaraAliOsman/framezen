@@ -1,24 +1,36 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { CircleCheck, Send } from 'lucide-react'
-import type { Catalog } from '@framezen/engine'
-import { Window3DLazy } from '../viewer3d/lazy'
+import type { Catalog, QuoteSelection } from '@dekopen/engine'
+import { Window3DLazy, Window3DWithAr } from '../viewer3d/lazy'
 import { api, humanError, type AcceptResult } from '../../lib/api'
 import { cn } from '../../lib/cn'
-import { formatCLP } from '../../lib/format'
+import { useFormat, useGlossary, useT } from '../../lib/i18n'
+import { buttonClass } from '../../ui/Button'
+import { Checkbox } from '../../ui/Checkbox'
 import { Dialog, DialogContent } from '../../ui/Dialog'
 import { Field } from '../../ui/Field'
 import { Input, Textarea } from '../../ui/Input'
+import { Notice } from '../../ui/Notice'
+import { SegmentedControl } from '../../ui/SegmentedControl'
 import { Sheet, SheetContent } from '../../ui/Sheet'
 import { Slider } from '../../ui/Slider'
 import { Spinner } from '../../ui/Spinner'
 import { useIsPhone } from '../clients/useIsPhone'
 import { rutHint } from '../clients/rut'
-import { acceptNameError, type PortalItem } from './portalModel'
+import { isChileanTaxId } from '../clients/taxId'
+import es from './i18n/es'
+import { portalItemTitle } from './PortalItemCard'
+import { acceptNameError, composeChangesMessage, taxInSentence, type PortalItem } from './portalModel'
 
+/** Máximo que acepta el servidor para «Pedir cambios». */
+const CHANGES_MAX = 4000
+
+/** Botón con el color de marca del taller (el portal es su documento de venta, no el de DEKOPEN). */
 export const brandButton =
-  'inline-flex items-center justify-center gap-2 rounded-sm bg-[var(--brand)] font-medium text-[var(--brand-on)] transition-[background-color,transform,opacity] duration-120 ease-out hover:bg-[color-mix(in_srgb,var(--brand)_86%,black)] active:scale-[0.98] disabled:pointer-events-none disabled:opacity-60'
-export const outlineButton =
-  'inline-flex items-center justify-center gap-2 rounded-sm border border-paper-200 bg-paper-0 font-medium text-paper-900 transition-[background-color,border-color,transform] duration-120 ease-out hover:border-paper-350/60 hover:bg-paper-100 active:scale-[0.98]'
+  'relative inline-flex items-center justify-center gap-2 rounded-control bg-[var(--brand)] font-medium whitespace-nowrap text-[var(--brand-on)] ' +
+  'transition-[background-color,transform,opacity] duration-100 ease-out hover:bg-[color-mix(in_srgb,var(--brand)_86%,black)] ' +
+  'active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] ' +
+  'disabled:pointer-events-none disabled:opacity-60'
 
 /** Diálogo en escritorio, hoja inferior en el teléfono. */
 function Responsive({
@@ -57,6 +69,19 @@ function Responsive({
   )
 }
 
+/** Confirmación serena: check que aparece en 160 ms (sin rebote) y el texto. */
+function Done({ icon, title, children }: { icon: ReactNode; title?: ReactNode; children?: ReactNode }) {
+  return (
+    <div className="flex flex-col items-center gap-3 py-4 text-center">
+      <span className="fz-pop inline-flex size-12 items-center justify-center rounded-full bg-success-bg text-success">{icon}</span>
+      <div>
+        {title ? <p className="font-display text-h3 font-medium text-fg-strong">{title}</p> : null}
+        {children ? <div className="mx-auto mt-1 max-w-sm text-fg-muted">{children}</div> : null}
+      </div>
+    </div>
+  )
+}
+
 // ── Aceptar ──────────────────────────────────────────────────────────────────
 
 export function AcceptDialog({
@@ -66,11 +91,15 @@ export function AcceptDialog({
   orgName,
   quoteLabel,
   total,
+  currency,
+  taxLabel,
   itemsCount,
   paymentTerms,
   defaultName,
   revision,
+  selection,
   onAccepted,
+  afterAccept,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -78,15 +107,27 @@ export function AcceptDialog({
   orgName: string
   quoteLabel: string
   total: number
+  /** Moneda de la cotización (CLP por defecto). */
+  currency?: string
+  /** Nombre del impuesto del documento («IVA»). */
+  taxLabel: string
   itemsCount: number
   paymentTerms?: string
   defaultName?: string
   /** Revisión que se está mostrando: se acepta esa y no una más nueva que el cliente no vio. */
   revision?: number
+  /** Opcionales y alternativas elegidos; el servidor recalcula con ellos. */
+  selection?: QuoteSelection
   onAccepted: (result: AcceptResult) => void
+  /** Acción principal tras aceptar (ir a pagar), si el taller configuró un medio. */
+  afterAccept?: { label: string; onClick: () => void }
 }) {
+  const t = useT(es)
+  const fmt = useFormat({ locale: t.locale, currency })
+  const chile = isChileanTaxId(currency)
   const [name, setName] = useState(defaultName ?? '')
   const [rut, setRut] = useState('')
+  const [declared, setDeclared] = useState(false)
   const [tried, setTried] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -102,15 +143,15 @@ export function AcceptDialog({
   }, [open, defaultName])
 
   const nameError = acceptNameError(name)
-  const rutWarning = rutHint(rut)
+  const rutWarning = chile ? rutHint(rut, t.locale) : null
 
   const submit = async () => {
     setTried(true)
-    if (nameError) return
+    if (nameError || !declared) return
     setBusy(true)
     setError(null)
     try {
-      const result = await api.portal.accept(token, { name: name.trim(), ...(rut.trim() ? { rut: rut.trim() } : {}), ...(revision ? { revision } : {}) })
+      const result = await api.portal.accept(token, { name: name.trim(), ...(rut.trim() ? { rut: rut.trim() } : {}), ...(revision ? { revision } : {}), ...(selection ? { selection } : {}), declared })
       setDone(result)
       onAccepted(result)
     } catch (err) {
@@ -121,48 +162,58 @@ export function AcceptDialog({
   }
 
   const first = name.trim().split(/\s+/)[0]
+  const terms = paymentTerms?.trim().replace(/\.$/, '')
 
   return (
     <Responsive
       open={open}
       onOpenChange={onOpenChange}
-      title={done ? 'Cotización aceptada' : 'Aceptar cotización'}
-      description={done ? undefined : `${quoteLabel} · ${formatCLP(total)} IVA incluido`}
+      title={done ? t('accept.doneTitle') : t('accept.title')}
+      description={done ? undefined : t('accept.description', { label: quoteLabel, total: fmt.money(total), tax: taxInSentence(taxLabel, t.locale) })}
       footer={
         done ? (
-          <button type="button" className={cn(outlineButton, 'h-10 px-4')} onClick={() => onOpenChange(false)}>
-            Cerrar
-          </button>
+          <>
+            <button type="button" className={buttonClass('secondary', 'md', afterAccept ? 'max-sm:flex-1' : undefined)} onClick={() => onOpenChange(false)}>
+              {t('accept.close')}
+            </button>
+            {afterAccept ? (
+              <button
+                type="button"
+                className={cn(brandButton, 'h-10 px-5 touch:h-11 max-sm:flex-[2]')}
+                onClick={() => {
+                  onOpenChange(false)
+                  afterAccept.onClick()
+                }}
+              >
+                {afterAccept.label}
+              </button>
+            ) : null}
+          </>
         ) : (
           <>
-            <button type="button" className={cn(outlineButton, 'h-10 px-4 max-sm:flex-1')} onClick={() => onOpenChange(false)}>
-              Volver
+            <button type="button" className={buttonClass('secondary', 'md', 'max-sm:flex-1')} onClick={() => onOpenChange(false)}>
+              {t('accept.back')}
             </button>
-            <button type="button" className={cn(brandButton, 'h-10 px-5 max-sm:flex-[2]')} onClick={() => void submit()} disabled={busy}>
+            <button type="button" className={cn(brandButton, 'h-10 px-5 touch:h-11 max-sm:flex-[2]')} onClick={() => void submit()} disabled={busy} aria-busy={busy || undefined}>
               {busy ? <Spinner /> : null}
-              Acepto la cotización
+              {t('accept.submit')}
             </button>
           </>
         )
       }
     >
       {done ? (
-        <div className="flex flex-col items-center gap-3 py-4 text-center">
-          <span className="inline-flex size-12 items-center justify-center rounded-full bg-ok-50 text-ok-600">
-            <CircleCheck aria-hidden strokeWidth={1.75} className="size-6" />
-          </span>
-          <div>
-            <p className="text-h3 font-semibold text-paper-900">{done.alreadyAccepted ? 'Ya estaba aceptada' : `¡Listo${first ? `, ${first}` : ''}!`}</p>
-            <p className="mx-auto mt-1 max-w-sm text-paper-600">
-              {done.alreadyAccepted
-                ? `${orgName} ya tiene registrada la aceptación de esta cotización.`
-                : `Le avisamos a ${orgName}. Te van a contactar pronto para coordinar los siguientes pasos.`}
-            </p>
-          </div>
+        <div className="flex flex-col gap-3">
+          <Done
+            icon={<CircleCheck aria-hidden strokeWidth={1.75} className="size-6" />}
+            title={done.alreadyAccepted ? t('accept.alreadyTitle') : first ? t('accept.done', { name: first }) : t('accept.doneAnonymous')}
+          >
+            {done.alreadyAccepted ? t('accept.alreadyText', { org: orgName }) : t('accept.doneText', { org: orgName })}
+          </Done>
           {done.warnings.map((w) => (
-            <p key={w} className="rounded-md bg-warn-50 px-3 py-2 text-[13px] leading-[18px] text-warn-800">
+            <Notice key={w} tone="warning" size="compact">
               {w}
-            </p>
+            </Notice>
           ))}
         </div>
       ) : (
@@ -173,19 +224,34 @@ export function AcceptDialog({
             void submit()
           }}
         >
-          <Field label="Tu nombre" error={tried ? nameError : undefined}>
-            <Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" autoFocus placeholder="Nombre y apellido" />
+          <Field label={t('accept.name')} error={tried && nameError ? t(nameError === 'empty' ? 'accept.nameEmpty' : 'accept.nameShort') : undefined}>
+            <Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" autoFocus placeholder={t('accept.namePlaceholder')} />
           </Field>
-          <Field label="RUT" optional hint={rutWarning ? <span className="text-warn-800">{rutWarning}</span> : 'Solo si quieres que la boleta o factura salga a tu nombre.'}>
-            <Input value={rut} onChange={(e) => setRut(e.target.value)} placeholder="12.345.678-5" inputMode="text" autoComplete="off" />
+          <Field
+            label={chile ? t('accept.rut') : t('accept.taxId')}
+            optional
+            hint={rutWarning ? <span className="text-warning">{rutWarning}</span> : chile ? t('accept.rutHint') : t('accept.taxIdHint')}
+          >
+            <Input value={rut} onChange={(e) => setRut(e.target.value)} placeholder={chile ? '12.345.678-5' : undefined} inputMode="text" autoComplete="off" />
           </Field>
-          <div className="rounded-md border border-paper-200 bg-paper-50 px-4 py-3 text-[13px] leading-[19px] text-paper-900">
-            Al aceptar confirmas que estás de acuerdo con {itemsCount === 1 ? 'la ventana' : `las ${itemsCount} ventanas`}, sus medidas, precios y
-            condiciones de esta cotización. {orgName} recibirá el aviso y se pondrá en contacto contigo para coordinar
-            {paymentTerms ? ` (${paymentTerms.replace(/\.$/, '')})` : ' el abono y la fabricación'}.
-          </div>
+          <Checkbox
+            checked={declared}
+            onCheckedChange={(value) => setDeclared(value === true)}
+            aria-invalid={tried && !declared ? true : undefined}
+            label={t('accept.declaration')}
+          />
+          {tried && !declared ? (
+            <p role="alert" className="-mt-2 text-table text-danger">
+              {t('accept.declarationMissing')}
+            </p>
+          ) : null}
+          <p className="text-table text-fg-muted">
+            {terms
+              ? t('accept.consentTerms', { count: itemsCount, org: orgName, terms })
+              : t('accept.consent', { count: itemsCount, org: orgName })}
+          </p>
           {error ? (
-            <p role="alert" className="text-[13px] text-bad-600">
+            <p role="alert" className="text-table text-danger">
               {error}
             </p>
           ) : null}
@@ -204,6 +270,7 @@ export function ChangesDialog({
   token,
   orgName,
   defaultName,
+  items = [],
   onSent,
 }: {
   open: boolean
@@ -211,13 +278,17 @@ export function ChangesDialog({
   token: string
   orgName: string
   defaultName?: string
+  /** Ventanas de la cotización («V1 · Corredera 2 hojas») para anotar cambios junto a cada una. */
+  items?: { id: string; label: string }[]
   onSent: () => void
 }) {
+  const t = useT(es)
   const [message, setMessage] = useState('')
+  const [perItem, setPerItem] = useState<Record<string, string>>({})
   const [name, setName] = useState(defaultName ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [sent, setSent] = useState<string | null>(null)
+  const [sent, setSent] = useState(false)
   const [tried, setTried] = useState(false)
   const sentRef = useRef(sent)
   sentRef.current = sent
@@ -228,22 +299,28 @@ export function ChangesDialog({
     setError(null)
     setTried(false)
     if (sentRef.current) {
-      setSent(null)
+      setSent(false)
       setMessage('')
+      setPerItem({})
     }
   }, [open])
 
+  const composed = composeChangesMessage(
+    message,
+    items.map((item) => ({ label: item.label, text: perItem[item.id] ?? '' })),
+    Number.POSITIVE_INFINITY,
+  )
+  const empty = !composed.trim()
+  const tooLong = composed.length > CHANGES_MAX
+
   const submit = async () => {
     setTried(true)
-    if (!message.trim()) return
+    if (empty || tooLong) return
     setBusy(true)
     setError(null)
     try {
-      const result = (await api.portal.requestChanges(token, { message: message.trim(), ...(name.trim() ? { name: name.trim() } : {}) })) as {
-        ok: boolean
-        message?: string
-      }
-      setSent(result.message ?? `Listo, le avisamos a ${orgName}. Te contactarán con la cotización ajustada.`)
+      await api.portal.requestChanges(token, { message: composed, ...(name.trim() ? { name: name.trim() } : {}) })
+      setSent(true)
       onSent()
     } catch (err) {
       setError(humanError(err))
@@ -256,33 +333,31 @@ export function ChangesDialog({
     <Responsive
       open={open}
       onOpenChange={onOpenChange}
-      title={sent ? 'Mensaje enviado' : 'Pedir cambios'}
-      description={sent ? undefined : `Cuéntale a ${orgName} qué quieres ajustar. Te responderán con una versión nueva.`}
+      size="lg"
+      title={sent ? t('changes.sentTitle') : t('changes.title')}
+      description={sent ? undefined : t('changes.description', { org: orgName })}
       footer={
         sent ? (
-          <button type="button" className={cn(outlineButton, 'h-10 px-4')} onClick={() => onOpenChange(false)}>
-            Cerrar
+          <button type="button" className={buttonClass('secondary', 'md')} onClick={() => onOpenChange(false)}>
+            {t('changes.close')}
           </button>
         ) : (
           <>
-            <button type="button" className={cn(outlineButton, 'h-10 px-4 max-sm:flex-1')} onClick={() => onOpenChange(false)}>
-              Volver
+            <button type="button" className={buttonClass('secondary', 'md', 'max-sm:flex-1')} onClick={() => onOpenChange(false)}>
+              {t('changes.back')}
             </button>
-            <button type="button" className={cn(brandButton, 'h-10 px-5 max-sm:flex-[2]')} onClick={() => void submit()} disabled={busy}>
+            <button type="button" className={cn(brandButton, 'h-10 px-5 touch:h-11 max-sm:flex-[2]')} onClick={() => void submit()} disabled={busy} aria-busy={busy || undefined}>
               {busy ? <Spinner /> : <Send aria-hidden strokeWidth={1.75} className="size-4" />}
-              Enviar
+              {t('changes.send')}
             </button>
           </>
         )
       }
     >
       {sent ? (
-        <div className="flex flex-col items-center gap-3 py-4 text-center">
-          <span className="inline-flex size-12 items-center justify-center rounded-full bg-paper-100 text-paper-900">
-            <Send aria-hidden strokeWidth={1.75} className="size-5" />
-          </span>
-          <p className="max-w-sm text-paper-900">{sent}</p>
-        </div>
+        <Done icon={<Send aria-hidden strokeWidth={1.75} className="size-5" />}>
+          <p className="text-fg">{t('changes.sent', { org: orgName })}</p>
+        </Done>
       ) : (
         <form
           className="flex flex-col gap-4"
@@ -291,20 +366,42 @@ export function ChangesDialog({
             void submit()
           }}
         >
-          <Field label="¿Qué te gustaría cambiar?" error={tried && !message.trim() ? 'Escribe aunque sea una línea para saber qué ajustar.' : undefined}>
-            <Textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              rows={5}
-              autoFocus
-              placeholder="Por ejemplo: la ventana del living la prefiero en nogal, y agregar una de 600 × 600 para el baño."
-            />
+          <Field label={t('changes.message')} error={tried && empty ? t('changes.messageEmpty') : undefined}>
+            <Textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4} autoFocus placeholder={t('changes.placeholder')} />
           </Field>
-          <Field label="Tu nombre" optional>
+          {items.length > 0 ? (
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-table font-medium text-fg-strong">{t('changes.perItem')}</legend>
+              <p className="-mt-1 text-table text-fg-muted">{t('changes.perItemHint')}</p>
+              <ul className="flex flex-col gap-2.5">
+                {items.map((item) => (
+                  <li key={item.id} className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+                    <label htmlFor={`change-${item.id}`} className="min-w-0 text-table font-medium text-fg sm:w-[42%] sm:truncate">
+                      {item.label}
+                    </label>
+                    <Input
+                      id={`change-${item.id}`}
+                      size="sm"
+                      value={perItem[item.id] ?? ''}
+                      onChange={(e) => setPerItem((current) => ({ ...current, [item.id]: e.target.value }))}
+                      placeholder={t('changes.perItemPlaceholder')}
+                      className="sm:flex-1"
+                    />
+                  </li>
+                ))}
+              </ul>
+            </fieldset>
+          ) : null}
+          <Field label={t('changes.name')} optional>
             <Input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
           </Field>
+          {tooLong ? (
+            <Notice tone="warning" size="compact">
+              {t('changes.tooLong', { max: CHANGES_MAX.toLocaleString(t.locale) })}
+            </Notice>
+          ) : null}
           {error ? (
-            <p role="alert" className="text-[13px] text-bad-600">
+            <p role="alert" className="text-table text-danger">
               {error}
             </p>
           ) : null}
@@ -316,8 +413,12 @@ export function ChangesDialog({
 
 // ── 3D ───────────────────────────────────────────────────────────────────────
 
-export function View3DDialog({ item, catalog, onOpenChange }: { item: PortalItem | null; catalog: Catalog; onOpenChange: (open: boolean) => void }) {
+export function View3DDialog({ item, catalog, ar, token, onOpenChange }: { item: PortalItem | null; catalog: Catalog; ar: boolean; token: string; onOpenChange: (open: boolean) => void }) {
+  const t = useT(es)
+  const g = useGlossary()
+  const fmt = useFormat({ locale: t.locale })
   const phone = useIsPhone()
+  const hostGlb = useCallback(async (glb: Blob) => (await api.portal.hostArModel(token, glb)).url, [token])
   const [open, setOpenAmount] = useState(0)
   const [view, setView] = useState<'interior' | 'exterior'>('exterior')
   useEffect(() => {
@@ -327,37 +428,51 @@ export function View3DDialog({ item, catalog, onOpenChange }: { item: PortalItem
     }
   }, [item])
   return (
-    <Responsive open={Boolean(item)} onOpenChange={onOpenChange} size="lg" title={item ? `${item.ref} · ${item.title}` : 'Vista 3D'} description={item ? [item.size, item.lineName, item.colorName].filter(Boolean).join(' · ') : undefined}>
+    <Responsive
+      open={Boolean(item)}
+      onOpenChange={onOpenChange}
+      size="lg"
+      title={item ? `${item.ref} · ${portalItemTitle(item, g)}` : t('view3d.title')}
+      description={item ? [fmt.size(item.width, item.height), item.lineName, item.colorName].filter(Boolean).join(' · ') : undefined}
+    >
       {item?.layout ? (
         <div className="flex flex-col gap-4">
-          <Window3DLazy
-            layout={item.layout}
-            design={item.design}
-            catalog={catalog}
-            openAmount={open}
-            view={view}
-            height={phone ? 300 : 400}
-            className="overflow-hidden rounded-md border border-paper-200"
-          />
+          {ar ? (
+            <Window3DWithAr
+              layout={item.layout}
+              design={item.design}
+              catalog={catalog}
+              openAmount={open}
+              view={view}
+              height={phone ? 300 : 400}
+              className="overflow-hidden rounded-panel bg-sunken"
+              ar={{ title: `${item.ref} · ${portalItemTitle(item, g)}`, itemId: item.id, pageUrl: `${window.location.origin}${window.location.pathname}`, hostGlb, placement: 'wall' }}
+            />
+          ) : (
+            <Window3DLazy
+              layout={item.layout}
+              design={item.design}
+              catalog={catalog}
+              openAmount={open}
+              view={view}
+              height={phone ? 300 : 400}
+              className="overflow-hidden rounded-panel bg-sunken"
+            />
+          )}
           <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-            <label className="flex min-w-[220px] flex-1 items-center gap-3 text-[13px] text-paper-600">
-              <span className="shrink-0">Abrir</span>
-              <Slider aria-label="Abrir la ventana" value={Math.round(open * 100)} onValueChange={(v) => setOpenAmount(v / 100)} min={0} max={100} step={1} className="flex-1" />
+            <label className="flex min-w-[220px] flex-1 items-center gap-3 text-table text-fg-muted">
+              <span className="shrink-0">{t('view3d.open')}</span>
+              <Slider aria-label={t('view3d.openLabel')} value={Math.round(open * 100)} onValueChange={(v) => setOpenAmount(v / 100)} min={0} max={100} step={1} className="flex-1" />
             </label>
-            <div role="radiogroup" aria-label="Vista" className="inline-flex rounded-sm border border-paper-200 bg-paper-0 p-0.5 text-[13px]">
-              {(['exterior', 'interior'] as const).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  role="radio"
-                  aria-checked={view === v}
-                  onClick={() => setView(v)}
-                  className={cn('h-8 rounded-[4px] px-3 font-medium', view === v ? 'bg-paper-100 text-paper-900' : 'text-paper-600 hover:text-paper-900')}
-                >
-                  {v === 'interior' ? 'Desde adentro' : 'Desde afuera'}
-                </button>
-              ))}
-            </div>
+            <SegmentedControl
+              aria-label={t('view3d.view')}
+              value={view}
+              onValueChange={setView}
+              options={[
+                { value: 'exterior', label: t('view3d.fromOutside') },
+                { value: 'interior', label: t('view3d.fromInside') },
+              ]}
+            />
           </div>
         </div>
       ) : null}

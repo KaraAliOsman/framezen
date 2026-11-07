@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
-import { DOCUMENT_FONT_FILES, documentFontFaces, type DocFontFamily } from '@framezen/documents'
+import { DOCUMENT_FONT_FILES, docFontFaceRules, documentFontFaces, type DocFontFamily, type DocFontFile } from '@dekopen/documents'
 import { findRepoRoot } from '../../config'
 
 let cachedCss: string | undefined
@@ -51,4 +51,30 @@ export function documentFontCss(): string {
 export function missingDocumentFonts(): DocFontFamily[] {
   documentFontCss()
   return cachedMissing
+}
+
+const fileUrls = new Map<string, string | undefined>()
+
+/** data URL de un archivo de fuente de la lista cerrada de plantillas (se lee una sola vez). */
+function templateFontUrl(file: DocFontFile): string | undefined {
+  if (fileUrls.has(file.file)) return fileUrls.get(file.file)
+  let url: string | undefined
+  const path = resolveFont(file.file)
+  if (path) {
+    try {
+      url = `data:font/woff2;base64,${readFileSync(path).toString('base64')}`
+    } catch {
+      url = undefined
+    }
+  }
+  fileUrls.set(file.file, url)
+  return url
+}
+
+/**
+ * @font-face de las fuentes que usa una plantilla (subconjuntos latin y latin-ext: el turco, el alemán y
+ * el francés imprimen sus letras). Las que falten usan la fuente de respaldo de la pila.
+ */
+export function templateFontCss(files: readonly DocFontFile[]): string {
+  return docFontFaceRules(files, templateFontUrl)
 }

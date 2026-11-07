@@ -2,8 +2,10 @@
  * Lista de OT: fechas comprometidas, filtros, búsqueda, orden y resumen del taller.
  * Funciones puras (fáciles de probar); la página solo las conecta con los datos.
  */
-import type { WorkOrder } from '@framezen/shared'
+import { intlTag, type Locale, type WorkOrder } from '@dekopen/shared'
 import { normalizeSearch } from '../../../lib/format'
+import { getLocale, translate } from '../../../lib/i18n'
+import es from '../i18n/es'
 import { orderProgress, stationIndex, stationOf } from './stations'
 
 const TIME_ZONE = 'America/Santiago'
@@ -44,13 +46,24 @@ export function shortDate(iso: string): string {
   return m ? `${m[3]}-${m[2]}-${m[1]}` : iso
 }
 
-/** «15 nov» (o «15 nov 2027» si no es este año). */
-export function friendlyDate(iso: string, now: Date = new Date()): string {
+/**
+ * «15 nov» (o «15 nov 2027» si no es este año). En español, el formato corto de siempre; en los
+ * demás idiomas, el del idioma («Nov 15», «15. Nov.», «15 Kas»).
+ */
+export function friendlyDate(iso: string, now: Date = new Date(), locale: Locale = getLocale()): string {
   const m = ISO_DATE.exec(iso)
   if (!m) return iso
-  const month = MONTHS[Number(m[2]) - 1] ?? m[2]
   const sameYear = todayIn(now).slice(0, 4) === m[1]
-  return `${Number(m[3])} ${month}${sameYear ? '' : ` ${m[1]}`}`
+  if (locale === 'es') {
+    const month = MONTHS[Number(m[2]) - 1] ?? m[2]
+    return `${Number(m[3])} ${month}${sameYear ? '' : ` ${m[1]}`}`
+  }
+  try {
+    const date = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12))
+    return new Intl.DateTimeFormat(intlTag(locale), { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }), timeZone: 'UTC' }).format(date)
+  } catch {
+    return shortDate(iso)
+  }
 }
 
 export type DueTone = 'none' | 'calm' | 'soon' | 'late' | 'done'
@@ -62,24 +75,28 @@ export interface DueInfo {
   /** «15 nov». */
   date: string | null
   days: number | null
+  /** Idioma de los textos. */
+  locale: Locale
 }
 
+/** Días que se marcan como «pronto» (ámbar). */
+export const DUE_SOON_DAYS = 2
+
 /** Cómo va la fecha comprometida. Una OT lista no se marca atrasada. */
-export function dueInfo(dueDate: string | undefined | null, opts: { now?: Date; done?: boolean } = {}): DueInfo {
+export function dueInfo(dueDate: string | undefined | null, opts: { now?: Date; done?: boolean; locale?: Locale } = {}): DueInfo {
   const now = opts.now ?? new Date()
-  if (!dueDate || !ISO_DATE.test(dueDate)) return { tone: 'none', label: 'Por definir', date: null, days: null }
+  const locale = opts.locale ?? getLocale()
+  const t = (key: 'due.none' | 'due.late' | 'due.today' | 'due.tomorrow' | 'due.inDays', count?: number) =>
+    translate(es, key, count === undefined ? undefined : { count }, locale)
+  if (!dueDate || !ISO_DATE.test(dueDate)) return { tone: 'none', label: t('due.none'), date: null, days: null, locale }
   const days = daysUntil(dueDate, now)
-  const date = friendlyDate(dueDate, now)
-  if (days === null) return { tone: 'none', label: 'Por definir', date: null, days: null }
-  if (opts.done) return { tone: 'done', label: date, date, days }
-  if (days < 0) {
-    const n = Math.abs(days)
-    return { tone: 'late', label: `Atrasada ${n} ${n === 1 ? 'día' : 'días'}`, date, days }
-  }
-  if (days === 0) return { tone: 'soon', label: 'Vence hoy', date, days }
-  if (days === 1) return { tone: 'soon', label: 'Vence mañana', date, days }
-  if (days <= 3) return { tone: 'soon', label: `En ${days} días`, date, days }
-  return { tone: 'calm', label: `En ${days} días`, date, days }
+  const date = friendlyDate(dueDate, now, locale)
+  if (days === null) return { tone: 'none', label: t('due.none'), date: null, days: null, locale }
+  if (opts.done) return { tone: 'done', label: date, date, days, locale }
+  if (days < 0) return { tone: 'late', label: t('due.late', Math.abs(days)), date, days, locale }
+  if (days === 0) return { tone: 'soon', label: t('due.today'), date, days, locale }
+  if (days === 1) return { tone: 'soon', label: t('due.tomorrow'), date, days, locale }
+  return { tone: days <= DUE_SOON_DAYS ? 'soon' : 'calm', label: t('due.inDays', days), date, days, locale }
 }
 
 /**
@@ -87,12 +104,14 @@ export function dueInfo(dueDate: string | undefined | null, opts: { now?: Date; 
  * columna «Entrega»): «Entrega en 5 días», «Entrega hoy», «Atrasada 2 días», «Entrega por definir».
  */
 export function dueSentence(due: DueInfo): string {
-  if (due.tone === 'none' || due.days === null) return 'Entrega por definir'
+  const t = (key: 'due.sentence.none' | 'due.sentence.date' | 'due.sentence.today' | 'due.sentence.tomorrow' | 'due.sentence.inDays', params?: Record<string, string | number>) =>
+    translate(es, key, params, due.locale)
+  if (due.tone === 'none' || due.days === null) return t('due.sentence.none')
   if (due.tone === 'late') return due.label
-  if (due.tone === 'done') return `Entrega ${due.date ?? ''}`.trim()
-  if (due.days === 0) return 'Entrega hoy'
-  if (due.days === 1) return 'Entrega mañana'
-  return `Entrega en ${due.days} días`
+  if (due.tone === 'done') return t('due.sentence.date', { date: due.date ?? '' }).trim()
+  if (due.days === 0) return t('due.sentence.today')
+  if (due.days === 1) return t('due.sentence.tomorrow')
+  return t('due.sentence.inDays', { count: due.days })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,11 +120,8 @@ export function dueSentence(due: DueInfo): string {
 
 export type OrderFilter = 'open' | 'done' | 'all'
 
-export const ORDER_FILTERS: { value: OrderFilter; label: string }[] = [
-  { value: 'open', label: 'En taller' },
-  { value: 'done', label: 'Listas' },
-  { value: 'all', label: 'Todas' },
-]
+/** Filtros de la lista (el texto sale de `page.filter.<valor>`). */
+export const ORDER_FILTERS: readonly OrderFilter[] = ['open', 'done', 'all']
 
 export function matchesFilter(order: WorkOrder, filter: OrderFilter): boolean {
   if (filter === 'all') return true
@@ -192,6 +208,6 @@ export function listProgress(order: WorkOrder) {
 }
 
 /** «1 ventana», «4 ventanas». */
-export function windowsLabel(n: number): string {
-  return `${n} ${n === 1 ? 'ventana' : 'ventanas'}`
+export function windowsLabel(n: number, locale?: Locale): string {
+  return translate(es, 'common.windows', { count: n }, locale)
 }

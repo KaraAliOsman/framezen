@@ -1,5 +1,5 @@
 /**
- * Ejecutor de herramientas de Marco en el navegador. Opera sobre el estado real a través del puente
+ * Ejecutor de los comandos locales del asistente en el navegador. Opera sobre el estado real a través del puente
  * del editor (lo mismo que hace la interfaz: se ve el cambio y se puede deshacer) y de la API.
  * Cada herramienta devuelve un resultado para el modelo, un recibo con «Deshacer» y, en modo local,
  * una frase lista para mostrar. Nunca lanza: los problemas vuelven como resultados con ok:false.
@@ -11,14 +11,13 @@ import {
   designName,
   evaluateQuote,
   explainPrice,
-  formatCLP,
-  formatSize,
   getTypology,
   matchTypology,
   resolvePricing,
   setColor,
   setGlass,
   setLine,
+  setExtras,
   setOpening,
   setSize,
   type Catalog,
@@ -30,13 +29,12 @@ import {
   type QuoteTotals,
   type TypologyId,
   type WindowDesign,
-} from '@framezen/engine'
+  type WindowExtras,
+} from '@dekopen/engine'
 import {
   APPROVAL_TOOLS,
-  NAV_LABELS,
   NAV_ROUTES,
   coerceToolArgs,
-  formatMillimeters,
   isAssistantTool,
   type AddWindowArgs,
   type AssistantToolArgs,
@@ -44,16 +42,21 @@ import {
   type AssistantToolName,
   type Client,
   type Defaults,
+  type MessageKey,
+  type MessageParams,
   type Quote,
   type QuoteItem,
   type QuoteSaveBody,
   type QuoteSummary,
   type UpdateWindowArgs,
-} from '@framezen/shared'
+  type WindowExtrasArg,
+} from '@dekopen/shared'
+import { getFormatter, getGlossary, getLocale, translate } from '../../lib/i18n'
 import { defaultGlassId } from '../designer/lib/catalog'
 import { itemWarnings } from '../quotes/model/evaluate'
 import type { QuoteEditorBridge } from './bridge'
 import { refsLabel, resolveColor, resolveGlass, resolveItems, resolveLine, resolveTypology, typologyKind } from './resolve'
+import es from './i18n/es'
 import type { ApprovalRequest, AssistantCard, PriceCard } from './types'
 
 export interface ExecutorApi {
@@ -107,21 +110,9 @@ export interface ToolOutcome {
   step: string
 }
 
-export const STEP_LABELS: Record<AssistantToolName, string> = {
-  create_quote: 'Creando la cotización…',
-  open_quote: 'Abriendo la cotización…',
-  add_window: 'Agregando la ventana…',
-  update_window: 'Cambiando la ventana…',
-  duplicate_window: 'Duplicando…',
-  remove_window: 'Quitando…',
-  set_discount: 'Aplicando el descuento…',
-  set_title: 'Cambiando el título…',
-  set_client: 'Buscando al cliente…',
-  explain_price: 'Revisando el precio…',
-  show_document: 'Abriendo el documento…',
-  send_quote: 'Preparando el envío…',
-  navigate: 'Cambiando de pantalla…',
-  search: 'Buscando…',
+/** Etiqueta en gerundio de cada herramienta (en el idioma de la interfaz). */
+export function stepLabel(name: string): string {
+  return isAssistantTool(name) ? translate(es, `executor.steps.${name as AssistantToolName}`) : translate(es, 'executor.working')
 }
 
 class ToolError extends Error {}
@@ -129,17 +120,81 @@ class ToolError extends Error {}
 let receiptCounter = 0
 const receiptId = () => `r${Date.now().toString(36)}${(++receiptCounter).toString(36)}`
 
-const OPENING_WORDS: Record<OpeningKind, string> = {
-  fixed: 'fijo',
-  casement: 'abatible',
-  tilt_turn: 'oscilobatiente',
-  tilt: 'oscilante',
-  awning: 'proyectante',
-  door: 'puerta',
+const t = (key: MessageKey<typeof es>, params?: MessageParams) => translate(es, key, params)
+const openingWord = (kind: OpeningKind) => t(`executor.openings.${kind}`)
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+const mm = (n: number) => getFormatter().mm(n, { unit: true })
+const sizeText = (w: number, h: number) => getFormatter().size(w, h)
+const money = (n: number) => getFormatter().money(n)
+const lower = (text: string) => text.toLocaleLowerCase(getLocale())
+
+/** Nombre de la ventana en el idioma de la interfaz (en español, el del motor tal cual). */
+function windowName(design: WindowDesign): string {
+  const base = designName(design)
+  if (getLocale() === 'es') return base
+  let id: string | undefined
+  try {
+    id = matchTypology(design) ?? undefined
+  } catch {
+    id = undefined
+  }
+  return id ? getGlossary().typology(id, base) : base
 }
 
-const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
-const mm = (n: number) => `${formatMillimeters(n)} mm`
+function typologyLabel(id: TypologyId): string {
+  const engineName = getTypology(id)?.name ?? id
+  return getLocale() === 'es' ? engineName : getGlossary().typology(id, engineName)
+}
+
+/** Persiana, mosquitero, alféizar y umbral (`null` = quitar). Devuelve el diseño y la frase de lo que cambió. */
+function applyExtras(design: WindowDesign, extras: WindowExtrasArg | undefined, changes: string[]): WindowDesign {
+  if (!extras) return design
+  const current = design.extras ?? {}
+  const patch: Partial<WindowExtras> = {}
+  const shutter = extras.rollerShutter
+  if (shutter === null) {
+    if (current.rollerShutter) {
+      patch.rollerShutter = undefined
+      changes.push(t('executor.extras.shutterOff'))
+    }
+  } else if (shutter) {
+    patch.rollerShutter = { type: shutter.type ?? current.rollerShutter?.type ?? 'monoblock', operation: shutter.operation ?? current.rollerShutter?.operation ?? 'crank' }
+    changes.push(t('executor.extras.shutter'))
+  }
+  const screen = extras.insectScreen
+  if (screen === null) {
+    if (current.insectScreen || current.screen) {
+      patch.insectScreen = undefined
+      changes.push(t('executor.extras.screenOff'))
+    }
+  } else if (screen) {
+    patch.insectScreen = { type: screen.type ?? current.insectScreen?.type ?? 'fixed' }
+    changes.push(t('executor.extras.screen'))
+  }
+  if (extras.sill !== undefined) {
+    patch.sill = extras.sill || undefined
+    changes.push(t(extras.sill ? 'executor.extras.sill' : 'executor.extras.sillOff'))
+  }
+  if (extras.threshold !== undefined) {
+    patch.threshold = extras.threshold || undefined
+    changes.push(t(extras.threshold ? 'executor.extras.threshold' : 'executor.extras.thresholdOff'))
+  }
+  return setExtras(design, patch)
+}
+
+/** Orden del oscilobatiente («primero oscila»): solo en hojas oscilobatientes. */
+function applySequence(design: WindowDesign, sequence: 'turn_first' | 'tilt_first' | undefined, changes: string[]): WindowDesign {
+  if (!sequence || design.root?.type === 'sliding') return design
+  let next = design
+  let touched = false
+  for (const leaf of collectLeaves(design.root)) {
+    if (leaf.opening.kind !== 'tilt_turn' || leaf.opening.sequence === sequence) continue
+    next = setOpening(next, leaf.id, { ...leaf.opening, sequence })
+    touched = true
+  }
+  if (touched) changes.push(t(sequence === 'tilt_first' ? 'executor.extras.tiltFirst' : 'executor.extras.turnFirst'))
+  return next
+}
 
 function sameContent(a: Quote, b: Quote): boolean {
   const pick = (q: Quote) =>
@@ -171,10 +226,10 @@ export function createExecutor(env: ExecutorEnv) {
       try {
         return await env.waitForEditor(decodeURIComponent(match[1]), 8000)
       } catch {
-        throw new ToolError('La cotización todavía se está abriendo. Inténtalo de nuevo en un momento.')
+        throw new ToolError(t('executor.quoteOpening'))
       }
     }
-    if (!create) throw new ToolError('Primero abre una cotización, o dime «nueva cotización» y la creo.')
+    if (!create) throw new ToolError(t('executor.needQuote'))
     const quote = await env.api.createQuote({})
     createdInBatch = quote
     receipts.push(createdReceipt(quote))
@@ -182,14 +237,14 @@ export function createExecutor(env: ExecutorEnv) {
     try {
       return await env.waitForEditor(quote.id, 12000)
     } catch {
-      throw new ToolError(`Creé la cotización N° ${quote.number}, pero el editor no alcanzó a abrirse. Ábrela y vuelve a pedírmelo.`)
+      throw new ToolError(t('executor.editorLate', { number: quote.number }))
     }
   }
 
   function createdReceipt(quote: Quote, extra = ''): Receipt {
     return {
       id: receiptId(),
-      text: `Creé la cotización N° ${quote.number}${extra}`,
+      text: t('executor.createdQuote', { number: quote.number, extra }),
       undo: () => {
         void env.api.removeQuote(quote.id).catch(() => {})
         if (env.currentPath().startsWith(`/cotizaciones/${quote.id}`)) env.navigate('/cotizaciones')
@@ -222,7 +277,7 @@ export function createExecutor(env: ExecutorEnv) {
     const defaultLine = catalog.lines.find((l) => l.id === defaults.lineId)
     if (!typologyId) {
       typologyId = defaultLine?.kind === 'sliding' ? 'sliding_2' : 'casement'
-      if (args.typology) out.notes.push(`No reconocí «${args.typology}»; la dejé como ${getTypology(typologyId)?.name.toLowerCase()}.`)
+      if (args.typology) out.notes.push(t('executor.unknownTypology', { value: args.typology, typology: lower(typologyLabel(typologyId)) }))
     }
     const typology = getTypology(typologyId)!
     // Si la cotización ya tiene una ventana de ese tipo, la nueva usa su misma línea.
@@ -232,11 +287,11 @@ export function createExecutor(env: ExecutorEnv) {
       .map((i) => catalog.lines.find((l) => l.id === i.design.lineId))
       .find((l) => l && l.kind === typology.kind && (l.typologyIds.length === 0 || l.typologyIds.includes(typologyId)))
     const { line, missed } = resolveLine(catalog, args.line, { kind: typology.kind, typologyId, defaultLineId: defaults.lineId, currentLineId: quoteLine?.id })
-    if (!line) throw new ToolError('Tu catálogo no tiene líneas activas. Activa una marca en Catálogo y vuelvo a intentarlo.')
-    if (missed) out.notes.push(`No encontré la línea «${missed}»; usé ${line.name}.`)
+    if (!line) throw new ToolError(t('executor.noLines'))
+    if (missed) out.notes.push(t('executor.lineMissed', { value: missed, line: line.name }))
 
     const color = resolveColor(catalog, args.color, line)
-    if (args.color && !color) out.notes.push(`No encontré el color «${args.color}» en tu catálogo; quedó en el color por defecto.`)
+    if (args.color && !color) out.notes.push(t('executor.colorMissedDefault', { value: args.color }))
     // Si todas las ventanas de la cotización comparten color o vidrio, la nueva los sigue
     // («cambia todo a nogal» y luego «agrega una corredera» → nogal).
     const shared = (pick: (d: WindowDesign) => string | undefined) => {
@@ -252,7 +307,7 @@ export function createExecutor(env: ExecutorEnv) {
       catalog.colors[0]
     const colorIn = args.color_in ? resolveColor(catalog, args.color_in, line) : undefined
     const glass = resolveGlass(catalog, args.glass, defaults.glassId)
-    if (args.glass && !glass) out.notes.push(`No encontré el vidrio «${args.glass}»; quedó el vidrio por defecto.`)
+    if (args.glass && !glass) out.notes.push(t('executor.glassMissedDefault', { value: args.glass }))
     // El termopanel de siempre (DVH 4+12+4 incoloro), igual que la galería del editor.
     const defaultGlass =
       catalog.glass.find((g) => g.id === sharedGlass) ?? catalog.glass.find((g) => g.id === defaultGlassId(catalog, defaults.glassId)) ?? catalog.glass[0]
@@ -262,15 +317,15 @@ export function createExecutor(env: ExecutorEnv) {
     if (!width && !height) {
       width = typology.defaultSize.width
       height = typology.defaultSize.height
-      out.notes.push(`Usé la medida estándar de ${formatSize(width, height)}; cámbiala cuando quieras.`)
+      out.notes.push(t('executor.standardSize', { size: sizeText(width, height) }))
     } else if (!height) {
       height = typology.defaultSize.height
-      out.notes.push(`Faltaba el alto: usé ${mm(height)}.`)
+      out.notes.push(t('executor.missingHeight', { value: mm(height) }))
     } else if (!width) {
       width = typology.defaultSize.width
-      out.notes.push(`Faltaba el ancho: usé ${mm(width)}.`)
+      out.notes.push(t('executor.missingWidth', { value: mm(width) }))
     }
-    if ((width ?? 0) > 8000 || (height ?? 0) > 8000) out.notes.push(`Ojo: ${formatSize(width!, height!)} es grande para una sola ventana; revisa si eran centímetros.`)
+    if ((width ?? 0) > 8000 || (height ?? 0) > 8000) out.notes.push(t('executor.tooBig', { size: sizeText(width!, height!) }))
 
     let design: WindowDesign = createDesign(typologyId, {
       lineId: line.id,
@@ -280,16 +335,18 @@ export function createExecutor(env: ExecutorEnv) {
       glassId: (glass ?? defaultGlass)?.id ?? '',
     })
     if (colorIn) design = setColor(design, design.colorId, colorIn.id)
+    const extraChanges: string[] = []
+    design = applySequence(applyExtras(design, args.extras, extraChanges), args.sequence, extraChanges)
     const qty = args.qty && args.qty > 0 ? Math.min(500, Math.round(args.qty)) : 1
     const id = bridge.addItem(design, { qty, ...(args.location ? { location: args.location } : {}), ...(args.name ? { name: args.name } : {}) })
     lastTouchedId = id
     bridge.selectItem(id)
     const item = bridge.getQuote().items.find((i) => i.id === id)
-    const ref = item?.ref || 'la ventana'
+    const ref = item?.ref || t('executor.theWindow')
     const quoteId = bridge.quoteId
     out.receipts.push({
       id: receiptId(),
-      text: `Agregué ${ref} · ${designName(design)} ${formatSize(design.width, design.height)}${qty > 1 ? ` · ${qty} u` : ''}`,
+      text: t('executor.added', { ref, name: windowName(design), size: sizeText(design.width, design.height), qty: `${qty > 1 ? t('executor.qtySuffix', { qty }) : ''}${extraChanges.length ? ` · ${extraChanges.join(', ')}` : ''}` }),
       undo: () => {
         const b = editorFor(quoteId)
         if (!b || !b.getQuote().items.some((i) => i.id === id)) return false
@@ -307,7 +364,7 @@ export function createExecutor(env: ExecutorEnv) {
       ...(args.location ? { location: args.location } : {}),
       totals: totalsForModel(await totalsOf(bridge)),
     }
-    out.say = 'Listo.'
+    out.say = t('executor.done')
   }
 
   function applyOpening(design: WindowDesign, args: UpdateWindowArgs, changes: string[]): WindowDesign {
@@ -339,10 +396,10 @@ export function createExecutor(env: ExecutorEnv) {
       next = setOpening(next, leaf.id, opening)
     }
     if (next !== design) {
-      const where = args.pane !== undefined && leaves.length > 1 ? ` en el paño ${args.pane > 0 ? args.pane : leaves.length + args.pane + 1}` : ''
-      if (args.opening) changes.push(`${OPENING_WORDS[args.opening]}${where}`)
-      if (args.direction) changes.push(args.direction === 'out' ? 'abre hacia afuera' : 'abre hacia adentro')
-      if (args.hinge) changes.push(`bisagras a la ${args.hinge === 'left' ? 'izquierda' : 'derecha'}`)
+      const where = args.pane !== undefined && leaves.length > 1 ? t('executor.inPane', { pane: args.pane > 0 ? args.pane : leaves.length + args.pane + 1 }) : ''
+      if (args.opening) changes.push(`${openingWord(args.opening)}${where}`)
+      if (args.direction) changes.push(t(args.direction === 'out' ? 'executor.opensOut' : 'executor.opensIn'))
+      if (args.hinge) changes.push(t(args.hinge === 'left' ? 'executor.hingeLeft' : 'executor.hingeRight'))
     }
     return next
   }
@@ -351,16 +408,16 @@ export function createExecutor(env: ExecutorEnv) {
     const bridge = await ensureEditor(false, out.receipts)
     const catalog = bridge.getCatalog()
     const quote = bridge.getQuote()
-    if (!quote.items.length) throw new ToolError('Esta cotización todavía no tiene ventanas. Dime cuál agrego, por ejemplo «una corredera de 1500 x 1200».')
+    if (!quote.items.length) throw new ToolError(t('executor.noItems'))
     const { items, missing } = resolveItems(quote, args, { lastTouchedId, selectedId: bridge.selectedItemId() })
-    if (!items.length) throw new ToolError(`No encontré ${missing.join(', ') || 'esa ventana'} en esta cotización.`)
-    if (missing.length) out.notes.push(`No encontré ${missing.join(', ')}; cambié el resto.`)
+    if (!items.length) throw new ToolError(t('executor.notFoundIn', { what: missing.join(', ') || t('executor.thatWindow') }))
+    if (missing.length) out.notes.push(t('executor.notFoundRest', { what: missing.join(', ') }))
     const defaults = await env.defaults().catch(() => ({}) as Defaults)
 
     // Lo que se puede resolver una vez (igual para todas).
     const newTypology: TypologyId | undefined = resolveTypology(args.typology)
     const glass = args.glass ? resolveGlass(catalog, args.glass, defaults.glassId) : undefined
-    if (args.glass && !glass) out.notes.push(`No encontré el vidrio «${args.glass}» en tu catálogo.`)
+    if (args.glass && !glass) out.notes.push(t('executor.glassMissed', { value: args.glass }))
 
     const snapshots = items.map((i) => clone(i))
     const changes = new Set<string>()
@@ -380,14 +437,14 @@ export function createExecutor(env: ExecutorEnv) {
         let rebuilt = createDesign(typologyTarget, { lineId: line?.id ?? before.lineId, width: before.width, height: before.height, colorId: before.colorId, glassId: before.glassId })
         if (before.colorInId) rebuilt = setColor(rebuilt, before.colorId, before.colorInId)
         design = rebuilt
-        itemChanges.push(`ahora ${getTypology(typologyTarget)?.name.toLowerCase()}`)
+        itemChanges.push(t('executor.nowTypology', { typology: lower(typologyLabel(typologyTarget)) }))
       }
       if (args.width || args.height) {
         const next = setSize(design, { ...(args.width ? { width: args.width } : {}), ...(args.height ? { height: args.height } : {}) })
         if (next !== design) {
-          if (args.width && args.height) itemChanges.push(formatSize(args.width, args.height))
-          else if (args.width) itemChanges.push(`ancho ${mm(args.width)}`)
-          else if (args.height) itemChanges.push(`alto ${mm(args.height)}`)
+          if (args.width && args.height) itemChanges.push(sizeText(args.width, args.height))
+          else if (args.width) itemChanges.push(t('executor.width', { value: mm(args.width) }))
+          else if (args.height) itemChanges.push(t('executor.height', { value: mm(args.height) }))
         }
         design = next
       }
@@ -398,25 +455,27 @@ export function createExecutor(env: ExecutorEnv) {
         if (choice.line && !choice.missed) {
           if (choice.line.id !== design.lineId) {
             design = setLine(design, choice.line.id, catalog)
-            itemChanges.push(`línea ${choice.line.name}`)
+            itemChanges.push(t('executor.line', { name: choice.line.name }))
           }
-        } else notes.add(`No encontré la línea «${args.line}».`)
+        } else notes.add(t('executor.lineMissedPlain', { value: args.line }))
       }
       if (args.color || args.color_in) {
         const lineNow = catalog.lines.find((l) => l.id === design.lineId)
         const color = args.color ? resolveColor(catalog, args.color, lineNow) : undefined
         const colorIn = args.color_in ? resolveColor(catalog, args.color_in, lineNow) : undefined
-        if (args.color && !color) notes.add(`No encontré el color «${args.color}» en tu catálogo.`)
-        if (args.color_in && !colorIn) notes.add(`No encontré el color «${args.color_in}» en tu catálogo.`)
+        if (args.color && !color) notes.add(t('executor.colorMissed', { value: args.color }))
+        if (args.color_in && !colorIn) notes.add(t('executor.colorMissed', { value: args.color_in }))
         if (color || colorIn) {
           const ext = color?.id ?? design.colorId
           const int = colorIn?.id ?? (color ? undefined : design.colorInId)
           const next = setColor(design, ext, int)
           if (next.colorId !== design.colorId || next.colorInId !== design.colorInId) {
-            itemChanges.push(colorIn && color ? `${color.name} por fuera y ${colorIn.name} por dentro` : colorIn ? `${colorIn.name} por dentro` : (color?.name ?? ''))
+            itemChanges.push(
+              colorIn && color ? t('executor.colorBoth', { outside: color.name, inside: colorIn.name }) : colorIn ? t('executor.colorInside', { inside: colorIn.name }) : (color?.name ?? ''),
+            )
           }
           design = next
-          if (color && lineNow && lineNow.colorIds.length && !lineNow.colorIds.includes(color.id)) notes.add(`${lineNow.name} no trae ${color.name} en tu catálogo; lo dejé igual y el motor te avisará el precio.`)
+          if (color && lineNow && lineNow.colorIds.length && !lineNow.colorIds.includes(color.id)) notes.add(t('executor.colorNotInLine', { line: lineNow.name, color: color.name }))
         }
       }
       if (glass) {
@@ -424,23 +483,24 @@ export function createExecutor(env: ExecutorEnv) {
         if (next.glassId !== before.glassId || JSON.stringify(next.root) !== JSON.stringify(design.root)) itemChanges.push(glass.name)
         design = next
       }
+      design = applySequence(applyExtras(design, args.extras, itemChanges), args.sequence, itemChanges)
       if (!typologyTarget || newTypology) {
-        if (design.root?.type === 'sliding' && (args.hinge || args.direction || args.pane !== undefined)) notes.add('Las correderas no llevan bisagras ni paños que abran; no cambié la apertura.')
+        if (design.root?.type === 'sliding' && (args.hinge || args.direction || args.pane !== undefined)) notes.add(t('executor.slidingNoHinge'))
         else design = applyOpening(design, args, itemChanges)
       }
 
       const patch: Partial<Omit<QuoteItem, 'id' | 'design'>> = {}
       if (args.qty && args.qty !== item.qty) {
         patch.qty = Math.min(500, Math.max(1, Math.round(args.qty)))
-        itemChanges.push(`${patch.qty} u`)
+        itemChanges.push(t('executor.qty', { qty: patch.qty }))
       }
       if (args.location && args.location !== item.location) {
         patch.location = args.location
-        itemChanges.push(`ambiente ${args.location}`)
+        itemChanges.push(t('executor.location', { value: args.location }))
       }
       if (args.name && args.name !== item.name) {
         patch.name = args.name
-        itemChanges.push(`nombre «${args.name}»`)
+        itemChanges.push(t('executor.name', { value: args.name }))
       }
 
       if (design !== before) {
@@ -456,8 +516,8 @@ export function createExecutor(env: ExecutorEnv) {
     out.notes.push(...notes)
     if (!changed) {
       out.ok = false
-      out.result = { ok: false, error: out.notes.join(' ') || 'No había nada que cambiar.' }
-      out.say = out.notes.length ? 'No cambié nada.' : 'Ya estaba así; no había nada que cambiar.'
+      out.result = { ok: false, error: out.notes.join(' ') || t('executor.nothingToChange') }
+      out.say = out.notes.length ? t('executor.changedNothing') : t('executor.alreadySo')
       return
     }
     lastTouchedId = items[items.length - 1].id
@@ -466,7 +526,7 @@ export function createExecutor(env: ExecutorEnv) {
     const label = refsLabel(items, quote.items.length)
     out.receipts.push({
       id: receiptId(),
-      text: `Cambié ${label}: ${[...changes].filter(Boolean).join(', ')}`,
+      text: t('executor.changed', { label, changes: [...changes].filter(Boolean).join(', ') }),
       undo: () => {
         const b = editorFor(quoteId)
         if (!b) return false
@@ -479,7 +539,7 @@ export function createExecutor(env: ExecutorEnv) {
       },
     })
     out.result = { ok: true, changed: items.map((i) => i.ref), changes: [...changes], totals: totalsForModel(await totalsOf(bridge)) }
-    out.say = 'Listo.'
+    out.say = t('executor.done')
   }
 
   async function duplicateWindow(args: AssistantToolArgs['duplicate_window'], out: ToolOutcome) {
@@ -487,7 +547,7 @@ export function createExecutor(env: ExecutorEnv) {
     const quote = bridge.getQuote()
     const { items, missing } = resolveItems(quote, { ref: args.ref }, { lastTouchedId, selectedId: bridge.selectedItemId() })
     const source = items[0]
-    if (!source) throw new ToolError(missing.length ? `No encontré ${missing[0]} en esta cotización.` : 'No hay ventanas para duplicar todavía.')
+    if (!source) throw new ToolError(missing.length ? t('executor.notFoundIn', { what: missing[0] }) : t('executor.noneToDuplicate'))
     const copies = Math.min(20, Math.max(1, args.copies ?? 1))
     const created: Id[] = []
     for (let i = 0; i < copies; i++) created.push(bridge.duplicateItem(source.id))
@@ -497,7 +557,10 @@ export function createExecutor(env: ExecutorEnv) {
     const quoteId = bridge.quoteId
     out.receipts.push({
       id: receiptId(),
-      text: `Dupliqué ${source.ref} como ${refs.length > 1 ? `${refs.slice(0, -1).join(', ')} y ${refs[refs.length - 1]}` : refs[0] || 'una copia'}`,
+      text: t('executor.duplicated', {
+        source: source.ref,
+        copies: refs.length > 1 ? t('executor.and', { list: refs.slice(0, -1).join(', '), last: refs[refs.length - 1] }) : refs[0] || t('executor.aCopy'),
+      }),
       undo: () => {
         const b = editorFor(quoteId)
         if (!b) return false
@@ -506,14 +569,14 @@ export function createExecutor(env: ExecutorEnv) {
       },
     })
     out.result = { ok: true, source: source.ref, copies: refs, totals: totalsForModel(await totalsOf(bridge)) }
-    out.say = 'Listo.'
+    out.say = t('executor.done')
   }
 
   async function removeWindow(args: AssistantToolArgs['remove_window'], out: ToolOutcome) {
     const bridge = await ensureEditor(false, out.receipts)
     const quote = bridge.getQuote()
     const { items, missing } = resolveItems(quote, args, { lastTouchedId, selectedId: bridge.selectedItemId() })
-    if (!items.length) throw new ToolError(missing.length ? `No encontré ${missing.join(', ')} en esta cotización.` : 'No hay ventanas para quitar.')
+    if (!items.length) throw new ToolError(missing.length ? t('executor.notFoundIn', { what: missing.join(', ') }) : t('executor.noneToRemove'))
     const snapshots = items.map((i) => clone(i))
     const label = refsLabel(items, quote.items.length)
     for (const item of items) bridge.removeItem(item.id)
@@ -521,7 +584,7 @@ export function createExecutor(env: ExecutorEnv) {
     const quoteId = bridge.quoteId
     out.receipts.push({
       id: receiptId(),
-      text: `Quité ${label}`,
+      text: t('executor.removed', { label }),
       undo: () => {
         const b = editorFor(quoteId)
         if (!b) return false
@@ -536,7 +599,7 @@ export function createExecutor(env: ExecutorEnv) {
       },
     })
     out.result = { ok: true, removed: items.map((i) => i.ref), totals: totalsForModel(await totalsOf(bridge)) }
-    out.say = 'Listo, se puede deshacer.'
+    out.say = t('executor.removedSay')
   }
 
   async function setDiscount(args: AssistantToolArgs['set_discount'], out: ToolOutcome) {
@@ -545,10 +608,10 @@ export function createExecutor(env: ExecutorEnv) {
     const pct = Math.round(Math.min(100, Math.max(0, args.percent)) * 100) / 100
     bridge.setDiscount(pct)
     const quoteId = bridge.quoteId
-    const pctText = `${String(pct).replace('.', ',')} %`
+    const pctText = getFormatter().pct(pct, 2)
     out.receipts.push({
       id: receiptId(),
-      text: pct === 0 ? 'Quité el descuento' : `Apliqué ${pctText} de descuento`,
+      text: pct === 0 ? t('executor.discountRemoved') : t('executor.discountApplied', { pct: pctText }),
       undo: () => {
         const b = editorFor(quoteId)
         if (!b) return false
@@ -556,22 +619,22 @@ export function createExecutor(env: ExecutorEnv) {
         return true
       },
     })
-    if (pct > 30) out.notes.push(`Un ${pctText} es un descuento alto; revisa que el margen te siga sirviendo.`)
+    if (pct > 30) out.notes.push(t('executor.discountHigh', { pct: pctText }))
     const totals = await totalsOf(bridge)
     out.result = { ok: true, percent: pct, previous, totals: totalsForModel(totals) }
-    out.say = totals ? `Listo. El total queda en ${formatCLP(totals.net)} + IVA.` : 'Listo.'
+    out.say = totals ? t('executor.discountSay', { net: money(totals.net) }) : t('executor.done')
   }
 
   async function setTitle(args: AssistantToolArgs['set_title'], out: ToolOutcome) {
     const bridge = await ensureEditor(false, out.receipts)
     const title = args.title.trim().slice(0, 200)
-    if (!title) throw new ToolError('¿Qué nombre le pongo a la obra?')
+    if (!title) throw new ToolError(t('executor.askTitle'))
     const previous = bridge.getQuote().title ?? ''
     bridge.setTitle(title)
     const quoteId = bridge.quoteId
     out.receipts.push({
       id: receiptId(),
-      text: `Título: ${title}`,
+      text: t('executor.titleSet', { title }),
       undo: () => {
         const b = editorFor(quoteId)
         if (!b) return false
@@ -580,7 +643,7 @@ export function createExecutor(env: ExecutorEnv) {
       },
     })
     out.result = { ok: true, title }
-    out.say = 'Listo.'
+    out.say = t('executor.done')
   }
 
   async function findOrCreateClient(args: { name: string; email?: string; phone?: string; rut?: string }): Promise<{ client: Client; created: boolean; alternatives: number }> {
@@ -604,19 +667,19 @@ export function createExecutor(env: ExecutorEnv) {
       return true
     }
     if (args.clear || !args.name) {
-      if (!args.clear) throw new ToolError('¿A nombre de quién dejo la cotización?')
+      if (!args.clear) throw new ToolError(t('executor.askClient'))
       bridge.setClient(null)
-      out.receipts.push({ id: receiptId(), text: 'Quité el cliente', undo })
+      out.receipts.push({ id: receiptId(), text: t('executor.clientCleared'), undo })
       out.result = { ok: true, client: null }
-      out.say = 'Listo.'
+      out.say = t('executor.done')
       return
     }
     const { client, created, alternatives } = await findOrCreateClient({ name: args.name, email: args.email, phone: args.phone, rut: args.rut })
     bridge.setClient(client.id)
-    if (alternatives > 1) out.notes.push(`Había ${alternatives} clientes parecidos; creé uno nuevo con ese nombre exacto.`)
-    out.receipts.push({ id: receiptId(), text: `Cliente: ${client.name}${created ? ' (nuevo)' : ''}`, undo })
+    if (alternatives > 1) out.notes.push(t('executor.similarClients', { count: alternatives }))
+    out.receipts.push({ id: receiptId(), text: t(created ? 'executor.clientNew' : 'executor.clientSet', { name: client.name }), undo })
     out.result = { ok: true, client: { id: client.id, name: client.name, email: client.email ?? null }, created }
-    out.say = 'Listo.'
+    out.say = t('executor.done')
   }
 
   async function explainItemPrice(args: AssistantToolArgs['explain_price'], out: ToolOutcome) {
@@ -624,12 +687,12 @@ export function createExecutor(env: ExecutorEnv) {
     const quote = bridge.getQuote()
     const { items, missing } = resolveItems(quote, { ref: args.ref }, { lastTouchedId, selectedId: bridge.selectedItemId() })
     const item = items[0]
-    if (!item) throw new ToolError(missing.length ? `No encontré ${missing[0]} en esta cotización.` : 'Todavía no hay ventanas para explicar.')
+    if (!item) throw new ToolError(missing.length ? t('executor.notFoundIn', { what: missing[0] }) : t('executor.noneToExplain'))
     const catalog = bridge.getCatalog()
     const { pricing, cut } = await env.pricing()
     const evaluation = evaluateQuote(quote, catalog, resolvePricing(pricing, quote.pricing), { cut })
     const priced = evaluation.items.find((i) => i.id === item.id)
-    if (!priced) throw new ToolError('No pude calcular el precio de esa ventana.')
+    if (!priced) throw new ToolError(t('executor.priceFailed'))
     const price = priced.price
     const showCosts = env.canSeeCosts()
     const lines = showCosts ? explainPrice(price) : []
@@ -638,8 +701,8 @@ export function createExecutor(env: ExecutorEnv) {
     const card: PriceCard = {
       kind: 'price',
       ref: item.ref,
-      title: designName(item.design),
-      size: formatSize(item.design.width, item.design.height),
+      title: windowName(item.design),
+      size: sizeText(item.design.width, item.design.height),
       qty: item.qty,
       unitNet: price.unitNet,
       totalNet: price.totalNet,
@@ -655,21 +718,26 @@ export function createExecutor(env: ExecutorEnv) {
       qty: item.qty,
       unitNet: price.unitNet,
       totalNet: price.totalNet,
-      ...(showCosts ? { breakdown: lines.map((l) => ({ label: l.label, amount: l.amount })), marginPct: price.marginPct } : { note: 'Esta persona no ve costos ni márgenes.' }),
+      ...(showCosts ? { breakdown: lines.map((l) => ({ label: l.label, amount: l.amount })), marginPct: price.marginPct } : { note: t('executor.noCosts') }),
       warnings,
-      currency: 'CLP neto, sin IVA',
+      currency: t('executor.currency', { currency: getFormatter().currency }),
     }
-    out.say = `${item.ref} cuesta ${formatCLP(price.unitNet)} + IVA por unidad${item.qty > 1 ? ` (${formatCLP(price.totalNet)} por ${item.qty})` : ''}.${showCosts ? ' Así se arma:' : ''}`
+    out.say = t('executor.priceSay', {
+      ref: item.ref,
+      unit: money(price.unitNet),
+      total: item.qty > 1 ? t('executor.priceTotal', { total: money(price.totalNet), qty: item.qty }) : '',
+      how: showCosts ? t('executor.priceHow') : '',
+    })
   }
 
   async function showDocument(args: AssistantToolArgs['show_document'], out: ToolOutcome) {
     const bridge = await ensureEditor(false, out.receipts)
     if (args.view === 'design') {
       bridge.showDesign()
-      out.say = 'Volví al diseño.'
+      out.say = t('executor.backToDesign')
     } else {
       bridge.showDocument()
-      out.say = 'Te dejé la vista del documento.'
+      out.say = t('executor.documentShown')
     }
     out.result = { ok: true, view: args.view ?? 'document' }
   }
@@ -690,43 +758,55 @@ export function createExecutor(env: ExecutorEnv) {
   async function sendQuote(args: AssistantToolArgs['send_quote'], out: ToolOutcome) {
     const bridge = await ensureEditor(false, out.receipts)
     const quote = bridge.getQuote()
-    if (!quote.items.length) throw new ToolError('La cotización no tiene ventanas todavía; agrégale al menos una antes de enviarla.')
+    if (!quote.items.length) throw new ToolError(t('executor.sendEmpty'))
     const client = quote.client
     const to = args.to ?? client?.email
     const channel = args.channel ?? (to ? 'email' : 'link')
-    if (channel === 'email' && !to) throw new ToolError('¿A qué correo la envío? La cotización no tiene un cliente con correo.')
+    if (channel === 'email' && !to) throw new ToolError(t('executor.askEmail'))
     const totals = await totalsOf(bridge)
-    const who = client?.name ?? (to ? to : 'tu cliente')
-    const how = channel === 'email' ? `Por correo a ${to}` : channel === 'whatsapp' ? `Por WhatsApp${client?.phone ? ` al ${client.phone}` : ''}` : 'Como enlace (lo copio para que lo pegues donde quieras)'
+    const who = client?.name ?? (to ? to : t('executor.yourClient'))
+    const how =
+      channel === 'email'
+        ? t('executor.byEmail', { to: to ?? '' })
+        : channel === 'whatsapp'
+          ? client?.phone
+            ? t('executor.byWhatsappTo', { phone: client.phone })
+            : t('executor.byWhatsapp')
+          : t('executor.byLink')
     const units = totals?.units ?? quote.items.reduce((s, i) => s + i.qty, 0)
     const approved = await env.approve({
-      title: `¿Envío la cotización N° ${quote.number} a ${who}?`,
-      lines: [how, `${units} ${units === 1 ? 'unidad' : 'unidades'}${totals ? ` · ${formatCLP(totals.net)} + IVA (${formatCLP(totals.total)} con IVA)` : ''}`],
-      confirmLabel: channel === 'link' ? 'Sí, crear enlace' : 'Sí, enviar',
+      title: t('executor.sendTitle', { number: quote.number, who }),
+      lines: [how, `${t('executor.units', { count: units })}${totals ? t('executor.sendTotals', { net: money(totals.net), total: money(totals.total) }) : ''}`],
+      confirmLabel: t(channel === 'link' ? 'approval.confirmLabel.link' : 'approval.confirmLabel.send'),
     })
     if (!approved) {
       out.ok = false
-      out.result = { ok: false, declined: true, error: 'La persona prefirió no enviarla.' }
-      out.say = 'Listo, no la envié.'
+      out.result = { ok: false, declined: true, error: t('executor.declined') }
+      out.say = t('executor.declinedSay')
       return
     }
     const saved = await waitForSaved(bridge)
-    if (!saved) throw new ToolError('Todavía estoy guardando tus últimos cambios. Vuelve a pedírmelo en unos segundos para no enviar una versión vieja.')
+    if (!saved) throw new ToolError(t('executor.stillSaving'))
     const res = await env.api.sendQuote(quote.id, { channel, ...(to && channel === 'email' ? { to } : {}), ...(args.message ? { message: args.message } : {}) })
     const url = res.url ?? ''
     if (channel === 'whatsapp' && url) {
       const phone = (client?.phone ?? '').replace(/[^\d]/g, '')
-      const text = `${args.message ? `${args.message}\n` : ''}Hola${client?.name ? ` ${client.name.split(' ')[0]}` : ''}, te comparto la cotización N° ${quote.number}: ${url}`
+      const text = `${args.message ? `${args.message}\n` : ''}${t('executor.whatsappText', { name: client?.name ? ` ${client.name.split(' ')[0]}` : '', number: quote.number, url })}`
       env.openUrl?.(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`)
     }
     if (channel === 'link' && url) await env.copyText?.(url).catch(() => {})
-    const label = res.revisionLabel ? ` (versión ${res.revisionLabel})` : ''
+    const revision = res.revisionLabel ? t('executor.revision', { label: res.revisionLabel }) : ''
     out.receipts.push({
       id: receiptId(),
-      text: channel === 'email' ? `Envié la cotización N° ${quote.number}${label} a ${to}` : channel === 'whatsapp' ? `Abrí WhatsApp con el enlace de la N° ${quote.number}${label}` : `Copié el enlace de la N° ${quote.number}${label}`,
+      text:
+        channel === 'email'
+          ? t('executor.sentEmail', { number: quote.number, revision, to: to ?? '' })
+          : channel === 'whatsapp'
+            ? t('executor.sentWhatsapp', { number: quote.number, revision })
+            : t('executor.sentLink', { number: quote.number, revision }),
     })
     out.result = { ok: true, channel, url, revision: res.revisionLabel }
-    out.say = channel === 'link' ? `Listo, copié el enlace: ${url}` : 'Listo, enviada.'
+    out.say = channel === 'link' ? t('executor.linkSay', { url }) : t('executor.sentSay')
   }
 
   async function createQuote(args: AssistantToolArgs['create_quote'], out: ToolOutcome) {
@@ -743,34 +823,40 @@ export function createExecutor(env: ExecutorEnv) {
     env.navigate(`/cotizaciones/${quote.id}`)
     lastTouchedId = null
     try {
-      await env.waitForEditor(quote.id, 10000)
+      const bridge = await env.waitForEditor(quote.id, 10000)
+      // Una cotización vacía abre sola la galería «Agregar ventana» (un diálogo que tapa el panel):
+      // quien conversa con el asistente no la pidió, así que se cierra.
+      if (bridge.closeTypologyPicker) {
+        await (env.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(200)
+        bridge.closeTypologyPicker()
+      }
     } catch {
       // El editor puede tardar; las herramientas siguientes vuelven a esperarlo.
     }
     out.result = { ok: true, id: quote.id, number: quote.number, title: quote.title, client: clientName || null }
-    out.say = `Abrí la cotización N° ${quote.number}.`
+    out.say = t('executor.openedNew', { number: quote.number })
   }
 
   async function openQuote(args: AssistantToolArgs['open_quote'], out: ToolOutcome) {
     const query = args.number !== undefined ? String(args.number) : (args.query ?? '')
-    if (!query) throw new ToolError('¿Qué cotización abro? Dime el número o el nombre de la obra.')
+    if (!query) throw new ToolError(t('executor.askQuote'))
     const list = await env.api.listQuotes(query)
     const found = args.number !== undefined ? list.find((q) => q.number === args.number) : list[0]
     if (!found) {
       out.ok = false
-      out.result = { ok: false, error: args.number !== undefined ? `No existe la cotización N° ${args.number}.` : `No encontré cotizaciones con «${query}».` }
-      out.say = args.number !== undefined ? `No encontré la cotización N° ${args.number}.` : `No encontré cotizaciones con «${query}».`
+      out.result = { ok: false, error: args.number !== undefined ? t('executor.quoteMissingNumber', { number: args.number }) : t('executor.quoteNotFoundQuery', { query }) }
+      out.say = args.number !== undefined ? t('executor.quoteNotFoundNumber', { number: args.number }) : t('executor.quoteNotFoundQuery', { query })
       return
     }
     env.navigate(`/cotizaciones/${found.id}`)
     lastTouchedId = null
     out.result = { ok: true, id: found.id, number: found.number, title: found.title, client: found.clientName ?? null, total: found.total, status: found.status }
-    out.say = `Abrí la cotización N° ${found.number}${found.title ? ` · ${found.title}` : ''}.`
+    out.say = t('executor.opened', { number: found.number, title: found.title ? ` · ${found.title}` : '' })
   }
 
   async function search(args: AssistantToolArgs['search'], out: ToolOutcome) {
     const query = args.query.trim()
-    if (!query) throw new ToolError('¿Qué busco?')
+    if (!query) throw new ToolError(t('executor.askSearch'))
     const kind = args.kind ?? 'all'
     const [quotes, clients] = await Promise.all([
       kind === 'clients' ? Promise.resolve([] as QuoteSummary[]) : env.api.listQuotes(query).catch(() => [] as QuoteSummary[]),
@@ -785,26 +871,27 @@ export function createExecutor(env: ExecutorEnv) {
     const found = card.quotes.length + card.clients.length
     if (found) out.card = card
     out.result = { ok: true, quotes: card.quotes, clients: card.clients, more: Math.max(0, quotes.length - 5) + Math.max(0, clients.length - 5) }
-    const parts = [card.quotes.length ? `${card.quotes.length} ${card.quotes.length === 1 ? 'cotización' : 'cotizaciones'}` : '', card.clients.length ? `${card.clients.length} ${card.clients.length === 1 ? 'cliente' : 'clientes'}` : ''].filter(Boolean)
-    out.say = found ? `Encontré ${parts.join(' y ')} con «${query}»:` : `No encontré nada con «${query}». Prueba con otra palabra o sin tildes.`
+    const parts = [card.quotes.length ? t('executor.foundQuotes', { count: card.quotes.length }) : '', card.clients.length ? t('executor.foundClients', { count: card.clients.length }) : ''].filter(Boolean)
+    out.say = found ? t('executor.found', { parts: getFormatter().list(parts), query }) : t('executor.foundNothing', { query })
   }
 
   function navigate(args: AssistantToolArgs['navigate'], out: ToolOutcome) {
     const path = NAV_ROUTES[args.to] ?? '/inicio'
     env.navigate(path)
     out.result = { ok: true, path }
-    out.say = `Te llevé a ${NAV_LABELS[args.to] ?? 'Inicio'}.`
+    const placeKey = (args.to in NAV_ROUTES ? args.to : 'inicio') as keyof typeof es.executor.places
+    out.say = t('executor.navigated', { place: t(`executor.places.${placeKey}`) })
   }
 
   async function runOne(call: AssistantToolCall): Promise<ToolOutcome> {
     const out: ToolOutcome = { callId: call.id, name: call.name, ok: true, result: { ok: true }, receipts: [], notes: [], step: '…' }
     if (!isAssistantTool(call.name)) {
       out.ok = false
-      out.result = { ok: false, error: `No conozco la herramienta ${call.name}.` }
+      out.result = { ok: false, error: t('executor.unknownTool', { name: call.name }) }
       return out
     }
     const name = call.name
-    out.step = STEP_LABELS[name]
+    out.step = stepLabel(name)
     try {
       switch (name) {
         case 'add_window':
@@ -851,7 +938,7 @@ export function createExecutor(env: ExecutorEnv) {
           break
       }
     } catch (error) {
-      const message = error instanceof ToolError ? error.message : error instanceof Error && error.message ? humanize(error.message) : 'Algo no resultó.'
+      const message = error instanceof ToolError ? error.message : error instanceof Error && error.message ? humanize(error.message) : t('executor.failed')
       out.ok = false
       out.result = { ok: false, error: message }
       out.say = message
@@ -887,7 +974,7 @@ export type Executor = ReturnType<typeof createExecutor>
 
 /** Los mensajes de la API ya vienen humanos; los técnicos se reemplazan. */
 function humanize(message: string): string {
-  if (/fetch|network|failed|abort|timeout|json|undefined|null|TypeError/i.test(message)) return 'No pude conectar para hacer eso. Tus cambios están a salvo; inténtalo de nuevo.'
+  if (/fetch|network|failed|abort|timeout|json|undefined|null|TypeError/i.test(message)) return translate(es, 'executor.offline')
   return message
 }
 

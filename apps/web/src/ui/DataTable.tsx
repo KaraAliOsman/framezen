@@ -2,13 +2,14 @@ import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type Re
 import { AnimatePresence, motion } from 'motion/react'
 import { ArrowDown, ArrowUp, ChevronsUpDown, X } from 'lucide-react'
 import { cn } from '../lib/cn'
-import { formatNumber, normalizeSearch } from '../lib/format'
+import { normalizeSearch } from '../lib/format'
+import { LOCALE_META, useFormat, useLocale, useT, type Locale } from '../lib/i18n'
 import { Button } from './Button'
 import { Checkbox } from './Checkbox'
-import { parseCLP } from './MoneyField'
-import { parseMeasure } from './NumberField'
+import es from './i18n/es'
+import { formatMoneyInput, parseMoney } from './MoneyField'
+import { measureInputText, parseMeasure } from './NumberField'
 import { SkeletonRows } from './Skeleton'
-import { WindowSketch } from './WindowSketch'
 
 export type SortDir = 'asc' | 'desc'
 
@@ -77,8 +78,15 @@ export interface DataTableProps<T> {
    * filtros.» (o «Sin resultados para «…».») con «Quitar filtros» si existe `onClearFilters`.
    */
   emptyFiltered?: ReactNode
-  /** Singular y plural para conteos: ['cotización', 'cotizaciones']. */
+  /**
+   * Singular y plural para conteos, ya en el idioma de la interfaz: ['cotización', 'cotizaciones'].
+   * Se elige con las reglas de plural del idioma (en francés y portugués, 0 usa el singular).
+   */
   noun?: [string, string]
+  /** compact = 36 px para listas largas de consulta (precios); comfortable = 56 px para dos líneas (obra arriba, cliente abajo). */
+  density?: 'compact' | 'default' | 'comfortable'
+  /** La tabla sobresale 12 px a cada lado: el texto queda alineado con el título de la página. */
+  bleed?: boolean
   className?: string
 }
 
@@ -147,12 +155,24 @@ function useFitWidth() {
   return [ref, size] as const
 }
 
-function compare(a: unknown, b: unknown): number {
+const collators = new Map<Locale, Intl.Collator>()
+
+/** Orden alfabético del idioma (ñ, ç, ß, ı en su lugar), con números naturales («V2» antes que «V10»). */
+function collator(locale: Locale): Intl.Collator {
+  let c = collators.get(locale)
+  if (!c) {
+    c = new Intl.Collator(LOCALE_META[locale].intl, { numeric: true, sensitivity: 'base' })
+    collators.set(locale, c)
+  }
+  return c
+}
+
+function compare(a: unknown, b: unknown, locale: Locale): number {
   if (a === b) return 0
   if (a === null || a === undefined || a === '') return 1
   if (b === null || b === undefined || b === '') return -1
   if (typeof a === 'number' && typeof b === 'number') return a - b
-  return String(a).localeCompare(String(b), 'es', { numeric: true, sensitivity: 'base' })
+  return collator(locale).compare(String(a), String(b))
 }
 
 function EditableCell<T>({
@@ -167,19 +187,34 @@ function EditableCell<T>({
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const cellRef = useRef<HTMLDivElement>(null)
+  const t = useT(es)
+  const { locale } = useLocale()
+  const fmt = useFormat()
   const raw = column.value?.(row)
-  const label = column.edit.label?.(row) ?? (typeof column.header === 'string' ? `Editar ${column.header}` : 'Editar')
+  const label =
+    column.edit.label?.(row) ?? (typeof column.header === 'string' ? t('table.edit', { column: column.header }) : t('table.editGeneric'))
 
   const start = () => {
-    setDraft(raw === null || raw === undefined ? '' : String(raw).replace('.', column.edit.type === 'number' ? ',' : '.'))
+    // El borrador usa el separador decimal del idioma (y se relee con las mismas reglas).
+    const kind = column.edit.type
+    const text =
+      raw === null || raw === undefined
+        ? ''
+        : kind === 'number' && typeof raw === 'number'
+          ? measureInputText(raw, locale)
+          : kind === 'money' && typeof raw === 'number'
+            ? formatMoneyInput(raw, { locale, currency: fmt.currency })
+            : String(raw)
+    setDraft(text)
     setEditing(true)
   }
   const finish = (commit: boolean) => {
     if (commit) {
-      const t = column.edit.type
-      const value = t === 'text' ? draft : t === 'money' ? parseCLP(draft) : parseMeasure(draft)
-      if (t === 'text' || value !== null || draft.trim() === '') {
-        if (value !== raw) column.edit.onCommit(row, t === 'text' ? draft : value)
+      const kind = column.edit.type
+      const value =
+        kind === 'text' ? draft : kind === 'money' ? parseMoney(draft, { locale, currency: fmt.currency }) : parseMeasure(draft, locale)
+      if (kind === 'text' || value !== null || draft.trim() === '') {
+        if (value !== raw) column.edit.onCommit(row, kind === 'text' ? draft : value)
       }
     }
     setEditing(false)
@@ -203,7 +238,7 @@ function EditableCell<T>({
         }}
         onFocus={(e) => e.currentTarget.select()}
         className={cn(
-          '-mx-2 h-8 w-[calc(100%+16px)] rounded-sm border border-ink-500 bg-paper-0 px-2 text-table outline-none',
+          '-mx-2 h-8 w-[calc(100%+16px)] rounded-sm border border-focus bg-surface px-2 text-table text-fg shadow-[0_0_0_3px_var(--dk-focus-ring)] outline-none',
           column.edit.type !== 'text' && 'text-right tabular',
         )}
       />
@@ -226,16 +261,17 @@ function EditableCell<T>({
           start()
         }
       }}
-      className="-mx-2 cursor-text truncate rounded-sm px-2 py-1 hover:bg-paper-100 hover:shadow-[inset_0_0_0_1px_var(--paper-200)] focus-visible:outline-offset-[-2px]"
+      className="-mx-2 cursor-text truncate rounded-sm px-2 py-1 transition-colors duration-100 hover:bg-surface hover:shadow-[inset_0_0_0_1px_var(--dk-divider-strong)] focus-visible:outline-offset-[-2px]"
     >
-      {display ?? <span className="text-paper-350">—</span>}
+      {display ?? <span className="text-fg-faint">—</span>}
     </div>
   )
 }
 
 /**
  * Tabla de datos de oficina: orden, búsqueda/filtros que nunca esconden datos sin avisar,
- * selección con barra flotante, edición en línea y sumas al pie. Filas de 40 px, cifras tabulares.
+ * selección con barra flotante, edición en línea y sumas al pie. Filas de 44 px, cifras tabulares, la
+ * selección se marca por tono.
  */
 export function DataTable<T>({
   rows,
@@ -256,8 +292,13 @@ export function DataTable<T>({
   empty,
   emptyFiltered,
   noun,
+  density = 'default',
+  bleed = false,
   className,
 }: DataTableProps<T>) {
+  const t = useT(es)
+  const fmt = useFormat()
+  const { locale } = useLocale()
   const [fitRef, fitSize] = useFitWidth()
   const fit = useMemo(() => fitColumns(columns, { ...fitSize, selectable }), [columns, fitSize, selectable])
   const [sort, setSort] = useState<{ id: string; dir: SortDir } | null>(defaultSort ?? null)
@@ -284,11 +325,11 @@ export function DataTable<T>({
       const col = columns.find((c) => c.id === sort.id)
       if (col?.value) {
         const get = col.value
-        out = [...out].sort((a, b) => (sort.dir === 'asc' ? 1 : -1) * compare(get(a), get(b)))
+        out = [...out].sort((a, b) => (sort.dir === 'asc' ? 1 : -1) * compare(get(a), get(b), locale))
       }
     }
     return out
-  }, [rows, filter, query, searchText, sort, columns])
+  }, [rows, filter, query, searchText, sort, columns, locale])
 
   const hidden = rows.length - visible.length
   const visibleIds = visible.map(getRowId)
@@ -298,8 +339,10 @@ export function DataTable<T>({
   const selectedRows = visible.filter((r) => selected.has(getRowId(r)))
   const hasFooter = columns.some((c) => c.footer)
   const footerRows = selectedRows.length > 0 ? selectedRows : visible
-  const [singular, plural] = noun ?? ['fila', 'filas']
-  const count = (n: number) => `${formatNumber(n)} ${n === 1 ? singular : plural}`
+  const plurals = useMemo(() => new Intl.PluralRules(LOCALE_META[locale].intl), [locale])
+  /** «3 cotizaciones» con el plural del idioma; sin sustantivo, «3 filas». */
+  const count = (n: number) =>
+    noun ? `${fmt.number(n)} ${plurals.select(n) === 'one' ? noun[0] : noun[1]}` : t('table.rows', { count: n })
   /** Clases para esconder una columna secundaria (por pantalla o porque no cabe). */
   const hideFor = (col: DataTableColumn<T>) => (fit.hidden.has(col.id) ? 'hidden' : col.hideBelow && hideClass[col.hideBelow])
   const sizeFor = (col: DataTableColumn<T>) => ({ width: col.width, minWidth: columnMinWidth(col) })
@@ -322,19 +365,21 @@ export function DataTable<T>({
   const colCount = columns.length + (selectable ? 1 : 0)
 
   return (
-    <div className={cn('relative overflow-hidden rounded-md border border-paper-200 bg-paper-0', className)}>
+    <div className={cn('relative overflow-hidden rounded-panel bg-plate shadow-plate', bleed && '-mx-3', className)}>
       <div ref={fitRef} className="scrollbar-quiet overflow-x-auto">
         <table className="w-full border-collapse text-table" style={{ minWidth: fit.minWidth }}>
           <caption className="sr-only">{caption}</caption>
           <thead>
-            <tr className="h-9 border-b border-paper-200 bg-paper-50">
+            <tr className="h-9 border-b border-divider">
               {selectable ? (
                 <th scope="col" className="w-10 pl-3">
-                  <Checkbox
-                    aria-label="Seleccionar todas"
-                    checked={allChecked ? true : someChecked ? 'indeterminate' : false}
-                    onCheckedChange={() => setSelected(allChecked ? new Set() : new Set([...selected, ...visibleIds]))}
-                  />
+                  <span className="flex items-center">
+                    <Checkbox
+                      aria-label={t('table.selectAll')}
+                      checked={allChecked ? true : someChecked ? 'indeterminate' : false}
+                      onCheckedChange={() => setSelected(allChecked ? new Set() : new Set([...selected, ...visibleIds]))}
+                    />
+                  </span>
                 </th>
               ) : null}
               {columns.map((col) => {
@@ -348,7 +393,7 @@ export function DataTable<T>({
                     style={sizeFor(col)}
                     aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     className={cn(
-                      'px-3 text-meta font-medium whitespace-nowrap text-paper-600',
+                      'px-3 text-table font-normal whitespace-nowrap text-fg-muted',
                       alignClass[align],
                       hideFor(col),
                     )}
@@ -358,9 +403,9 @@ export function DataTable<T>({
                         type="button"
                         onClick={() => toggleSort(col.id)}
                         className={cn(
-                          'group -mx-1 inline-flex items-center gap-1 rounded-xs px-1 py-0.5 hover:text-paper-900',
+                          'group -mx-1 inline-flex items-center gap-1 rounded-xs px-1 py-0.5 transition-colors duration-100 hover:text-fg',
                           align === 'right' && 'flex-row-reverse',
-                          active && 'text-paper-900',
+                          active && 'text-fg-strong',
                         )}
                       >
                         {col.header}
@@ -394,19 +439,16 @@ export function DataTable<T>({
                 <td colSpan={colCount} className="p-0">
                   {emptyFiltered ?? (
                     <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
-                      <WindowSketch kind="fixed" size={56} />
-                      <p className="font-medium text-paper-900">
-                        {query.trim() ? (
-                          <>Sin resultados para «{query.trim()}».</>
-                        ) : noun ? (
-                          `No hay ${plural} con estos filtros.`
-                        ) : (
-                          'No hay nada con estos filtros.'
-                        )}
+                      <p className="font-medium text-fg-strong">
+                        {query.trim()
+                          ? t('table.noResultsFor', { query: query.trim() })
+                          : noun
+                            ? t('table.noneWithFilters', { noun: noun[1] })
+                            : t('table.nothingWithFilters')}
                       </p>
                       {onClearFilters ? (
                         <Button size="sm" onClick={onClearFilters}>
-                          Quitar filtros
+                          {t('table.clearFilters')}
                         </Button>
                       ) : null}
                     </div>
@@ -431,14 +473,17 @@ export function DataTable<T>({
                         : undefined
                     }
                     className={cn(
-                      'h-10 border-b border-paper-200 last:border-b-0 transition-colors duration-120',
+                      density === 'comfortable' ? 'h-14' : density === 'compact' ? 'h-9' : 'h-11',
+                      'border-b border-divider transition-colors duration-100',
                       onRowClick && 'cursor-pointer focus-visible:outline-offset-[-2px]',
-                      isSelected ? 'bg-ink-50/60' : 'hover:bg-paper-100/70',
+                      isSelected ? 'bg-accent-subtle' : 'hover:bg-hover',
                     )}
                   >
                     {selectable ? (
                       <td className="w-10 pl-3" onClick={(e) => e.stopPropagation()}>
-                        <Checkbox aria-label="Seleccionar fila" checked={isSelected} onCheckedChange={() => toggleRow(id)} />
+                        <span className="flex items-center">
+                          <Checkbox aria-label={t('table.selectRow')} checked={isSelected} onCheckedChange={() => toggleRow(id)} />
+                        </span>
                       </td>
                     ) : null}
                     {columns.map((col) => {
@@ -452,7 +497,7 @@ export function DataTable<T>({
                         <td
                           key={col.id}
                           className={cn(
-                            'max-w-0 px-3 text-paper-900',
+                            cn('max-w-0 px-3 text-fg', density === 'compact' ? 'text-table' : 'text-base'),
                             alignClass[col.align ?? 'left'],
                             (col.align === 'right' || typeof raw === 'number') && 'tabular',
                             hideFor(col),
@@ -475,7 +520,7 @@ export function DataTable<T>({
           </tbody>
           {hasFooter && !loading && visible.length > 0 ? (
             <tfoot>
-              <tr className="h-10 border-t border-paper-200 bg-paper-50 text-paper-600">
+              <tr className="h-10 text-fg-muted">
                 {selectable ? <td /> : null}
                 {columns.map((col, i) => {
                   let content: ReactNode = null
@@ -485,18 +530,18 @@ export function DataTable<T>({
                       const v = col.value?.(r)
                       return acc + (typeof v === 'number' ? v : 0)
                     }, 0)
-                    content = <span className="font-medium text-paper-900">{col.format ? col.format(total) : formatNumber(total)}</span>
+                    content = <span className="font-medium text-fg-strong">{col.format ? col.format(total) : fmt.number(total)}</span>
                   } else if (typeof col.footer === 'function') {
                     content = col.footer(footerRows)
                   } else if (i === 0) {
                     isCount = true
-                    content = selectedRows.length > 0 ? `${count(selectedRows.length)} seleccionadas` : count(visible.length)
+                    content = selectedRows.length > 0 ? t('table.selectedCount', { items: count(selectedRows.length) }) : count(visible.length)
                   }
                   return (
                     <td
                       key={col.id}
                       className={cn(
-                        'px-3 text-meta tabular whitespace-nowrap',
+                        'px-3 text-table tabular whitespace-nowrap',
                         alignClass[col.align ?? 'left'],
                         // El conteo puede asomarse sobre el pie vacío de al lado sin ensanchar su columna.
                         isCount && 'relative z-[1] max-w-0 overflow-visible',
@@ -514,13 +559,13 @@ export function DataTable<T>({
       </div>
 
       {hidden > 0 && visible.length > 0 ? (
-        <div className="flex items-center justify-center gap-2 border-t border-paper-200 px-4 py-2 text-[13px] text-paper-600">
-          <span>{count(hidden)} ocultas por filtros</span>
+        <div className="flex items-center justify-center gap-2 px-4 py-2 text-table text-fg-muted">
+          <span>{t('table.hiddenByFilters', { items: count(hidden) })}</span>
           {onClearFilters ? (
             <>
               <span aria-hidden>·</span>
-              <button type="button" onClick={onClearFilters} className="font-medium text-ink-600 hover:text-ink-700">
-                Quitar filtros
+              <button type="button" onClick={onClearFilters} className="font-medium text-accent hover:text-accent-hover">
+                {t('table.clearFilters')}
               </button>
             </>
           ) : null}
@@ -531,22 +576,22 @@ export function DataTable<T>({
         {selectable && selectedRows.length > 0 && bulkActions ? (
           <motion.div
             role="toolbar"
-            aria-label="Acciones con la selección"
+            aria-label={t('table.bulkActions')}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
-            transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
-            className="fixed bottom-6 left-1/2 z-40 flex items-center gap-2 rounded-lg bg-paper-900 py-1.5 pr-1.5 pl-4 text-paper-0 shadow-pop max-md:bottom-[calc(76px+env(safe-area-inset-bottom))]"
+            transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+            className="fixed bottom-6 left-1/2 z-40 flex h-12 items-center gap-2 rounded-lg bg-inverse py-1.5 pr-1.5 pl-4 text-fg-inverse shadow-pop max-md:bottom-[calc(76px+env(safe-area-inset-bottom))] "
             style={{ x: '-50%' }}
           >
             <span className="text-base font-medium tabular whitespace-nowrap">{count(selectedRows.length)}</span>
-            <span aria-hidden className="mx-1 h-4 w-px bg-paper-0/20" />
-            <div className="flex items-center gap-1 [&_button]:border-transparent [&_button]:bg-transparent [&_button]:text-paper-0 [&_button:hover]:bg-paper-0/10">{bulkActions(selectedRows, clearSelection)}</div>
+            <span aria-hidden className="mx-1 h-5 w-px bg-current opacity-20" />
+            <div className="flex items-center gap-1 [&_button]:border-transparent [&_button]:bg-transparent [&_button]:text-inherit [&_button]:shadow-none [&_button:hover]:bg-white/10">{bulkActions(selectedRows, clearSelection)}</div>
             <button
               type="button"
               onClick={clearSelection}
-              aria-label="Quitar selección"
-              className="inline-flex size-8 items-center justify-center rounded-sm text-paper-0/70 hover:bg-paper-0/10 hover:text-paper-0"
+              aria-label={t('table.clearSelection')}
+              className="inline-flex size-9 items-center justify-center rounded-sm opacity-70 transition-[opacity,background-color] duration-100 hover:bg-white/10 hover:opacity-100"
             >
               <X aria-hidden className="size-4" strokeWidth={1.75} />
             </button>

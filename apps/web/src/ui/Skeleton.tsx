@@ -1,9 +1,11 @@
 import type { CSSProperties } from 'react'
 import { cn } from '../lib/cn'
+import { useT } from '../lib/i18n'
+import es from './i18n/es'
 
-/** Bloque de carga quieto (sin shimmer): muestra la forma de lo que viene. */
+/** Bloque de carga con la forma de lo que viene; un barrido lento dice que algo avanza. */
 export function Skeleton({ className, style }: { className?: string; style?: CSSProperties }) {
-  return <div aria-hidden className={cn('rounded-sm bg-paper-100', className)} style={style} />
+  return <div aria-hidden className={cn('fz-skeleton rounded-xs', className)} style={style} />
 }
 
 /** Líneas de texto de carga con anchos variados. */
@@ -18,12 +20,13 @@ export function SkeletonText({ lines = 3, className }: { lines?: number; classNa
   )
 }
 
-/** Filas de tabla de carga (40 px). */
+/** Filas de tabla de carga (44 px, igual que las filas reales: nada salta al llegar los datos). */
 export function SkeletonRows({ rows = 5, columns = 4 }: { rows?: number; columns?: number }) {
+  const t = useT(es)
   return (
-    <div aria-busy="true" aria-label="Cargando" className="divide-y divide-paper-200">
+    <div aria-busy="true" aria-label={t('common.loading')} className="divide-y divide-divider">
       {Array.from({ length: rows }, (_, r) => (
-        <div key={r} className="flex h-10 items-center gap-6 px-3">
+        <div key={r} className="flex h-11 items-center gap-6 px-3">
           {Array.from({ length: columns }, (_, c) => (
             <Skeleton key={c} className="h-3" style={{ width: c === 0 ? '28%' : `${12 + ((r + c) % 3) * 4}%` }} />
           ))}

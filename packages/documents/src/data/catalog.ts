@@ -27,8 +27,8 @@ import {
   type PricingSettings,
   type TypologyId,
   type WindowDesign,
-} from '@framezen/engine'
-import type { DocumentPrefs, Org } from '@framezen/shared'
+} from '@dekopen/engine'
+import type { DocumentPrefs, Org } from '@dekopen/shared'
 import type { DocOrg } from '../base/types'
 import type { CatalogDocData, CatalogDocEntry, CatalogDocTypology } from '../sales/types'
 import { mergeQuoteDocPrefs, quoteDocDate, quoteDocOrg } from './quote'

@@ -24,6 +24,19 @@ export {
 export { priceItem, explainPrice, type PriceItemOptions, type ItemPriceDetail, type PriceExplanationLine } from './pricing'
 export { quoteTotals, type QuoteTotalsLine, type QuoteTotalsOptions } from './totals'
 export {
+  altGroupOf,
+  applyQuoteSelection,
+  includedLineIds,
+  lineDiscount,
+  lineRole,
+  selectionTotals,
+  withTax,
+  type QuoteChoiceLine,
+  type QuoteSelection,
+  type SelectionInput,
+  type SelectionLine,
+} from './choices'
+export {
   evaluateQuoteWith,
   evaluateQuoteWithBoms,
   safeBom,

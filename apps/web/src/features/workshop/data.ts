@@ -3,7 +3,7 @@
  * Los cambios son optimistas (se ven al instante) y se deshacen si el servidor falla.
  */
 import { useQueries, useQuery, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query'
-import type { Paged, Quote, Station, WorkOrder } from '@framezen/shared'
+import type { Paged, Quote, Station, WorkOrder } from '@dekopen/shared'
 import { api, request, toItems } from '../../lib/api'
 import { qk } from '../../lib/queryClient'
 import { statusFromProgress } from './model/stations'
@@ -145,6 +145,13 @@ export function pdfUrl(orderId: string, kind: string, params: Record<string, str
   const query = new URLSearchParams({ doc: kind })
   for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== '') query.set(key, String(value))
   return `/api/work-orders/${encodeURIComponent(orderId)}/pdf?${query.toString()}`
+}
+
+/** PDF de los cortes de una cotización, sin OT (GET /api/quotes/:id/cuts/pdf). */
+export function quoteCutsPdfUrl(quoteId: string, kind: string, params: Record<string, string | number | undefined> = {}): string {
+  const query = new URLSearchParams({ doc: kind })
+  for (const [key, value] of Object.entries(params)) if (value !== undefined && value !== '') query.set(key, String(value))
+  return `/api/quotes/${encodeURIComponent(quoteId)}/cuts/pdf?${query.toString()}`
 }
 
 /**

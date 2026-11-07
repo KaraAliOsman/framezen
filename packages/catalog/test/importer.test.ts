@@ -95,7 +95,7 @@ describe('importBrandData con datos sintéticos', () => {
     expect(line.hardwareRules.some((rule) => rule.itemId === 'andina.h-b1')).toBe(true)
     // Lo que la marca no trae (kit oscilobatiente) se completa con genéricos que sí existen en el catálogo.
     expect(line.hardwareRules.some((rule) => rule.itemId.startsWith('fz.kit-ob'))).toBe(true)
-    expect(result.catalog.brands.some((brand) => brand.id === 'framezen-genericos')).toBe(true)
+    expect(result.catalog.brands.some((brand) => brand.id === 'dekopen-genericos')).toBe(true)
     const sliding = result.catalog.lines.find((candidate) => candidate.id === 'andina.andina-corredera-70')!
     expect(sliding.hardwareRules.find((rule) => rule.itemId === 'andina.h-k1')).toMatchObject({ openings: [], qty: 2 })
   })
@@ -132,7 +132,7 @@ describe('importBrandData con datos sintéticos', () => {
       // Sin descuentos en el catálogo base: cada taller carga los suyos en «Mis precios».
       discounts: { profiles: 0, reinforcement: 0, hardware: 0, glass: 0, accessories: 0 },
     })
-    expect(line.source).toBe('Pauta de la distribuidora, verificada por Framezen')
+    expect(line.source).toBe('Pauta de la distribuidora, verificada por DEKOPEN')
   })
 
   it('declara en PRO6004 las tipologías compuestas que el motor arma con travesaños', () => {
@@ -156,7 +156,7 @@ describe('importBrandData con datos sintéticos', () => {
   })
 
   it('no lanza si la carpeta no existe', () => {
-    const empty = importBrandData(join(tmpdir(), 'framezen-no-existe-123'))
+    const empty = importBrandData(join(tmpdir(), 'dekopen-no-existe-123'))
     expect(empty.catalog.lines).toEqual([])
     expect(empty.report.warnings.length).toBeGreaterThan(0)
   })
@@ -164,7 +164,7 @@ describe('importBrandData con datos sintéticos', () => {
 
 describe('catálogo base en disco', () => {
   it('escribe y vuelve a leer el catálogo; sin archivo usa el de ejemplo', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'framezen-base-'))
+    const dir = mkdtempSync(join(tmpdir(), 'dekopen-base-'))
     const file = join(dir, 'sub', 'base.json')
     try {
       expect(readBaseCatalog(file)).toBeNull()

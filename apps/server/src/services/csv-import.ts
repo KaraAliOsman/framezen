@@ -1,10 +1,10 @@
 /**
  * Importación de una lista «MisPrecios» (CSV) como precios propios del taller. El parseo
- * y el cruce con el catálogo los hace @framezen/catalog; aquí sólo se resume el resultado.
+ * y el cruce con el catálogo los hace @dekopen/catalog; aquí sólo se resume el resultado.
  */
-import { matchMisPrecios, parseMisPreciosCsv } from '@framezen/catalog'
-import type { Catalog, Id } from '@framezen/engine'
-import type { PriceOverride } from '@framezen/shared'
+import { matchMisPrecios, parseMisPreciosCsv } from '@dekopen/catalog'
+import type { Catalog, Id } from '@dekopen/engine'
+import type { PriceOverride } from '@dekopen/shared'
 
 export interface CsvImportResult {
   overrides: PriceOverride[]

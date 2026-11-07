@@ -1,4 +1,4 @@
-import { computeLayout, TYPOLOGIES } from '@framezen/engine'
+import { computeLayout, TYPOLOGIES } from '@dekopen/engine'
 import { Box3, Vector3 } from 'three'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { buildWindowModel } from './model/buildWindowModel'

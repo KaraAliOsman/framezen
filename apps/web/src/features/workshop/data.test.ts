@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { WorkOrder } from '@framezen/shared'
+import type { WorkOrder } from '@dekopen/shared'
 import { applyUpdate, fetchServerPdf, pdfUrl } from './data'
 import { previewZoom, paperWidthPx } from './detail/DocumentPreview'
 import { BROWSER_PRINT_LIMITS, PREVIEW_LIMITS, browserPrintNotice, previewFooter } from './model/preview'
@@ -71,17 +71,17 @@ describe('vista previa', () => {
 
   it('la muestra se corta por piezas (etiquetas, barras, hojas), no por ventanas', () => {
     expect(PREVIEW_LIMITS.labels).toBe(30)
-    expect(previewFooter(28, 28, 'etiquetas')).toBeUndefined()
-    expect(previewFooter(30, 5600, 'etiquetas')).toBe('Muestra de las primeras 30 etiquetas. Al imprimir salen las 5.600.')
-    expect(previewFooter(60, 6330, 'barras')).toBe('Muestra de las primeras 60 barras. Al imprimir salen las 6.330.')
+    expect(previewFooter(28, 28, 'labels')).toBeUndefined()
+    expect(previewFooter(30, 5600, 'labels')).toBe('Muestra de las primeras 30 etiquetas. Al imprimir salen las 5.600.')
+    expect(previewFooter(60, 6330, 'bars')).toBe('Muestra de las primeras 60 barras. Al imprimir salen las 6.330.')
   })
 
   it('sobre cierto tamaño, el documento no se arma en el navegador', () => {
-    expect(browserPrintNotice(BROWSER_PRINT_LIMITS.labels, BROWSER_PRINT_LIMITS.labels, 'etiquetas')).toBeUndefined()
-    expect(browserPrintNotice(28_000, BROWSER_PRINT_LIMITS.labels, 'etiquetas')).toBe(
+    expect(browserPrintNotice(BROWSER_PRINT_LIMITS.labels, BROWSER_PRINT_LIMITS.labels, 'labels')).toBeUndefined()
+    expect(browserPrintNotice(28_000, BROWSER_PRINT_LIMITS.labels, 'labels')).toBe(
       'Son 28.000 etiquetas: es demasiado para armarlo en el navegador sin trabarlo.',
     )
-    expect(browserPrintNotice(Number.NaN, 10, 'barras')).toBeUndefined()
+    expect(browserPrintNotice(Number.NaN, 10, 'bars')).toBeUndefined()
   })
 })
 

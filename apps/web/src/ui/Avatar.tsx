@@ -12,10 +12,10 @@ export interface AvatarProps {
 }
 
 const sizes = {
-  xs: 'size-5 text-[9px]',
-  sm: 'size-6 text-[10px]',
-  md: 'size-8 text-[12px]',
-  lg: 'size-10 text-[14px]',
+  xs: 'size-5 text-[9px] tracking-[0.02em]',
+  sm: 'size-6 text-[10px] tracking-[0.02em]',
+  md: 'size-8 text-meta',
+  lg: 'size-10 text-base',
 }
 
 /** Persona u organización: foto si existe, iniciales si no. */
@@ -24,7 +24,7 @@ export function Avatar({ name, src, size = 'md', tone = 'paper', className }: Av
     <RadixAvatar.Root
       className={cn(
         'inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold select-none',
-        tone === 'ink' ? 'bg-ink-100 text-ink-700' : 'border border-paper-200 bg-paper-100 text-paper-600',
+        tone === 'ink' ? 'bg-accent text-fg-on-accent' : 'bg-pressed text-fg-muted',
         sizes[size],
         className,
       )}

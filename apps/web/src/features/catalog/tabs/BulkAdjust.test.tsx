@@ -25,7 +25,7 @@ describe('BulkAdjust', () => {
     render(<BulkAdjust rows={[row('a', 10000), row('b', 20000, true), row('c', 0)]} onApply={onApply} trigger={<Button>Ajustar</Button>} />)
     fireEvent.click(screen.getByRole('button', { name: 'Ajustar' }))
     fireEvent.click(screen.getByRole('button', { name: '+10 %' }))
-    expect(screen.getByText(/sin precio quedan igual/)).toBeTruthy()
+    expect(screen.getByText(/1 sin precio queda igual/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /Aplicar \+10/ }))
     expect(onApply).toHaveBeenCalledTimes(1)
     const [result, pct] = onApply.mock.calls[0]

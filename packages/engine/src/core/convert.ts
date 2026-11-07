@@ -1,4 +1,5 @@
 import type { DesignNode, LeafNode, LineKind, SlidingPanel, WindowDesign } from '../types'
+import { MAX_SLIDING_PANELS } from './defaults'
 import { layoutTree } from './geometry'
 import { idFactory } from './ids'
 
@@ -9,7 +10,7 @@ import { idFactory } from './ids'
 
 /** Paneles por defecto para n hojas (fijos a los costados en 4 hojas, como la tipología). */
 export function defaultSlidingPanels(n: number, nextId: () => string): SlidingPanel[] {
-  const count = Math.max(2, Math.min(6, Math.floor(n)))
+  const count = Math.max(2, Math.min(MAX_SLIDING_PANELS, Math.floor(n)))
   if (count === 4) {
     return [
       { id: nextId(), kind: 'fixed' },
@@ -43,7 +44,7 @@ export function convertRoot(design: WindowDesign, kind: LineKind): { root: Desig
         lastX = c.box.x0
       }
     }
-    const count = Math.max(2, Math.min(4, columns.length))
+    const count = Math.max(2, Math.min(MAX_SLIDING_PANELS, columns.length))
     let panels: SlidingPanel[]
     if (columns.length < 2) {
       panels = defaultSlidingPanels(2, nextId)

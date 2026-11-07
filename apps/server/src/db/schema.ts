@@ -1,5 +1,5 @@
 /**
- * Esquema de Framezen (Postgres / PGlite). Todo lo privado lleva org_id y se
+ * Esquema de DEKOPEN (Postgres / PGlite). Todo lo privado lleva org_id y se
  * filtra SIEMPRE por la organización de la sesión. Ids de texto generados en la app.
  */
 import { sql } from 'drizzle-orm'
@@ -14,9 +14,16 @@ import {
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
-import type { BrandSettings, Catalog, Item, Glass, Color, QuoteExtra, QuoteTotals, PricingSettings } from '@framezen/engine'
-import type { DocumentPrefs, LineOverride, OrgSettings, PriceOverride, Quote, QuoteItem, Station, QuoteStatus } from '@framezen/shared'
-import type { PlanCode, Role } from '@framezen/shared'
+import type { BrandSettings, Catalog, Item, Glass, Color, QuoteExtra, QuoteTotals, PricingSettings } from '@dekopen/engine'
+import type { DocumentPrefs, LineOverride, OrgSettings, PriceOverride, Quote, QuoteDocOverridesV2, QuoteItem, SendFormat, Station, QuoteStatus } from '@dekopen/shared'
+import type { PlanCode, Role } from '@dekopen/shared'
+import { assistants, conversations } from './schema-assistant'
+
+// Tablas v5 en archivos propios (mismo objeto `schema` de drizzle: Db las conoce).
+export * from './schema-assets'
+export * from './schema-assistant'
+export * from './schema-templates'
+export * from './schema-payments'
 
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' })
 const createdAt = () => ts('created_at').notNull().defaultNow()
@@ -28,6 +35,8 @@ export const users = pgTable('users', {
   email: text('email').notNull(),
   name: text('name').notNull(),
   passwordHash: text('password_hash').notNull(),
+  /** Idioma de la interfaz elegido por la persona (null = navegador o idioma de la empresa). */
+  locale: text('locale'),
   lastOrgId: text('last_org_id'),
   lastLoginAt: ts('last_login_at'),
   createdAt: createdAt(),
@@ -46,6 +55,10 @@ export const orgs = pgTable('orgs', {
   website: text('website'),
   logo: text('logo'),
   accent: text('accent'),
+  /** Idioma por defecto de los documentos (PDF, portal, correos al cliente). */
+  locale: text('locale').notNull().default('es'),
+  /** Moneda ISO 4217 de los precios. */
+  currency: text('currency').notNull().default('CLP'),
   onboardedAt: ts('onboarded_at'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
@@ -162,7 +175,10 @@ export interface QuoteData {
   discountPct: number
   pricing?: Partial<PricingSettings>
   notes?: string
-  documentOverrides?: Partial<DocumentPrefs>
+  /** Dirección de instalación, si difiere de la del cliente. */
+  siteAddress?: string
+  /** v2 desde v5 (services/templates › normalizeIncomingDocOverrides); filas anteriores guardan v1 plano. */
+  documentOverrides?: QuoteDocOverridesV2 | Partial<DocumentPrefs>
   validUntil?: string
   totals?: QuoteTotals
 }
@@ -192,6 +208,12 @@ export const quotes = pgTable('quotes', {
   sentTotal: bigint('sent_total', { mode: 'number' }),
   /** Total aceptado (el de la revisión aceptada): «vendido del mes» y ficha del cliente. */
   acceptedTotal: bigint('accepted_total', { mode: 'number' }),
+  /** Cuándo volver a escribirle al cliente (al enviar o al posponer). Sin fecha: 3 días tras enviar. */
+  followUpAt: ts('follow_up_at'),
+  /** Motivo corto de «Perdida» (estado rejected). Es interno: nunca va en la foto que ve el cliente. */
+  lostReason: text('lost_reason'),
+  /** Cómo salió la última versión: con solo PDF no se puede saber si la abrió. */
+  sentFormat: text('sent_format').$type<SendFormat>(),
   deletedAt: ts('deleted_at'),
 }, (t) => [
   uniqueIndex('quotes_org_number_uq').on(t.orgId, t.number),
@@ -210,6 +232,8 @@ export const quoteRevisions = pgTable('quote_revisions', {
   sentBy: text('sent_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: createdAt(),
   viewedAt: ts('viewed_at'),
+  /** Primera descarga del PDF desde el portal. */
+  pdfDownloadedAt: ts('pdf_downloaded_at'),
 }, (t) => [uniqueIndex('quote_revisions_quote_rev_uq').on(t.quoteId, t.revision)])
 
 // ── Producción ───────────────────────────────────────────────────────────────
@@ -259,8 +283,18 @@ export const aiUsage = pgTable('ai_usage', {
   credits: integer('credits').notNull(),
   mode: text('mode').$type<'ai' | 'local'>().notNull().default('ai'),
   model: text('model'),
+  /** Conversación y asistente del asistente v2 (costo por conversación). */
+  conversationId: text('conversation_id').references(() => conversations.id, { onDelete: 'set null' }),
+  assistantId: text('assistant_id').references(() => assistants.id, { onDelete: 'set null' }),
+  tokensIn: integer('tokens_in'),
+  tokensCached: integer('tokens_cached'),
+  tokensOut: integer('tokens_out'),
   createdAt: createdAt(),
-}, (t) => [index('ai_usage_org_created_idx').on(t.orgId, t.createdAt)])
+}, (t) => [
+  index('ai_usage_org_created_idx').on(t.orgId, t.createdAt),
+  index('ai_usage_org_user_created_idx').on(t.orgId, t.userId, t.createdAt),
+  index('ai_usage_org_conversation_idx').on(t.orgId, t.conversationId),
+])
 
 export const activity = pgTable('activity', {
   id: text('id').primaryKey(),

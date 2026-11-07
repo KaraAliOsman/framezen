@@ -1,6 +1,6 @@
 /**
  * Ventanas de ejemplo calculadas con el motor real (misma fuente de cifras que la cotización).
- * Si el catálogo del taller todavía no tiene precios, usamos el catálogo de ejemplo de Framezen y
+ * Si el catálogo del taller todavía no tiene precios, usamos el catálogo de ejemplo de DEKOPEN y
  * lo decimos («precios de ejemplo»): nunca inventamos números.
  */
 import {
@@ -19,9 +19,9 @@ import {
   type PricingSettings,
   type TypologyId,
   type WindowDesign,
-} from '@framezen/engine'
-import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@framezen/catalog'
-import type { Defaults } from '@framezen/shared'
+} from '@dekopen/engine'
+import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@dekopen/catalog'
+import type { Defaults } from '@dekopen/shared'
 
 export interface ExampleSpec {
   typology: TypologyId
@@ -37,6 +37,9 @@ export interface PricedExample {
   layout: Layout
   catalog: Catalog
   line?: Line
+  /** Tipología pedida (el nombre visible sale del glosario con este id). */
+  typology: TypologyId
+  /** Nombre del motor (español), respaldo si el glosario no tiene el id. */
   name: string
   price: ItemPriceDetail
   explanation: PriceExplanationLine[]
@@ -92,6 +95,7 @@ export function priceExample(
         layout: computeLayout(design, catalog),
         catalog,
         line,
+        typology: spec.typology,
         name: designName(design),
         price,
         explanation: explainPrice(price),
@@ -120,6 +124,7 @@ export function priceExample(
     layout: computeLayout(design, SAMPLE_CATALOG),
     catalog: SAMPLE_CATALOG,
     line,
+    typology: spec.typology,
     name: designName(design),
     price,
     explanation: explainPrice(price),

@@ -4,17 +4,16 @@
  * Regla de producto: NUNCA redirigimos a /bienvenida ni bloqueamos por no haber terminado la
  * puesta a punto; solo pedimos entrar si no hay sesión.
  */
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { useContext, useEffect, useState, type ReactNode } from 'react'
 import { Navigate, Outlet, useLocation, useNavigate, useSearchParams } from 'react-router'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import type { LoginBody, Me, SignupBody } from '@framezen/shared'
+import { useMutation, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query'
+import type { LoginBody, Me, SignupBody } from '@dekopen/shared'
 import { api, humanError } from './api'
 import { useMe } from './hooks'
 import { qk } from './queryClient'
-import { FramezenMark } from '../ui/FramezenLogo'
+import { SessionContext } from './session-context'
+import { DekopenMark } from '../ui/DekopenLogo'
 import { Button } from '../ui/Button'
-
-const SessionContext = createContext<Me | null>(null)
 
 /** Sesión garantizada (solo dentro de <RequireAuth>). */
 export function useSession(): Me {
@@ -49,7 +48,7 @@ function SessionSplash() {
         className="flex flex-col items-center gap-3 text-paper-600 transition-opacity duration-200"
         style={{ opacity: visible ? 1 : 0 }}
       >
-        <FramezenMark size={28} className="fz-breathe text-paper-900" />
+        <DekopenMark size={28} className="fz-breathe text-paper-900" />
         <span className="text-meta">Abriendo tu taller…</span>
       </div>
     </div>
@@ -60,9 +59,9 @@ function ConnectionProblem({ message, onRetry, busy }: { message: string; onRetr
   return (
     <div className="grid min-h-dvh place-items-center px-6">
       <div className="flex max-w-sm flex-col items-center gap-4 text-center">
-        <FramezenMark size={28} className="text-paper-900" />
+        <DekopenMark size={28} className="text-paper-900" />
         <div className="space-y-1">
-          <h1 className="text-h3 font-semibold tracking-[-0.01em]">No pudimos abrir tu cuenta</h1>
+          <h1 className="text-h3 font-medium text-fg-strong">No pudimos abrir tu cuenta</h1>
           <p className="text-paper-600">{message}</p>
         </div>
         <Button variant="secondary" onClick={onRetry} loading={busy}>
@@ -131,16 +130,31 @@ export function useAcceptInvitation() {
   })
 }
 
+const isMeQuery = (query: Query) => query.queryKey[0] === qk.me[0]
+
+/**
+ * Olvida los datos privados del caché cuando las pantallas privadas ya se desmontaron. Si se borran
+ * con ellas montadas, se vuelven a dibujar, recrean sus consultas y las piden sin sesión (401).
+ */
+async function forgetPrivateData(client: QueryClient) {
+  const stillObserved = () => client.getQueryCache().getAll().some((q) => !isMeQuery(q) && q.getObserversCount() > 0)
+  for (let i = 0; i < 40 && stillObserved(); i++) await new Promise((resolve) => setTimeout(resolve, 25))
+  client.removeQueries({ predicate: (q) => !isMeQuery(q) })
+  client.getMutationCache().clear()
+}
+
 /** Cierra sesión. Aunque falle la red, limpiamos todo localmente. */
 export function useLogout() {
   const client = useQueryClient()
   const navigate = useNavigate()
   return useMutation({
     mutationFn: () => api.auth.logout().catch(() => undefined),
-    onSettled: () => {
-      client.clear()
+    onSettled: async () => {
+      await client.cancelQueries()
+      // Primero sin sesión y fuera de las rutas privadas; después se borra el resto del caché.
       client.setQueryData(qk.me, null)
-      navigate('/entrar', { replace: true })
+      await navigate('/entrar', { replace: true })
+      await forgetPrivateData(client)
     },
   })
 }

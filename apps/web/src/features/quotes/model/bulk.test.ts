@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createDesign, setGlass, type Catalog } from '@framezen/engine'
-import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@framezen/catalog'
+import { createDesign, setGlass, type Catalog } from '@dekopen/engine'
+import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@dekopen/catalog'
 import { applyColorToAll, applyGlassToAll, lineHasColor, refsText, sharedValue } from './bulk'
 import type { QuoteDoc } from './doc'
 

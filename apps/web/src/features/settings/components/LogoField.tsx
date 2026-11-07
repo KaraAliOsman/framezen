@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent } from 'react'
 import { Crop, ImageUp, Maximize, ScanLine, Trash2 } from 'lucide-react'
 import { cn } from '../../../lib/cn'
+import { useT } from '../../../lib/i18n'
 import { Button, Dialog, DialogContent, Spinner, Switch, toastUndo } from '../../../ui'
+import es from '../i18n/es'
 import {
   dataUrlBytes,
   detectContent,
@@ -13,8 +15,9 @@ import {
 } from '../lib/image'
 
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/svg+xml,image/gif'
+/** Damero para ver la transparencia (sigue el tema). */
 const CHECKER =
-  'bg-paper-0 [background-image:linear-gradient(45deg,var(--paper-100)_25%,transparent_25%,transparent_75%,var(--paper-100)_75%),linear-gradient(45deg,var(--paper-100)_25%,transparent_25%,transparent_75%,var(--paper-100)_75%)] [background-size:16px_16px] [background-position:0_0,8px_8px]'
+  'bg-surface [background-image:linear-gradient(45deg,var(--dk-hover)_25%,transparent_25%,transparent_75%,var(--dk-hover)_75%),linear-gradient(45deg,var(--dk-hover)_25%,transparent_25%,transparent_75%,var(--dk-hover)_75%)] [background-size:16px_16px] [background-position:0_0,8px_8px]'
 
 function isSvg(dataUrl: string): boolean {
   return dataUrl.startsWith('data:image/svg')
@@ -33,6 +36,7 @@ export interface LogoFieldProps {
  * guardar liviano. Quitar se deshace con un toque.
  */
 export function LogoField({ value, onChange, compact, id }: LogoFieldProps) {
+  const t = useT(es)
   const inputRef = useRef<HTMLInputElement>(null)
   const [cropSrc, setCropSrc] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -45,7 +49,7 @@ export function LogoField({ value, onChange, compact, id }: LogoFieldProps) {
     setNotice(null)
     if (!file) return
     if (!file.type.startsWith('image/')) {
-      setNotice('Ese archivo no es una imagen. Prueba con un PNG, JPG, WEBP o SVG.')
+      setNotice(t('logo.notImage'))
       return
     }
     setBusy(true)
@@ -53,7 +57,7 @@ export function LogoField({ value, onChange, compact, id }: LogoFieldProps) {
       const dataUrl = await readFileAsDataUrl(file)
       if (isSvg(dataUrl)) {
         if (dataUrlBytes(dataUrl) > MAX_LOGO_BYTES) {
-          setNotice('Ese SVG pesa más de 1 MB. Prueba exportarlo simplificado o súbelo como PNG.')
+          setNotice(t('logo.svgTooBig'))
           return
         }
         onChange(dataUrl)
@@ -61,7 +65,7 @@ export function LogoField({ value, onChange, compact, id }: LogoFieldProps) {
       }
       setCropSrc(dataUrl)
     } catch {
-      setNotice('No pudimos leer ese archivo. Prueba con otro o vuelve a exportarlo.')
+      setNotice(t('logo.readFailed'))
     } finally {
       setBusy(false)
       if (inputRef.current) inputRef.current.value = ''
@@ -77,28 +81,28 @@ export function LogoField({ value, onChange, compact, id }: LogoFieldProps) {
   const remove = () => {
     const previous = value ?? null
     onChange(null)
-    toastUndo('Quitaste el logo', () => onChange(previous))
+    toastUndo(t('logo.removed'), () => onChange(previous))
   }
 
   return (
     <div className="flex flex-col gap-2">
       <input id={id} ref={inputRef} type="file" accept={ACCEPT} className="sr-only" tabIndex={-1} onChange={(e) => void handleFile(e.target.files?.[0])} />
       {value ? (
-        <div className={cn('flex items-center gap-4 rounded-md border border-paper-200 p-3', compact ? 'flex-wrap' : '')}>
-          <div className={cn('grid shrink-0 place-items-center rounded-sm border border-paper-200 p-2', CHECKER, compact ? 'h-16 w-32' : 'h-20 w-44')}>
-            <img src={value} alt="Logo actual" className="max-h-full max-w-full object-contain" />
+        <div className={cn('flex items-center gap-4 rounded-md border border-divider p-3', compact ? 'flex-wrap' : '')}>
+          <div className={cn('grid shrink-0 place-items-center rounded-sm border border-divider p-2', CHECKER, compact ? 'h-16 w-32' : 'h-20 w-44')}>
+            <img src={value} alt={t('logo.current')} className="max-h-full max-w-full object-contain" />
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
             <Button size="sm" icon={ImageUp} onClick={pick} loading={busy}>
-              Cambiar
+              {t('logo.change')}
             </Button>
             {!isSvg(value) ? (
               <Button size="sm" variant="ghost" icon={Crop} onClick={() => setCropSrc(value)}>
-                Recortar
+                {t('logo.crop')}
               </Button>
             ) : null}
             <Button size="sm" variant="ghost" icon={Trash2} onClick={remove}>
-              Quitar
+              {t('logo.remove')}
             </Button>
           </div>
         </div>
@@ -113,24 +117,22 @@ export function LogoField({ value, onChange, compact, id }: LogoFieldProps) {
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
           className={cn(
-            'group flex w-full items-center gap-4 rounded-md border border-dashed px-4 text-left transition-colors duration-120',
+            'group flex w-full items-center gap-4 rounded-md border border-dashed px-4 text-left transition-colors duration-100 ease-out',
             compact ? 'py-3' : 'py-5',
-            dragging ? 'border-ink-500 bg-ink-50/60' : 'border-paper-350/70 bg-paper-0 hover:border-paper-600 hover:bg-paper-50',
+            dragging ? 'border-focus bg-accent-subtle' : 'border-control bg-surface hover:border-control-hover hover:bg-sunken',
           )}
         >
-          <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-sm bg-paper-100 text-paper-600 group-hover:text-paper-900">
+          <span className="inline-flex shrink-0 items-center justify-center text-fg-muted transition-colors duration-100 group-hover:text-fg">
             {busy ? <Spinner size={18} /> : <ImageUp aria-hidden strokeWidth={1.75} className="size-5" />}
           </span>
           <span className="min-w-0">
-            <span className="block font-medium text-paper-900">Sube tu logo</span>
-            <span className="block text-[13px] leading-[18px] text-paper-600">
-              Arrástralo aquí o elige un archivo. PNG, JPG, WEBP o SVG; lo dejamos liviano y bien recortado.
-            </span>
+            <span className="block font-medium text-fg-strong">{t('logo.upload')}</span>
+            <span className="block text-table text-fg-muted">{t('logo.uploadHint')}</span>
           </span>
         </button>
       )}
       {notice ? (
-        <p role="status" className="text-[13px] leading-[18px] text-warn-800">
+        <p role="status" className="text-table text-warning">
           {notice}
         </p>
       ) : null}
@@ -153,6 +155,7 @@ export function LogoField({ value, onChange, compact, id }: LogoFieldProps) {
 type DragMode = 'move' | 'nw' | 'ne' | 'sw' | 'se'
 
 function LogoCropDialog({ src, onOpenChange, onConfirm }: { src: string | null; onOpenChange: (open: boolean) => void; onConfirm: (dataUrl: string) => void }) {
+  const t = useT(es)
   const [img, setImg] = useState<HTMLImageElement | null>(null)
   const [crop, setCrop] = useState<Box | null>(null)
   const [auto, setAuto] = useState<Box | null>(null)
@@ -184,8 +187,8 @@ function LogoCropDialog({ src, onOpenChange, onConfirm }: { src: string | null; 
 
   useEffect(() => {
     if (!img || !crop) return
-    const t = setTimeout(() => setPreview(exportLogo(img, crop, { removeWhite, maxSide: 420 })), 90)
-    return () => clearTimeout(t)
+    const timer = setTimeout(() => setPreview(exportLogo(img, crop, { removeWhite, maxSide: 420 })), 90)
+    return () => clearTimeout(timer)
   }, [img, crop, removeWhite])
 
   const full = img ? { x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight } : null
@@ -194,23 +197,23 @@ function LogoCropDialog({ src, onOpenChange, onConfirm }: { src: string | null; 
     <Dialog open={Boolean(src)} onOpenChange={onOpenChange}>
       <DialogContent
         size="lg"
-        title="Ajusta tu logo"
-        description="Arrastra las esquinas para dejar solo el logo. Lo que quede fuera del recuadro no se usa."
+        title={t('logo.cropTitle')}
+        description={t('logo.cropDescription')}
         footer={
           <>
             <Button variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancelar
+              {t('common.cancel')}
             </Button>
             <Button variant="primary" disabled={!img || !crop} onClick={() => img && crop && onConfirm(exportLogo(img, crop, { removeWhite }))}>
-              Usar este logo
+              {t('logo.useThis')}
             </Button>
           </>
         }
       >
         {failed ? (
-          <p className="text-paper-600">No pudimos abrir esa imagen. Prueba con otro archivo (PNG o JPG).</p>
+          <p className="text-fg-muted">{t('logo.openFailed')}</p>
         ) : !img || !crop ? (
-          <div className="grid h-64 place-items-center text-paper-600">
+          <div className="grid h-64 place-items-center text-fg-muted">
             <Spinner size={20} />
           </div>
         ) : (
@@ -219,27 +222,22 @@ function LogoCropDialog({ src, onOpenChange, onConfirm }: { src: string | null; 
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap gap-1.5">
                 <Button size="sm" variant="secondary" icon={ScanLine} onClick={() => auto && setCrop(auto)}>
-                  Ajustar al logo
+                  {t('logo.fit')}
                 </Button>
                 <Button size="sm" variant="ghost" icon={Maximize} onClick={() => full && setCrop(full)}>
-                  Imagen completa
+                  {t('logo.full')}
                 </Button>
               </div>
-              <Switch
-                checked={removeWhite}
-                onCheckedChange={setRemoveWhite}
-                label="Quitar fondo blanco"
-                description="Útil si tu logo viene en JPG con fondo."
-              />
+              <Switch checked={removeWhite} onCheckedChange={setRemoveWhite} label={t('logo.removeWhite')} description={t('logo.removeWhiteHint')} />
             </div>
             <div>
-              <p className="mb-2 text-[13px] font-medium text-paper-900">Así se verá</p>
+              <p className="mb-2 text-table font-medium text-fg-strong">{t('logo.willLook')}</p>
               <div className="grid gap-2 sm:grid-cols-2">
-                <div className="flex h-20 items-center justify-center rounded-md border border-paper-200 bg-paper-0 px-4">
-                  {preview ? <img src={preview} alt="Vista previa sobre papel" className="max-h-12 max-w-full object-contain" /> : null}
+                <div data-theme="light" className="flex h-20 items-center justify-center rounded-md border border-divider bg-white px-4">
+                  {preview ? <img src={preview} alt={t('logo.onPaper')} className="max-h-12 max-w-full object-contain" /> : null}
                 </div>
-                <div className={cn('flex h-20 items-center justify-center rounded-md border border-paper-200 px-4', CHECKER)}>
-                  {preview ? <img src={preview} alt="Vista previa con transparencia" className="max-h-12 max-w-full object-contain" /> : null}
+                <div className={cn('flex h-20 items-center justify-center rounded-md border border-divider px-4', CHECKER)}>
+                  {preview ? <img src={preview} alt={t('logo.onTransparent')} className="max-h-12 max-w-full object-contain" /> : null}
                 </div>
               </div>
             </div>
@@ -251,6 +249,7 @@ function LogoCropDialog({ src, onOpenChange, onConfirm }: { src: string | null; 
 }
 
 function CropStage({ img, crop, onChange }: { img: HTMLImageElement; crop: Box; onChange: (box: Box) => void }) {
+  const t = useT(es)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [avail, setAvail] = useState(560)
   const drag = useRef<{ mode: DragMode; x: number; y: number; box: Box } | null>(null)
@@ -286,21 +285,21 @@ function CropStage({ img, crop, onChange }: { img: HTMLImageElement; crop: Box; 
     const dy = (e.clientY - d.y) / k
     const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
     let l = d.box.x
-    let t = d.box.y
+    let top = d.box.y
     let r = d.box.x + d.box.w
     let b = d.box.y + d.box.h
     if (d.mode === 'move') {
       l = clamp(l + dx, 0, W - d.box.w)
-      t = clamp(t + dy, 0, H - d.box.h)
+      top = clamp(top + dy, 0, H - d.box.h)
       r = l + d.box.w
-      b = t + d.box.h
+      b = top + d.box.h
     } else {
       if (d.mode.includes('w')) l = clamp(l + dx, 0, r - min)
       if (d.mode.includes('e')) r = clamp(r + dx, l + min, W)
-      if (d.mode.includes('n')) t = clamp(t + dy, 0, b - min)
-      if (d.mode.includes('s')) b = clamp(b + dy, t + min, H)
+      if (d.mode.includes('n')) top = clamp(top + dy, 0, b - min)
+      if (d.mode.includes('s')) b = clamp(b + dy, top + min, H)
     }
-    onChange({ x: Math.round(l), y: Math.round(t), w: Math.round(r - l), h: Math.round(b - t) })
+    onChange({ x: Math.round(l), y: Math.round(top), w: Math.round(r - l), h: Math.round(b - top) })
   }
 
   const end = () => {
@@ -322,7 +321,7 @@ function CropStage({ img, crop, onChange }: { img: HTMLImageElement; crop: Box; 
   }
 
   const handle = 'absolute size-6 touch-none flex items-center justify-center'
-  const dot = 'size-3 rounded-[2px] border border-ink-600 bg-paper-0 shadow-[0_1px_2px_rgb(31_28_24/0.2)]'
+  const dot = 'size-3 rounded-xs border border-accent bg-surface shadow-xs'
 
   return (
     <div ref={wrapRef} className="w-full">
@@ -337,17 +336,17 @@ function CropStage({ img, crop, onChange }: { img: HTMLImageElement; crop: Box; 
         <div
           role="slider"
           tabIndex={0}
-          aria-label="Zona del logo: muévela con las flechas; Alt y flechas cambian su tamaño"
+          aria-label={t('logo.cropArea')}
           aria-valuetext={`${Math.round(crop.w)} × ${Math.round(crop.h)} px`}
           onPointerDown={start('move')}
           onKeyDown={onKey}
-          className="absolute cursor-move outline outline-1 outline-paper-0 focus-visible:outline-2 focus-visible:outline-ink-500"
+          className="absolute cursor-move outline outline-1 outline-white focus-visible:outline-2 focus-visible:outline-focus"
           style={{
             left: crop.x * k,
             top: crop.y * k,
             width: crop.w * k,
             height: crop.h * k,
-            boxShadow: '0 0 0 9999px rgb(31 28 24 / 0.5), inset 0 0 0 1px var(--ink-600)',
+            boxShadow: '0 0 0 9999px rgb(15 22 24 / 0.5), inset 0 0 0 1px var(--dk-accent)',
           }}
         >
           {(['nw', 'ne', 'sw', 'se'] as const).map((corner) => (

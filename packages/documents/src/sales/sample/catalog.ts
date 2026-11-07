@@ -1,5 +1,5 @@
-import type { Catalog, Line, Pauta } from '@framezen/engine'
-import type { DocumentPrefs } from '@framezen/shared'
+import type { Catalog, Line, Pauta } from '@dekopen/engine'
+import type { DocumentPrefs } from '@dekopen/shared'
 import type { DocClient, DocOrg } from '../../base/types'
 
 /** Catálogo mínimo y genérico para muestras (marcas y precios de ejemplo). */
@@ -62,7 +62,7 @@ export const SAMPLE_CATALOG: Catalog = {
     { id: 'golden-oak', name: 'Roble dorado', hex: '#A8692E', code: 'RD' },
     { id: 'black', name: 'Negro', hex: '#0E0E10', code: 'NE' },
   ],
-  brands: [{ id: 'sample-brand', name: 'Perfiles Andes', kind: 'profiles', country: 'Chile', monogram: 'PA' }],
+  brands: [{ id: 'sample-brand', name: 'Marca de ejemplo', kind: 'profiles', country: 'Chile', monogram: 'ME' }],
   lines: [casementLine, slidingLine],
   profiles: [],
   items: [],
@@ -75,25 +75,25 @@ export const SAMPLE_CATALOG: Catalog = {
 }
 
 export const SAMPLE_ORG: DocOrg = {
-  name: 'Ventanas del Maule',
-  legalName: 'Ventanas del Maule SpA',
-  rut: '76.123.456-0',
-  address: 'Av. San Miguel 1840',
-  city: 'Talca',
-  phone: '+56 9 6123 4567',
-  email: 'hola@ventanasdelmaule.cl',
-  website: 'ventanasdelmaule.cl',
+  name: 'Taller de ejemplo',
+  legalName: 'Taller de ejemplo SpA',
+  rut: '76.000.000-0',
+  address: 'Dirección de ejemplo',
+  city: 'Ciudad',
+  phone: '+56 9 0000 0000',
+  email: 'contacto@ejemplo.cl',
+  website: 'ejemplo.cl',
   accent: '#2747C2',
 }
 
 /** Cliente ficticio de la muestra. RUT de prueba conocido (12.345.678-5), nunca uno que pueda ser de una persona real. */
 export const SAMPLE_CLIENT: DocClient = {
-  name: 'Carolina Muñoz',
+  name: 'Cliente de ejemplo',
   rut: '12.345.678-5',
-  email: 'carolina.munoz@correo.cl',
-  phone: '+56 9 8765 4321',
-  address: 'Los Arrayanes 220',
-  city: 'Puerto Varas',
+  email: 'cliente@ejemplo.cl',
+  phone: '+56 9 0000 0000',
+  address: 'Dirección de ejemplo',
+  city: 'Ciudad',
 }
 
 export const SAMPLE_PREFS: DocumentPrefs = {
@@ -107,8 +107,7 @@ export const SAMPLE_PREFS: DocumentPrefs = {
   showColorSwatch: true,
   showExteriorView: true,
   paper: 'letter',
-  intro:
-    'Gracias por la oportunidad de cotizar tu proyecto. Cada ventana está dibujada a medida, con su color, vidrio y precio. Si quieres ajustar algo, escríbenos y lo cambiamos.',
+  intro: '',
   conditions:
     '- Incluye medición en obra, fabricación, transporte e instalación con sellado perimetral.\n- No incluye albañilería, pintura ni reparación de vanos.\n- Las medidas finales se confirman en la visita técnica; si cambian, ajustamos el precio antes de fabricar.',
   paymentTerms: '50% al aceptar, 50% contra entrega',

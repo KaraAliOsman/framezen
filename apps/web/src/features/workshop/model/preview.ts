@@ -6,7 +6,12 @@
  * - sobre cierto tamaño, «Imprimir» no arma el documento en el navegador: baja el PDF del
  *   servidor, que lo arma sin trabar la pantalla.
  */
-import { formatNumber } from '../../../lib/format'
+import type { Locale } from '@dekopen/shared'
+import { getFormatter, translate } from '../../../lib/i18n'
+import es from '../i18n/es'
+
+/** Qué crece con las unidades: etiquetas, barras de corte u hojas de montaje. */
+export type PreviewKind = 'labels' | 'bars' | 'assemblySheets'
 
 /** Lo que dibuja la vista previa como máximo. */
 export const PREVIEW_LIMITS = {
@@ -32,13 +37,15 @@ export const BROWSER_PRINT_LIMITS = {
  * Si el documento es demasiado grande para armarlo en el navegador, el porqué (para el
  * aviso); si no, undefined.
  */
-export function browserPrintNotice(count: number, limit: number, what: string): string | undefined {
+export function browserPrintNotice(count: number, limit: number, kind: PreviewKind, locale?: Locale): string | undefined {
   if (!(count > limit)) return undefined
-  return `Son ${formatNumber(count)} ${what}: es demasiado para armarlo en el navegador sin trabarlo.`
+  const fmt = getFormatter({ locale })
+  return translate(es, `doc.tooBig.${kind}`, { count: fmt.number(count) }, locale)
 }
 
 /** Pie de la vista previa cuando muestra solo una parte; undefined si muestra todo. */
-export function previewFooter(shown: number, total: number, what: string): string | undefined {
+export function previewFooter(shown: number, total: number, kind: PreviewKind, locale?: Locale): string | undefined {
   if (!(total > shown)) return undefined
-  return `Muestra de las primeras ${formatNumber(shown)} ${what}. Al imprimir salen las ${formatNumber(total)}.`
+  const fmt = getFormatter({ locale })
+  return translate(es, `doc.sample.${kind}`, { shown: fmt.number(shown), total: fmt.number(total) }, locale)
 }

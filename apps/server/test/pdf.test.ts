@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { formatClp } from '@framezen/documents'
-import type { Quote, WorkOrder } from '@framezen/shared'
+import { formatClp } from '@dekopen/documents'
+import { QUOTE_PRESET_IDS, type Quote, type WorkOrder } from '@dekopen/shared'
 import { subscriptions } from '../src/db/schema'
 import { catalogFileName, contentDisposition, fileSlug, quoteFileName, workshopFileName } from '../src/services/pdf/filename'
 import { PdfUnavailableError, setPdfRenderer, type PdfRenderer } from '../src/services/pdf'
@@ -14,7 +14,7 @@ class FakeRenderer implements PdfRenderer {
   async render(html: string): Promise<Buffer> {
     if (this.fail) throw this.fail
     this.htmls.push(html)
-    return Buffer.from('%PDF-1.7\n% Framezen prueba\n%%EOF\n')
+    return Buffer.from('%PDF-1.7\n% DEKOPEN prueba\n%%EOF\n')
   }
   async close() {}
   get last(): string {
@@ -79,20 +79,24 @@ describe('nombres de archivo humanos', () => {
 describe('GET /api/quotes/:id/pdf', () => {
   it('genera el PDF con la plantilla pedida, nombre humano y sin notas internas', async () => {
     const { agent, quote } = await quoteWithClient()
-    const res = await agent.request('GET', `/api/quotes/${quote.id}/pdf?template=galeria`)
+    const res = await agent.request('GET', `/api/quotes/${quote.id}/pdf?template=plano`)
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('application/pdf')
     expect(res.headers.get('content-disposition')).toContain(`filename="Cotizacion-${quote.number}-Casa-Perez-Concepcion.pdf"`)
     expect(res.headers.get('cache-control')).toContain('no-store')
     expect(String(res.body).startsWith('%PDF')).toBe(true)
     const html = renderer.last
-    expect(html).toContain('fzd-quote--galeria')
+    expect(html).toContain('data-preset="memoria"')
+    expect(html).toContain('data-dk-flow')
     expect(html).toContain('Pedro Pérez')
     expect(html).toContain('Casa Pérez')
     expect(html).toContain('@font-face')
     expect(html).toContain('data:font/woff2;base64,')
     expect(html).not.toContain('NOTA-INTERNA-SECRETA')
     expect(bodyOf(html)).not.toContain('NaN')
+    // Fuentes del diseño en latin y latin-ext (turco, alemán, francés), sin pedir nada a la red.
+    expect(html).toContain('unicode-range: U+0100-02BA')
+    expect(bodyOf(html)).not.toMatch(/(?:src|href)=["']https?:/)
     // Total del motor en el documento.
     expect(quote.totals?.total).toBeGreaterThan(0)
     expect(html).toContain(formatClp(quote.totals!.total))
@@ -104,30 +108,57 @@ describe('GET /api/quotes/:id/pdf', () => {
     const res = await agent.request('GET', `/api/quotes/${quote.id}/pdf?template=nope&inline=1`)
     expect(res.status).toBe(200)
     expect(res.headers.get('content-disposition')?.startsWith('inline;')).toBe(true)
-    expect(renderer.last).toContain('fzd-quote--esencial')
+    // Id desconocido: el diseño preferido del taller (el «esencial» de v4 se muestra como «Luz»).
+    expect(renderer.last).toContain('data-preset="hogar"')
     // Mismo documento otra vez: sale de la caché sin abrir Chromium.
     expect((await agent.request('GET', `/api/quotes/${quote.id}/pdf?template=nope`)).status).toBe(200)
     expect(renderer.htmls.length).toBe(before + 1)
   })
 
+  it('los ids de la versión 4 se muestran con su diseño equivalente', async () => {
+    const { agent, quote } = await quoteWithClient()
+    const expected: Record<string, string> = { esencial: 'hogar', galeria: 'hogar', compacta: 'obra', editorial: 'atelier' }
+    for (const [legacy, preset] of Object.entries(expected)) {
+      const res = await agent.request('GET', `/api/quotes/${quote.id}/pdf?format=html&template=${legacy}`)
+      expect(res.status, legacy).toBe(200)
+      expect(String(res.body), legacy).toContain(`data-preset="${preset}"`)
+    }
+  })
+
   it('?format=html entrega el documento para imprimir desde el navegador', async () => {
     const { agent, quote } = await quoteWithClient()
-    const res = await agent.request('GET', `/api/quotes/${quote.id}/pdf?format=html&template=compacta`)
+    const res = await agent.request('GET', `/api/quotes/${quote.id}/pdf?format=html&template=taller-directo`)
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('text/html')
     expect(String(res.body)).toContain('<!doctype html>')
-    expect(String(res.body)).toContain('fzd-quote--compacta')
+    expect(String(res.body)).toContain('data-preset="obra"')
+    // Sin Chromium el propio HTML se reparte en hojas con los altos reales (script con hash permitido).
+    expect(String(res.body)).toMatch(/<script>\(function\(\)\{var flow=/)
+  })
+
+  it('cada uno de los 10 diseños genera su documento con el total del motor y sin desbordes marcados', async () => {
+    const { agent, quote } = await quoteWithClient()
+    for (const id of QUOTE_PRESET_IDS) {
+      const res = await agent.request('GET', `/api/quotes/${quote.id}/pdf?format=html&template=${id}`)
+      expect(res.status, id).toBe(200)
+      const body = String(res.body)
+      expect(body, id).toContain(`data-preset="${id}"`)
+      expect(body, id).toContain(formatClp(quote.totals!.total))
+      const markup = body.slice(body.indexOf('<body>'), body.indexOf('<script>'))
+      expect(markup, id).not.toMatch(/class="[^"]*dkd-block--overflow/)
+      expect(markup, id).not.toMatch(/NaN|undefined/)
+    }
   })
 
   it('sin Chromium responde 503 amable con respaldo para imprimir', async () => {
     const { agent, quote } = await quoteWithClient()
     renderer.fail = new PdfUnavailableError('launch', 'No pudimos generar el PDF en este momento. Usa «Imprimir» del navegador.')
     try {
-      const res = await agent.request('GET', `/api/quotes/${quote.id}/pdf?template=editorial&inline=1`)
+      const res = await agent.request('GET', `/api/quotes/${quote.id}/pdf?template=umbral-atelier&inline=1`)
       expect(res.status).toBe(503)
       expect(res.body.error.code).toBe('pdf_unavailable')
       expect(res.body.error.message).toMatch(/Imprimir/)
-      expect(res.body.fallback.html).toBe(`/api/quotes/${quote.id}/pdf?template=editorial&format=html`)
+      expect(res.body.fallback.html).toBe(`/api/quotes/${quote.id}/pdf?template=umbral-atelier&format=html`)
       expect(res.body.fallback.fileName).toMatch(/^Cotización-\d+-Casa-Pérez/)
     } finally {
       renderer.fail = undefined
@@ -288,18 +319,21 @@ describe('GET /api/catalog/pdf', () => {
     const { agent } = await signup(server, { company: 'Ventanas del Ñuble' })
     const catalog = (await agent.get('/api/catalog')).body
     expect(catalog.lines.length).toBeGreaterThan(0)
-    const res = await agent.request('GET', '/api/catalog/pdf?template=ficha')
+    const res = await agent.request('GET', '/api/catalog/pdf?template=sistema')
     expect(res.status).toBe(200)
     expect(res.headers.get('content-disposition')).toContain('filename="Catalogo-Ventanas-del-Nuble.pdf"')
     const html = renderer.last
-    expect(html).toContain('fzd-catalog--ficha')
+    expect(html).toContain('data-template="sistema"')
     for (const line of catalog.lines) expect(html).toContain(line.name)
-    expect(html).toMatch(/Desde<\/span> <span class="fzd-money">\$[\d.]+<\/span>/)
+    expect(html).toMatch(/dkc-price__from">Desde<\/span>\s*<span class="dkc-price__value">\$[\d.]+<\/span>/)
+    // El «ficha» de la versión 4 se muestra con «Sistema».
+    expect(String((await agent.request('GET', '/api/catalog/pdf?template=ficha&format=html')).body)).toContain('data-template="sistema"')
 
     // Sólo algunas líneas, con plantilla por defecto del taller.
     const only = catalog.lines[0]
     const one = await agent.request('GET', `/api/catalog/pdf?lines=${encodeURIComponent(only.id)}&format=html`)
     expect(one.status).toBe(200)
-    expect(String(one.body)).toContain('fzd-catalog--vitrina')
+    // Sin diseño pedido: el preferido del taller (el «vitrina» de la versión 4 es «Colección Modular»).
+    expect(String(one.body)).toContain('data-template="coleccion-modular"')
   })
 })

@@ -1,19 +1,28 @@
 /**
- * Textos y enlaces para mandar la cotización (WhatsApp, correo) sin campos obligatorios.
+ * Textos y enlaces para mandar la cotización (WhatsApp, correo) sin campos obligatorios. Van en el
+ * **idioma del documento** (el de la cotización), no en el de la interfaz: es lo que lee el cliente.
+ * Para otro idioma que el actual, la web debe tenerlo descargado (`loadLocale`) antes de llamar.
  */
-import { formatCLP } from '@framezen/engine'
+import { SEND_VARIABLES, type Locale, type SendChannel, type SendTemplates, type SendVariable } from '@dekopen/shared'
+import { getLocale, translate } from '../../../lib/i18n'
 import { firstName } from '../../../lib/format'
+import es from '../i18n/es'
 
 export interface ShareContext {
   number: number
   title: string
-  total: number
   url: string
   orgName: string
+  /** Quien envía: el mensaje va firmado por una persona. */
+  sellerName?: string
   clientName?: string
   /** RUT del cliente: los de empresa (≥ 50.000.000) no se saludan por el nombre. */
   clientRut?: string
   revisionLetter?: string
+  /** Idioma del documento (por defecto, el actual). */
+  locale?: Locale
+  /** Plantillas propias del taller. */
+  templates?: SendTemplates
 }
 
 const COMPANY_SUFFIX = /(^|[\s,])(s\.?\s?p\.?\s?a\.?|s\.?\s?a\.?|ltda\.?|limitada|e\.?\s?i\.?\s?r\.?\s?l\.?|cía\.?|compañía)\s*$/i
@@ -39,24 +48,102 @@ export function isCompanyClient(name: string | undefined, rut?: string): boolean
 }
 
 /** «Hola Carolina» para personas; «Hola» a secas para empresas o sin cliente. */
-export function greeting(name: string | undefined, rut?: string): string {
-  if (!name?.trim() || isCompanyClient(name, rut)) return 'Hola'
+export function greeting(name: string | undefined, rut?: string, locale: Locale = getLocale()): string {
+  if (!name?.trim() || isCompanyClient(name, rut)) return translate(es, 'share.hello', undefined, locale)
   const first = firstName(name)
-  return first ? `Hola ${first}` : 'Hola'
+  return first ? translate(es, 'share.helloName', { name: first }, locale) : translate(es, 'share.hello', undefined, locale)
 }
 
-/** Mensaje cálido y corto, listo para pegar. */
+// ── Mensaje de envío ─────────────────────────────────────────────────────────
+/** Cada variable se devuelve a sí misma: el texto traducido queda como plantilla. */
+const VARIABLE_MARKS = Object.fromEntries(SEND_VARIABLES.map((name) => [name, `{${name}}`]))
+
+/** La plantilla que trae DEKOPEN, en el idioma del documento. */
+export function defaultSendTemplate(channel: SendChannel, locale: Locale = getLocale()): string {
+  return translate(es, channel === 'whatsapp' ? 'share.templateWhatsapp' : 'share.templateEmail', VARIABLE_MARKS, locale)
+}
+
+/** La plantilla del taller para ese canal e idioma o, si no escribió una, la que trae DEKOPEN. */
+export function sendTemplate(templates: SendTemplates | undefined, channel: SendChannel, locale: Locale = getLocale()): string {
+  return templates?.[channel]?.[locale]?.trim() ? templates[channel]![locale]! : defaultSendTemplate(channel, locale)
+}
+
+export type SendVariables = Record<SendVariable, string>
+
+/** Valores de las variables. No hay total: el mensaje nunca lo lleva. */
+export function sendVariables(ctx: Omit<ShareContext, 'url' | 'templates'>, url: string): SendVariables {
+  const locale = ctx.locale ?? getLocale()
+  const title = ctx.title.trim()
+  const version = ctx.revisionLetter && ctx.revisionLetter !== 'A' ? ctx.revisionLetter : ''
+  const client = ctx.clientName?.trim() ?? ''
+  return {
+    saludo: greeting(ctx.clientName, ctx.clientRut, locale),
+    cliente: client && !isCompanyClient(client, ctx.clientRut) ? (firstName(client) ?? client) : client,
+    referencia: translate(es, 'share.reference', { number: ctx.number, hasTitle: title ? 'yes' : 'no', title, hasVersion: version ? 'yes' : 'no', letter: version }, locale),
+    numero: String(ctx.number),
+    obra: title,
+    taller: ctx.orgName,
+    vendedor: ctx.sellerName?.trim() ?? '',
+    enlace: url,
+  }
+}
+
+const isVariable = (name: string): name is SendVariable => (SEND_VARIABLES as readonly string[]).includes(name)
+
+/** Variables escritas a mano que no existen: se enviarían tal cual. */
+export function unknownSendVariables(text: string): string[] {
+  return [...new Set([...text.matchAll(/\{([^{}\s]{1,30})\}/g)].flatMap((m) => (isVariable(m[1]!) ? [] : [m[0]])))]
+}
+
+/**
+ * Llena la plantilla. Una variable sin dato no deja huecos: si está entre paréntesis se va el
+ * paréntesis y, si no, la línea completa. Así un envío sin enlace no deja «Revísala aquí:» colgando.
+ */
+export function renderSendTemplate(template: string, vars: Partial<SendVariables>): string {
+  const hasEmpty = (text: string) => [...text.matchAll(/\{([a-z]+)\}/g)].some((m) => isVariable(m[1]!) && !vars[m[1] as SendVariable]?.trim())
+  return template
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]*\([^()\n]*\)/g, (group) => (hasEmpty(group) ? '' : group))
+    .split('\n')
+    .filter((line) => !hasEmpty(line))
+    .join('\n')
+    .replace(/\{([a-z]+)\}/g, (mark, name: string) => (isVariable(name) ? (vars[name] ?? '') : mark))
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/** Pone o saca la línea del enlace en un texto ya escrito, sin tocar lo demás. */
+export function applyLink(text: string, withLink: boolean): string {
+  if (withLink) return text.includes('{enlace}') ? text : `${text.trimEnd()}\n\n{enlace}`
+  return text
+    .split('\n')
+    .filter((line) => !line.includes('{enlace}'))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/** Mensaje listo para pegar, con el enlace puesto. */
 export function shareMessage(ctx: ShareContext): string {
-  const hello = greeting(ctx.clientName, ctx.clientRut)
-  const title = ctx.title.trim() ? ` (${ctx.title.trim()})` : ''
-  const version = ctx.revisionLetter && ctx.revisionLetter !== 'A' ? `, versión ${ctx.revisionLetter},` : ''
+  return renderSendTemplate(sendTemplate(ctx.templates, 'whatsapp', ctx.locale ?? getLocale()), sendVariables(ctx, ctx.url))
+}
+
+/** Respuesta a un cliente que pidió cambios: le confirma que se leyó y que viene la versión nueva. */
+export function replyMessage(ctx: Pick<ShareContext, 'number' | 'title' | 'orgName' | 'clientName' | 'clientRut' | 'locale'>): string {
+  const locale = ctx.locale ?? getLocale()
+  const title = ctx.title.trim()
   return [
-    `${hello}, te envío la cotización N° ${ctx.number}${title}${version} por ${formatCLP(ctx.total)} IVA incluido.`,
-    `Puedes revisar cada ventana y aceptarla aquí: ${ctx.url}`,
+    translate(es, 'share.reply', { hello: greeting(ctx.clientName, ctx.clientRut, locale), number: ctx.number, hasTitle: title ? 'yes' : 'no', title }, locale),
     '',
-    `Saludos,`,
+    translate(es, 'share.regards', undefined, locale),
     ctx.orgName,
   ].join('\n')
+}
+
+/** Asunto del correo: «Cotización N° 412 · Casa Pérez». */
+export function shareSubject(number: number, title: string, locale: Locale = getLocale()): string {
+  const clean = title.trim()
+  return clean ? translate(es, 'share.subjectTitle', { number, title: clean }, locale) : translate(es, 'share.subject', { number }, locale)
 }
 
 /** Solo dígitos, con 56 delante si es un celular chileno escrito sin código de país. */
@@ -84,15 +171,21 @@ export function portalUrl(token: string | undefined, origin = typeof window !== 
   return token ? `${origin}/c/${token}` : ''
 }
 
-/** Nombre de archivo sin tildes ni símbolos: «Cotizacion-412-Casa-Perez.pdf». */
-export function pdfFileName(number: number, title: string, revisionLetter = ''): string {
-  const slug = title
+/** Texto seguro para un nombre de archivo: sin tildes ni símbolos («Casa Pérez» → «Casa-Perez»). */
+function fileSlug(text: string, max: number): string {
+  return text
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
+    .replace(/ı/g, 'i')
     .replace(/[^a-zA-Z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 48)
-  return ['Cotizacion', String(number), revisionLetter && revisionLetter !== 'A' ? revisionLetter : '', slug].filter(Boolean).join('-') + '.pdf'
+    .slice(0, max)
+}
+
+/** Nombre de archivo sin tildes ni símbolos: «Cotizacion-412-Casa-Perez.pdf» (prefijo en el idioma del documento). */
+export function pdfFileName(number: number, title: string, revisionLetter = '', locale: Locale = getLocale()): string {
+  const prefix = fileSlug(translate(es, 'share.file', undefined, locale), 24) || 'Quote'
+  return [prefix, String(number), revisionLetter && revisionLetter !== 'A' ? revisionLetter : '', fileSlug(title, 48)].filter(Boolean).join('-') + '.pdf'
 }
 
 /** Lo que el editor sabe del último envío (meta de la cotización). */

@@ -1,5 +1,5 @@
-import type { DesignNode, Id, LeafNode, SlidingNode, SplitNode, WindowDesign } from '../types'
-import { MIN_PANE_MM } from './defaults'
+import type { DesignNode, Id, LeafNode, Pauta, Rect, SlidingNode, SplitNode, WindowDesign } from '../types'
+import { FOLD_GAP_MM, MIN_PANE_MM } from './defaults'
 import { mm1 } from './format'
 import { resolveSizes } from './sizes'
 
@@ -9,7 +9,7 @@ import { resolveSizes } from './sizes'
  * miden sobre esa región. Es independiente de la pauta: layout y despiece la comparten.
  */
 
-export type EdgeKind = 'frame' | 'mullion' | 'french' | 'threshold'
+export type EdgeKind = 'frame' | 'mullion' | 'french' | 'fold' | 'threshold'
 
 export interface Box {
   x0: number
@@ -30,15 +30,22 @@ export interface TreeCell {
   path: Id[]
   box: Box
   edges: CellEdges
-  /** Hoja pasiva de una unión francesa (lleva el inversor, sin manilla). */
+  /**
+   * Hoja pasiva: en una unión francesa lleva el inversor y pasadores, sin manilla; en un plegable,
+   * toda hoja que no lleva la manilla de su grupo.
+   */
   passive: boolean
+  /** Unión que la hace activa o pasiva (sin dato = hoja independiente). */
+  pair?: 'french' | 'fold'
+  /** Plegable: hoja de paso (la de la jamba en un grupo impar; abre sola como puerta). */
+  foldAccess?: boolean
 }
 
 export interface TreeDivider {
   node: SplitNode
   index: number
   dir: 'vertical' | 'horizontal'
-  kind: 'mullion' | 'french'
+  kind: 'mullion' | 'french' | 'fold'
   axis: number
   /** Región del padre (el travesaño la cruza completa). */
   box: Box
@@ -46,6 +53,8 @@ export interface TreeDivider {
   max: number
   /** Se pidió unión francesa pero no hay dos hojas que abran: se calcula como travesaño. */
   frenchFallback: boolean
+  /** Se pidió unión plegable pero no hay dos hojas plegables vecinas: se calcula como travesaño. */
+  foldFallback: boolean
 }
 
 export interface TreeSplit {
@@ -65,7 +74,30 @@ export interface TreeLayout {
   misplacedSliding: SlidingNode[]
 }
 
+/**
+ * Descuento de luz desde cada borde de la región a eje: marco/umbral → frameDeduction; travesaño →
+ * mullionDeduction desde su eje; unión francesa → 0 (supuesto v4: la luz llega al eje); encuentro
+ * de plegable → traslapo de la hoja + media holgura (cada hoja termina a FOLD_GAP_MM/2 del eje).
+ */
+export function luzInset(base: Pauta, kind: EdgeKind): number {
+  if (kind === 'mullion') return base.mullionDeduction
+  if (kind === 'french') return 0
+  if (kind === 'fold') return base.sashOverlap + FOLD_GAP_MM / 2
+  return base.frameDeduction
+}
+
+/** Luz de pauta de un paño (sin acotar a cero: un paño imposible queda con medida negativa). */
+export function cellLuz(base: Pauta, cell: Pick<TreeCell, 'box' | 'edges'>): Rect {
+  const { box, edges } = cell
+  const l = luzInset(base, edges.left)
+  const r = luzInset(base, edges.right)
+  const t = luzInset(base, edges.top)
+  const b = luzInset(base, edges.bottom)
+  return { x: mm1(box.x0 + l), y: mm1(box.y0 + t), w: mm1(box.x1 - box.x0 - l - r), h: mm1(box.y1 - box.y0 - t - b) }
+}
+
 const opens = (n: DesignNode | undefined): n is LeafNode => !!n && n.type === 'leaf' && n.opening?.kind !== 'fixed'
+const folds = (n: DesignNode | undefined): n is LeafNode => !!n && n.type === 'leaf' && n.opening?.kind === 'folding'
 
 /** Medida mínima (a ejes) que necesita un nodo a lo largo de una dirección. */
 export function minExtent(node: DesignNode, dir: 'vertical' | 'horizontal'): number {
@@ -117,10 +149,12 @@ export function layoutTree(design: WindowDesign): TreeLayout {
     out.splits.push({ node, box, sizes, positions })
 
     const wantsFrench = node.joint === 'french'
-    const jointKinds: ('mullion' | 'french')[] = []
+    const wantsFold = node.joint === 'fold'
+    const jointKinds: ('mullion' | 'french' | 'fold')[] = []
     for (let i = 0; i < children.length - 1; i++) {
       const french = wantsFrench && vertical && opens(children[i]) && opens(children[i + 1])
-      jointKinds.push(french ? 'french' : 'mullion')
+      const fold = wantsFold && vertical && folds(children[i]) && folds(children[i + 1])
+      jointKinds.push(french ? 'french' : fold ? 'fold' : 'mullion')
       const axis = positions[i + 1]
       out.dividers.push({
         node,
@@ -132,9 +166,13 @@ export function layoutTree(design: WindowDesign): TreeLayout {
         min: mm1(positions[i] + minExtent(children[i], node.dir)),
         max: mm1(positions[i + 2] - minExtent(children[i + 1], node.dir)),
         frenchFallback: wantsFrench && !french,
+        foldFallback: wantsFold && !fold,
       })
     }
 
+    // La hoja pasiva de una unión francesa: la izquierda (v4) o la que indique `passive`.
+    const passiveRight = node.passive === 'right'
+    const childCells: number[][] = []
     children.forEach((child, i) => {
       const childBox: Box = vertical
         ? { x0: positions[i], x1: positions[i + 1], y0: box.y0, y1: box.y1 }
@@ -146,8 +184,59 @@ export function layoutTree(design: WindowDesign): TreeLayout {
         : { ...edges, top: before ?? edges.top, bottom: after ?? edges.bottom }
       const firstCell = out.cells.length
       visit(child, childBox, childEdges, [...path, node.id], false)
-      // La hoja a la izquierda de una unión francesa es la pasiva (lleva el inversor).
-      if (after === 'french') for (let k = firstCell; k < out.cells.length; k++) out.cells[k].passive = true
+      childCells.push(Array.from({ length: out.cells.length - firstCell }, (_, k) => firstCell + k))
+      const frenchPassive = passiveRight ? before === 'french' : after === 'french'
+      if (frenchPassive) {
+        for (let k = firstCell; k < out.cells.length; k++) {
+          out.cells[k].passive = true
+          out.cells[k].pair = 'french'
+        }
+      } else if (before === 'french' || after === 'french') {
+        for (let k = firstCell; k < out.cells.length; k++) out.cells[k].pair = out.cells[k].pair ?? 'french'
+      }
     })
+    if (wantsFold) markFoldChains(children, jointKinds, childCells)
+  }
+
+  /**
+   * Plegables: cada tramo de hojas unidas por 'fold' es una cadena. Las hojas con bisagra a la
+   * derecha forman el grupo que se apila a la derecha; el resto, el de la izquierda. En cada grupo
+   * la hoja de la jamba va colgada del marco: si el grupo es impar, esa hoja es la de paso (abre
+   * sola, lleva la manilla); si es par, la manilla va en la hoja que encabeza el grupo (la más
+   * lejana de su jamba). Las demás son pasivas. Supuesto documentado en research 25 §6.2 y L16.
+   */
+  function markFoldChains(children: DesignNode[], joints: ('mullion' | 'french' | 'fold')[], childCells: number[][]): void {
+    let start = 0
+    for (let i = 0; i <= children.length - 1; i++) {
+      const chainEnds = i === children.length - 1 || joints[i] !== 'fold'
+      if (!chainEnds) continue
+      const run = Array.from({ length: i - start + 1 }, (_, k) => start + k)
+      start = i + 1
+      if (run.length < 2) continue
+      const cellOf = (index: number) => out.cells[childCells[index][0]]
+      const left = run.filter((index) => cellOf(index)?.node.opening?.hinge !== 'right')
+      const right = run.filter((index) => cellOf(index)?.node.opening?.hinge === 'right')
+      const active = new Set<number>()
+      const access = new Set<number>()
+      if (left.length) {
+        if (left.length % 2 === 1) {
+          active.add(left[0])
+          access.add(left[0])
+        } else active.add(left[left.length - 1])
+      }
+      if (right.length) {
+        if (right.length % 2 === 1) {
+          active.add(right[right.length - 1])
+          access.add(right[right.length - 1])
+        } else active.add(right[0])
+      }
+      for (const index of run) {
+        const cell = cellOf(index)
+        if (!cell) continue
+        cell.pair = 'fold'
+        cell.passive = !active.has(index)
+        if (access.has(index)) cell.foldAccess = true
+      }
+    }
   }
 }

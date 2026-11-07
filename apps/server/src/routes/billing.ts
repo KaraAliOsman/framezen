@@ -15,7 +15,7 @@
  */
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
-import { PLANS, type BillingHistoryRow, type BillingPreview, type Paged } from '@framezen/shared'
+import { PLANS, type BillingHistoryRow, type BillingPreview, type Paged } from '@dekopen/shared'
 import type { AppDeps, AppEnv } from '../context'
 import { badRequest } from '../lib/errors'
 import { readBody, readQuery } from '../lib/http'

@@ -8,7 +8,9 @@
  */
 export { Window3D, default } from './Window3D'
 export { Viewer3DShowcase } from './Viewer3DShowcase'
-export { Window3DLazy } from './lazy'
+export { Window3DLazy, Window3DWithAr, type Window3DWithArProps } from './lazy'
+export { WindowArButton, type WindowArButtonProps } from './ar/WindowArButton'
+export { arItemFromUrl, arShareUrl, decideArMode, type ArMode } from './ar/capability'
 export { Viewer3DPlaceholder, Viewer3DUnavailable } from './Viewer3DMessage'
 export { isWebGLAvailable } from './webgl'
 export type { Viewer3DView, Window3DProps } from './types'

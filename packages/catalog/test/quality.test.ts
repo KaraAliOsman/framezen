@@ -67,8 +67,8 @@ describe('calidad del importador (marca sintética Cordillera)', () => {
     expect(triple.name).toBe('Cordillera Corredera 70 · triple riel')
     expect(code(triple.profiles.sliding_frame)).toBe('CO502')
     expect(triple.pauta.frameDeduction).toBe(48)
-    // «6 hojas triple riel» no tiene plantilla equivalente: no se publica.
-    expect(triple.typologyIds).toEqual(['sliding_3_rail'])
+    // «6 hojas triple riel» es la corredera de 6 hojas de 3 rieles (v5): se publica junto a la de 3 hojas.
+    expect([...triple.typologyIds].sort()).toEqual(['sliding_3_rail', 'sliding_6'])
     expect(code(triple.profiles.guide)).toBe('CORIEL')
 
     const wide = line('cordillera.cordillera-corredera-70-hoja-100-mm')
@@ -86,9 +86,10 @@ describe('calidad del importador (marca sintética Cordillera)', () => {
 
   it('calcula la completitud con reglas reales y la explica', () => {
     const practicable = line('cordillera.cordillera-60')
-    expect(practicable.completeness).toBe('complete')
+    // Todo con precio, pero sus cortes no están confirmados: se cotiza con aviso, nunca como automática.
+    expect(practicable.completeness).toBe('partial')
     const report = brandReport('cordillera').lines.find((entry) => entry.id === practicable.id)!
-    expect(report.readiness).toMatchObject({ state: 'ready', headline: 'Lista para cotizar', readyColors: ['blanco', 'nogal'] })
+    expect(report.readiness).toMatchObject({ state: 'warnings', headline: 'Cotiza con avisos: falta la pauta del fabricante', readyColors: ['blanco', 'nogal'] })
     // El tornillo con envase deducido queda anotado en la línea que lo usa.
     expect(report.readiness.details.join(' ')).toContain('Confirma el envase')
 

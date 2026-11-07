@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { BillingState } from '@framezen/shared'
+import type { BillingState } from '@dekopen/shared'
 import { createHistory, historyReducer, type UndoAction } from '../src/lib/useUndo'
 import { describePlan } from '../src/lib/plan'
 

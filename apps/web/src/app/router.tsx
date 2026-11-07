@@ -1,5 +1,5 @@
 /**
- * Rutas de Framezen (docs/SPEC.md §4). Todas las páginas se cargan bajo demanda.
+ * Rutas de DEKOPEN (docs/SPEC.md §4). Todas las páginas se cargan bajo demanda.
  * Las de funcionalidades viven en src/features/<área>/ (la ola 2 reemplaza sus contenidos).
  */
 import { lazy, Suspense, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react'
@@ -13,9 +13,6 @@ const AppShell = lazy(() => import('./shell/AppShell'))
 
 // Zonas de otros equipos (export default).
 const LandingPage = lazy(() => import('../features/landing/LandingPage'))
-const MarcoShowcase = lazy(() => import('../features/assistant/avatar/MarcoShowcase'))
-const Viewer3DShowcase = lazy(() => import('../features/viewer3d/Viewer3DShowcase'))
-const DesignerPlayground = lazy(() => import('../features/designer/DesignerPlayground'))
 
 // Acceso.
 const LoginPage = lazy(() => import('../features/auth/LoginPage'))
@@ -33,18 +30,42 @@ const ClientsPage = lazy(() => import('../features/clients/ClientsPage'))
 const ClientDetailPage = lazy(() => import('../features/clients/ClientDetailPage'))
 const WorkshopPage = lazy(() => import('../features/workshop/WorkshopPage'))
 const WorkOrderPage = lazy(() => import('../features/workshop/WorkOrderPage'))
+const QuoteCutsPage = lazy(() => import('../features/workshop/QuoteCutsPage'))
 const CatalogPage = lazy(() => import('../features/catalog/CatalogPage'))
 const DocumentsPage = lazy(() => import('../features/documents/DocumentsPage'))
 const SettingsPage = lazy(() => import('../features/settings/SettingsPage'))
 const PortalPage = lazy(() => import('../features/portal/PortalPage'))
 
-// Vitrina de componentes.
-const UiShowcase = lazy(() => import('../features/dev/UiShowcase'))
+/**
+ * Vitrinas y bancos de prueba: SOLO en desarrollo (`vite`). En el build de producción
+ * `import.meta.env.DEV` es `false`, la rama se elimina y sus módulos ni siquiera se empaquetan.
+ * Además de las fijas, cualquier carpeta puede sumar una con un archivo `<nombre>.devpage.tsx`
+ * (export default) bajo `src/features/**`: queda en `/dev/<nombre>` sin tocar este archivo.
+ */
+function devRoutes(): RouteObject[] {
+  if (!import.meta.env.DEV) return []
+  const fixed: [string, LazyExoticComponent<ComponentType>][] = [
+    ['/dev/ui', lazy(() => import('../features/dev/UiShowcase'))],
+    ['/dev/marco', lazy(() => import('../features/assistant/avatar/MarcoShowcase'))],
+    ['/dev/3d', lazy(() => import('../features/viewer3d/Viewer3DShowcase'))],
+    ['/dev/designer', lazy(() => import('../features/designer/DesignerPlayground'))],
+  ]
+  const discovered = Object.entries(import.meta.glob<{ default: ComponentType }>('../features/**/*.devpage.tsx')).map(
+    ([file, load]): [string, LazyExoticComponent<ComponentType>] => [
+      `/dev/${file.split('/').pop()!.replace(/\.devpage\.tsx$/, '')}`,
+      lazy(load),
+    ],
+  )
+  const seen = new Set<string>()
+  return [...fixed, ...discovered]
+    .filter(([path]) => !seen.has(path) && Boolean(seen.add(path)))
+    .map(([path, page]) => ({ path, element: <Full page={page} /> }))
+}
 
 /** Pantalla completa (fuera del shell): sin indicador para no parpadear. */
 function Full({ page: Page }: { page: LazyExoticComponent<ComponentType> }): ReactNode {
   return (
-    <Suspense fallback={<div className="min-h-dvh bg-paper-50" />}>
+    <Suspense fallback={<div className="min-h-dvh bg-canvas" />}>
       <Page />
     </Suspense>
   )
@@ -87,7 +108,7 @@ export const routes: RouteObject[] = [
           { path: '/bienvenida', element: <Full page={WelcomePage} /> },
           {
             element: (
-              <Suspense fallback={<div className="min-h-dvh bg-paper-50" />}>
+              <Suspense fallback={<div className="min-h-dvh bg-canvas" />}>
                 <AppShell />
               </Suspense>
             ),
@@ -101,6 +122,7 @@ export const routes: RouteObject[] = [
                   { path: '/inicio', element: <InShell page={HomePage} /> },
                   { path: '/cotizaciones', element: <InShell page={QuotesPage} /> },
                   { path: '/cotizaciones/:id', element: <InShell page={QuoteEditorPage} /> },
+                  { path: '/cotizaciones/:id/cortes', element: <InShell page={QuoteCutsPage} /> },
                   { path: '/clientes', element: <InShell page={ClientsPage} /> },
                   { path: '/clientes/:id', element: <InShell page={ClientDetailPage} /> },
                   { path: '/taller', element: <InShell page={WorkshopPage} /> },
@@ -116,11 +138,8 @@ export const routes: RouteObject[] = [
         ],
       },
 
-      // Desarrollo y vitrinas.
-      { path: '/dev/ui', element: <Full page={UiShowcase} /> },
-      { path: '/dev/marco', element: <Full page={MarcoShowcase} /> },
-      { path: '/dev/3d', element: <Full page={Viewer3DShowcase} /> },
-      { path: '/dev/designer', element: <Full page={DesignerPlayground} /> },
+      // Desarrollo y vitrinas (no existen en producción: allí caen en el 404).
+      ...devRoutes(),
 
       { path: '*', element: <NotFound /> },
     ],

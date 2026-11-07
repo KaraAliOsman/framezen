@@ -37,7 +37,8 @@ export async function renderPdf(deps: AppDeps, html: string): Promise<{ pdf: Buf
   const renderer = pdfRendererFor(deps)
   let cache = caches.get(renderer)
   if (!cache) caches.set(renderer, (cache = new Map()))
-  const key = sha256(html)
+  // Los ids de useId cambian con el reparto por tramos del render; no cuentan para saber si es el mismo documento.
+  const key = sha256(html.replace(/f\d+zR[0-9a-z]+/g, 'fzR'))
   const now = Date.now()
   const hit = cache.get(key)
   if (hit && now - hit.at < CACHE_TTL_MS) {

@@ -9,11 +9,21 @@
  * - Si el navegador se cae o queda trabado se reinicia (solo esa instancia: nunca la que ya relanzó
  *   otro documento) y se reintenta una vez.
  * - Sin red: el documento trae todo (fuentes y logo como data URL) y no puede pedir nada afuera.
+ * - Sin JavaScript del documento (`javaScriptEnabled: false`): ningún texto de una plantilla, de la
+ *   IA o de un cliente puede ejecutar código. El único código que corre es el del servidor
+ *   (ajuste de hojas de taller), inyectado con `page.evaluate`.
  * - Si Chromium no está disponible, lanza PdfUnavailableError y la ruta responde 503 con
  *   un mensaje amable para que la web use «Imprimir» del navegador.
  */
 import type { Browser, BrowserContext } from 'playwright-core'
+import { fitWorkshopSheets, TRUSTED_TEMPLATE_FLOW } from '@dekopen/documents'
 import type { Logger } from '../../lib/logger'
+
+/**
+ * Ajuste de hojas de taller (mide en Chromium) como código de confianza del servidor: con el
+ * JavaScript del documento apagado, el <script> embebido no corre y esto lo reemplaza.
+ */
+const TRUSTED_FIT = `(function(){try{(${String(fitWorkshopSheets)})(document)}catch(e){}})()`
 
 export type PdfUnavailableReason = 'launch' | 'busy' | 'timeout' | 'crash'
 
@@ -183,14 +193,17 @@ export class ChromiumPdfRenderer implements PdfRenderer {
     let context: BrowserContext | undefined
     let outcome: Attempt
     try {
-      // Sin red (offline) y sin descargas: todo viene embebido en el HTML.
-      context = await browser.newContext({ offline: true, acceptDownloads: false, viewport: { width: 1024, height: 1320 } })
+      // Sin red (offline), sin descargas y sin JavaScript del documento: todo viene embebido en el HTML.
+      context = await browser.newContext({ offline: true, acceptDownloads: false, javaScriptEnabled: false, viewport: { width: 1024, height: 1320 } })
       const ctx = context
       const pdf = await withTimeout(
         (async () => {
           const page = await ctx.newPage()
           await page.setContent(html, { waitUntil: 'load', timeout: timeoutMs })
           await page.evaluate(() => document.fonts.ready.then(() => undefined))
+          if (html.includes('data-fit')) await page.evaluate(TRUSTED_FIT)
+          // Cotizaciones con plantilla: reparte los bloques en hojas con sus altos reales (fuentes ya cargadas).
+          if (html.includes('data-dk-flow')) await page.evaluate(TRUSTED_TEMPLATE_FLOW)
           const pdf = await page.pdf({
             preferCSSPageSize: true,
             printBackground: true,

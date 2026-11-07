@@ -11,8 +11,10 @@
  */
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { ApiRequestError, humanError } from '../../../lib/api'
+import { translate } from '../../../lib/i18n'
 import type { SaveStatus } from '../../../ui/SaveIndicator'
 import { toast } from '../../../ui/Toaster'
+import es from '../i18n/es'
 
 export interface AutosaveOptions {
   /** Espera tras el último cambio antes de guardar (ms). */
@@ -130,7 +132,7 @@ async function run(q: SaveQueue): Promise<void> {
         q.attempts = 0
         emit(q, { status: 'error', error: humanError(err) })
         // Nadie lo está mirando: que no se pierda en silencio.
-        if (q.holders === 0) toast.error(`No pudimos guardar un cambio: ${humanError(err)}`)
+        if (q.holders === 0) toast.error(translate(es, 'autosave.lostChange', { error: humanError(err) }))
       }
     }
   })()

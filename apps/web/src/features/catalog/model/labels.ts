@@ -1,123 +1,137 @@
 /**
  * Textos humanos del catálogo (nunca códigos internos): estado de los datos de una línea o
- * marca, tipo de marca, roles de perfil y familias de descuento.
+ * marca, tipo de marca, familias de descuento y la fuente de una línea. Todo se traduce al
+ * llamarlo (idioma actual de la interfaz); los términos del rubro salen del glosario.
  */
-import type { Brand, BrandSettings, Line, ProfileRole } from '@framezen/engine'
+import type { Brand, BrandSettings, Line } from '@dekopen/engine'
+import type { Locale } from '@dekopen/shared'
 import { initials } from '../../../lib/format'
+import { getFormatter, translate } from '../../../lib/i18n'
 import type { BadgeTone } from '../../../ui'
+import es from '../i18n/es'
 
 export type Completeness = 'verified' | 'complete' | 'partial' | 'none'
 
-export const COMPLETENESS_COPY: Record<Completeness, { label: string; tone: BadgeTone; help: string }> = {
-  verified: {
-    label: 'Verificada en taller',
-    tone: 'ok',
-    help: 'Lista para cotizar y con cortes comprobados al 0,1 mm contra una orden de trabajo real.',
-  },
-  complete: {
-    label: 'Lista para cotizar',
-    tone: 'ok',
-    help: 'Una ventana completa sale con todos sus perfiles, refuerzos y herrajes con precio. Revisa la primera que fabriques.',
-  },
-  partial: {
-    label: 'Cotiza con avisos',
-    tone: 'warn',
-    help: 'Faltan algunos precios o datos del fabricante. Cotizas igual y te avisamos qué falta antes de cortar.',
-  },
-  none: {
-    label: 'Solo artículos',
-    tone: 'neutral',
-    help: 'Esta marca trae herrajes, accesorios o vidrios, sin líneas de perfiles.',
-  },
+export interface StateCopy {
+  label: string
+  tone: BadgeTone
+  help: string
+}
+
+const COMPLETENESS_TONE: Record<Completeness, BadgeTone> = { verified: 'ok', complete: 'ok', partial: 'warn', none: 'neutral' }
+
+/** Estado de los datos de una marca o línea en palabras («Lista para cotizar», «Cotiza con avisos»…). */
+export function completenessCopy(value: Completeness, locale?: Locale): StateCopy {
+  return {
+    label: translate(es, `completeness.${value}.label`, undefined, locale),
+    tone: COMPLETENESS_TONE[value],
+    help: translate(es, `completeness.${value}.help`, undefined, locale),
+  }
 }
 
 /** «Solo medidas»: la marca trae líneas, pero ningún precio. */
-export const GEOMETRY_ONLY_COPY = {
-  label: 'Solo medidas',
-  tone: 'neutral' as BadgeTone,
-  help: 'Sus líneas traen medidas y pautas, pero no precios: dibuja y corta, y carga tus precios para cotizar con costo real.',
+export function geometryOnlyCopy(locale?: Locale): StateCopy {
+  return {
+    label: translate(es, 'completeness.geometry.label', undefined, locale),
+    tone: 'neutral',
+    help: translate(es, 'completeness.geometry.help', undefined, locale),
+  }
 }
 
 /** Estado de una marca en palabras, con los conteos que entrega el servidor. */
-export function brandStateCopy(summary: { completeness: Completeness; counts: { lines: number; priced: number } }): { label: string; tone: BadgeTone; help: string } {
-  if (summary.completeness !== 'none' && summary.counts.lines > 0 && summary.counts.priced === 0) return GEOMETRY_ONLY_COPY
-  return COMPLETENESS_COPY[summary.completeness]
+export function brandStateCopy(summary: { completeness: Completeness; counts: { lines: number; priced: number } }, locale?: Locale): StateCopy {
+  if (summary.completeness !== 'none' && summary.counts.lines > 0 && summary.counts.priced === 0) return geometryOnlyCopy(locale)
+  return completenessCopy(summary.completeness, locale)
 }
 
 export function lineCompleteness(line: Pick<Line, 'completeness'>): Completeness {
   return line.completeness ?? 'partial'
 }
 
-export const BRAND_KIND_LABEL: Record<Brand['kind'], string> = {
-  profiles: 'Perfiles',
-  glass: 'Vidrios',
-  hardware: 'Herrajes',
-  mixed: 'Perfiles y herrajes',
-}
-
-export const LINE_KIND_LABEL: Record<Line['kind'], string> = {
-  casement: 'Practicable',
-  sliding: 'Corredera',
-}
-
-export const MATERIAL_LABEL: Record<Line['material'], string> = { pvc: 'PVC', aluminum: 'Aluminio' }
-
-export const ROLE_LABEL: Record<ProfileRole, string> = {
-  frame: 'Marco',
-  sash: 'Hoja',
-  door_sash: 'Hoja de puerta',
-  mullion: 'Travesaño',
-  bead: 'Junquillo',
-  french_mullion: 'Inversor',
-  threshold: 'Umbral',
-  sliding_frame: 'Marco de corredera',
-  sliding_sash: 'Hoja de corredera',
-  interlock: 'Traslapo central',
-  guide: 'Guía',
-  coupler: 'Unión',
-  reinforcement: 'Refuerzo',
-  other: 'Otro',
+export function brandKindLabel(kind: Brand['kind'], locale?: Locale): string {
+  return translate(es, `brandKind.${kind}`, undefined, locale)
 }
 
 export type DiscountFamily = keyof BrandSettings['discounts']
 
-export const DISCOUNT_FAMILIES: { key: DiscountFamily; label: string; help: string }[] = [
-  { key: 'profiles', label: 'Perfiles', help: 'Marco, hoja, junquillo' },
-  { key: 'reinforcement', label: 'Refuerzos', help: 'Acero interior' },
-  { key: 'hardware', label: 'Herrajes', help: 'Cremonas, bisagras, carros' },
-  { key: 'glass', label: 'Vidrios', help: 'Termopaneles y simples' },
-  { key: 'accessories', label: 'Accesorios', help: 'Burletes, tornillos, tapas' },
-]
+/** Familias de descuento de compra, en el orden en que se muestran. */
+export const DISCOUNT_FAMILIES: readonly DiscountFamily[] = ['profiles', 'reinforcement', 'hardware', 'glass', 'accessories']
 
-/** Fuente de datos de una línea en una frase corta («Pauta de la distribuidora · lista del 31-10-2026»). */
+export function discountFamilyCopy(key: DiscountFamily, locale?: Locale): { label: string; help: string } {
+  return { label: translate(es, `discount.${key}.label`, undefined, locale), help: translate(es, `discount.${key}.help`, undefined, locale) }
+}
+
+/**
+ * Fuente de datos de una línea en una frase corta, en español canónico («Pauta de la
+ * distribuidora · lista del 31-10-2026»). Nunca cita la orden de trabajo de un tercero ni el nombre
+ * anterior del producto.
+ */
 export function sourceSentence(line: Pick<Line, 'source'>): string | null {
   const source = line.source?.trim()
   if (!source) return null
   return (
     source
-      .replace(/^plantilla genérica$/i, 'Plantilla típica de Framezen')
+      .replace(/^plantilla genérica$/i, 'Plantilla típica de DEKOPEN')
       // Catálogos generados antes citaban la orden de trabajo de un tercero («+ OT N° 385 …»):
-      // el taller solo ve que Framezen verificó la pauta.
-      .replace(/\s*\+\s*OT N° ?\d+\s*\(un caso verificado\)/i, ', verificada por Framezen en una ventana real')
-      .replace(/\s*\+\s*OT N° ?\d+[^·]*?(?=\s*(?:·|$))/i, ', verificada por Framezen')
+      // el taller solo ve que DEKOPEN verificó la pauta.
+      .replace(/\s*\+\s*OT N° ?\d+\s*\(un caso verificado\)/i, ', verificada por DEKOPEN en una ventana real')
+      .replace(/\s*\+\s*OT N° ?\d+[^·]*?(?=\s*(?:·|$))/i, ', verificada por DEKOPEN')
+      // Catálogos generados antes del cambio de nombre.
+      .replace(/\bFramezen\b/g, 'DEKOPEN')
       .replace(/\s+·\s+/g, ' · ')
   )
 }
 
-/** Color de fondo sobrio y estable para el monograma de una marca (nunca un logo). */
-export function monogramTone(brandId: string): { bg: string; fg: string } {
-  const palette = [
-    { bg: '#E8EDF9', fg: '#1F3AA0' },
-    { bg: '#EDE7DF', fg: '#4D3B2A' },
-    { bg: '#E3EEE8', fg: '#1D5234' },
-    { bg: '#F3E9DA', fg: '#6B3E00' },
-    { bg: '#ECE6EF', fg: '#4B2F5E' },
-    { bg: '#E6ECEE', fg: '#24434D' },
-    { bg: '#F1E5E2', fg: '#7A2E22' },
-  ]
-  let hash = 0
-  for (let i = 0; i < brandId.length; i++) hash = (hash * 31 + brandId.charCodeAt(i)) >>> 0
-  return palette[hash % palette.length]
+const SEGMENT_PATTERNS: { re: RegExp; render: (m: RegExpMatchArray, locale: Locale) => string }[] = [
+  { re: /^plantilla típica de dekopen$/i, render: (_m, l) => translate(es, 'source.generic', undefined, l) },
+  {
+    re: /^pauta de la distribuidora \((\d+) productos?; variante ([^)]+)\)$/i,
+    render: (m, l) => translate(es, 'source.distributorVariant', { count: Number(m[1]), variant: m[2] }, l),
+  },
+  { re: /^pauta de la distribuidora \((\d+) productos?\)$/i, render: (m, l) => translate(es, 'source.distributorProducts', { count: Number(m[1]) }, l) },
+  { re: /^pauta de la distribuidora$/i, render: (_m, l) => translate(es, 'source.distributor', undefined, l) },
+  { re: /^pauta típica de practicable: revisar con el fabricante$/i, render: (_m, l) => translate(es, 'source.typicalCasement', undefined, l) },
+  { re: /^pauta típica de corredera: revisar con el fabricante$/i, render: (_m, l) => translate(es, 'source.typicalSliding', undefined, l) },
+  { re: /^lista de precios del (\d{2})-(\d{2})-(\d{4})$/i, render: (m, l) => translate(es, 'source.priceList', { date: sourceDate(m, l) }, l) },
+  { re: /^lista del (\d{2})-(\d{2})-(\d{4})$/i, render: (m, l) => translate(es, 'source.list', { date: sourceDate(m, l) }, l) },
+  { re: /^verificada por dekopen en una ventana real$/i, render: (_m, l) => translate(es, 'source.verifiedReal', undefined, l) },
+  { re: /^verificada por dekopen$/i, render: (_m, l) => translate(es, 'source.verified', undefined, l) },
+]
+
+function sourceDate(m: RegExpMatchArray, locale: Locale): string {
+  const [day, month, year] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  // Mediodía UTC: la fecha no cambia de día en ninguna zona horaria.
+  return getFormatter({ locale }).date(new Date(Date.UTC(year, month - 1, day, 12)))
+}
+
+function localizeSegment(segment: string, locale: Locale): string {
+  const text = segment.trim()
+  for (const pattern of SEGMENT_PATTERNS) {
+    const m = text.match(pattern.re)
+    if (m) return pattern.render(m, locale)
+  }
+  // «Pauta de la distribuidora, verificada por DEKOPEN»: dos frases conocidas unidas por coma.
+  const comma = text.indexOf(', ')
+  if (comma > 0) {
+    const head = localizeSegment(text.slice(0, comma), locale)
+    const tail = localizeSegment(text.slice(comma + 2), locale)
+    if (head !== text.slice(0, comma) || tail !== text.slice(comma + 2)) return `${head}, ${tail}`
+  }
+  // Texto propio de quien armó el catálogo: es dato y se muestra tal cual.
+  return text
+}
+
+/**
+ * La fuente de una línea en el idioma de la interfaz: reconoce las frases que escribe el importador
+ * y deja tal cual lo que no conoce (texto del fabricante). En español es `sourceSentence` sin cambios.
+ */
+export function localizedSourceSentence(line: Pick<Line, 'source'>, locale: Locale): string | null {
+  const canonical = sourceSentence(line)
+  if (!canonical || locale === 'es') return canonical
+  return canonical
+    .split(' · ')
+    .map((segment) => localizeSegment(segment, locale))
+    .join(' · ')
 }
 
 /**

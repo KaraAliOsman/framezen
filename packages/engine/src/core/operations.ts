@@ -1,7 +1,10 @@
-import type { Catalog, DesignNode, Id, LeafNode, Opening, Shape, SlidingPanel, SplitNode, WindowDesign } from '../types'
+import type { Catalog, DesignNode, Id, LeafNode, Opening, Shape, SlidingPanel, SlidingSystem, SplitNode, WindowDesign, WindowExtras } from '../types'
+import { LEAF_USES, OPENING_KINDS } from '../types'
+import { isAssembly, mapUnitDesigns, mapUnits } from './assembly'
 import { convertRoot, defaultSlidingPanels } from './convert'
 import { clamp, mm1 } from './format'
 import { layoutTree, minExtent, splitSizes, type Box } from './geometry'
+import { shapeGeometry } from './shapes'
 import { idFactory } from './ids'
 import { closeSum, equalShares, resolveSizes } from './sizes'
 import { findNode, findParent, firstLeaf, mapNode } from './tree'
@@ -28,19 +31,40 @@ const extentOf = (box: Box, dir: SplitNode['dir']): number => (dir === 'vertical
 
 /** Cambia ancho y/o alto reescalando proporcionalmente las medidas de los paños y la forma. */
 export function setSize(design: WindowDesign, size: { width?: number; height?: number }): WindowDesign {
+  // Un conjunto no tiene medida propia: la dan sus unidades (`setUnitSize`).
+  if (isAssembly(design)) return design
   const width = valid(size.width) ? mm1(size.width) : design.width
   const height = valid(size.height) ? mm1(size.height) : design.height
   if (width === design.width && height === design.height) return design
   const oldBox: Box = { x0: 0, y0: 0, x1: design.width, y1: design.height }
   const newBox: Box = { x0: 0, y0: 0, x1: width, y1: height }
-  const root = design.root ? rescale(design.root, oldBox, newBox) : design.root
+  let root = design.root ? rescale(design.root, oldBox, newBox) : design.root
   const next: WindowDesign = { ...design, width, height, root }
   const shape = rescaleShape(design.shape, design.width, design.height, width, height)
-  if (shape) next.shape = shape
+  if (shape) {
+    next.shape = shape
+    // Si el primer travesaño iba en el arranque del arco (o en los hombros del frontón), lo sigue.
+    const oldHead = shapeGeometry(design.shape, design.width, design.height)?.head
+    const newHead = shapeGeometry(shape, width, height)?.head
+    if (root?.type === 'split' && root.dir === 'horizontal' && oldHead !== undefined && newHead !== undefined) {
+      const first = design.root.type === 'split' ? splitSizes(design.root, design.height)[0] : undefined
+      if (first !== undefined && Math.abs(first - oldHead) < 0.5 && root.sizes.length >= 2) {
+        root = { ...root, sizes: [mm1(newHead), ...root.sizes.slice(1).map(() => null)] }
+        next.root = root
+      }
+    }
+  }
   return next
 }
 
 function rescale(node: DesignNode, oldBox: Box, newBox: Box): DesignNode {
+  if (node.type === 'sliding') {
+    // Anchos propios de los paneles: proporcionales al ancho nuevo.
+    if (!Array.isArray(node.sizes)) return node
+    const oldW = oldBox.x1 - oldBox.x0
+    const f = oldW > 0 ? (newBox.x1 - newBox.x0) / oldW : 1
+    return { ...node, sizes: node.sizes.map((v) => (typeof v === 'number' ? mm1(v * f) : null)) }
+  }
   if (node.type !== 'split') return node
   const vertical = node.dir === 'vertical'
   const oldExtent = extentOf(oldBox, node.dir)
@@ -72,6 +96,13 @@ function rescaleShape(shape: Shape | undefined, oldW: number, oldH: number, w: n
   }
   if (shape.kind === 'trapezoid') {
     return { kind: 'trapezoid', leftHeight: mm1(Math.min(h, shape.leftHeight * fy)), rightHeight: mm1(Math.min(h, shape.rightHeight * fy)) }
+  }
+  if (shape.kind === 'gable') {
+    return { kind: 'gable', shoulderHeight: mm1(Math.min(h - 1, shape.shoulderHeight * fy)) }
+  }
+  if (shape.kind === 'octagon' && typeof shape.chamfer === 'number') {
+    const fx = oldW > 0 ? w / oldW : 1
+    return { kind: 'octagon', chamfer: mm1(Math.min(Math.min(w, h) / 2 - 1, shape.chamfer * Math.min(fx, fy))) }
   }
   return shape
 }
@@ -216,25 +247,67 @@ export function mergeNode(design: WindowDesign, nodeId: Id, index?: number): Win
   return withRoot(design, mapNode(design.root, parent.id, () => replacement))
 }
 
-/** Travesaño fijo o unión francesa (solo entre hojas lado a lado). */
-export function setJoint(design: WindowDesign, splitNodeId: Id, joint: 'mullion' | 'french'): WindowDesign {
+/**
+ * Travesaño fijo, unión francesa o cadena plegable (francesa y plegable solo entre hojas lado a
+ * lado). Al pasar a plegable las hojas se vuelven plegables (se conserva el vidrio y el relleno).
+ */
+export function setJoint(design: WindowDesign, splitNodeId: Id, joint: 'mullion' | 'french' | 'fold'): WindowDesign {
   const node = findNode(design, splitNodeId)
   if (!node || node.type !== 'split') return design
-  if (joint === 'french' && node.dir !== 'vertical') return design
+  if (joint !== 'mullion' && joint !== 'french' && joint !== 'fold') return design
+  if ((joint === 'french' || joint === 'fold') && node.dir !== 'vertical') return design
   if ((node.joint ?? 'mullion') === joint) return design
-  return withRoot(design, mapNode(design.root, node.id, (n) => ({ ...(n as SplitNode), joint })))
+  return withRoot(
+    design,
+    mapNode(design.root, node.id, (n) => {
+      const split = n as SplitNode
+      if (joint !== 'fold') return { ...split, joint }
+      const children = split.children.map((child) =>
+        child.type === 'leaf' && child.opening?.kind !== 'folding' ? { ...child, opening: { kind: 'folding' as const, hinge: 'left' as const } } : child,
+      )
+      return { ...split, joint, children }
+    }),
+  )
+}
+
+/** Hoja pasiva de una unión francesa (la que lleva el inversor y pasadores), vista desde el interior. */
+export function setPassiveLeaf(design: WindowDesign, splitNodeId: Id, side: 'left' | 'right'): WindowDesign {
+  const node = findNode(design, splitNodeId)
+  if (!node || node.type !== 'split' || node.joint !== 'french' || (side !== 'left' && side !== 'right')) return design
+  if (node.passive === side) return design
+  return withRoot(design, mapNode(design.root, node.id, (n) => ({ ...(n as SplitNode), passive: side })))
 }
 
 // ─── Aperturas, vidrios, colores ────────────────────────────────────────────
 
+/**
+ * Cambia la apertura de un paño. Se normaliza: solo pasan los campos que entiende el motor y con
+ * valores válidos (`sequence` solo en oscilobatiente, `slide` en osciloparalela y paralela, `pivot`
+ * en pivotantes, `use` en hojas que pueden ser puerta).
+ */
 export function setOpening(design: WindowDesign, nodeId: Id, opening: Opening): WindowDesign {
   const node = findNode(design, nodeId)
-  if (!node || node.type !== 'leaf' || !opening?.kind) return design
-  const next: Opening = { kind: opening.kind }
-  if (opening.hinge) next.hinge = opening.hinge
-  if (opening.direction) next.direction = opening.direction
+  if (!node || node.type !== 'leaf' || !opening?.kind || !(OPENING_KINDS as readonly string[]).includes(opening.kind)) return design
+  const next = normalizeOpening(opening)
   if (sameOpening(node.opening, next)) return design
   return withRoot(design, mapNode(design.root, nodeId, (n) => ({ ...(n as LeafNode), opening: next })))
+}
+
+const side = (v: unknown): v is 'left' | 'right' => v === 'left' || v === 'right'
+
+export function normalizeOpening(opening: Opening): Opening {
+  const next: Opening = { kind: opening.kind }
+  if (side(opening.hinge)) next.hinge = opening.hinge
+  if (opening.direction === 'in' || opening.direction === 'out') next.direction = opening.direction
+  if (opening.kind === 'tilt_turn' && (opening.sequence === 'tilt_first' || opening.sequence === 'turn_first')) next.sequence = opening.sequence
+  if ((opening.kind === 'tilt_slide' || opening.kind === 'parallel_slide') && side(opening.slide)) next.slide = opening.slide
+  if ((opening.kind === 'pivot_v' || opening.kind === 'pivot_h') && typeof opening.pivot === 'number' && Number.isFinite(opening.pivot)) {
+    next.pivot = Math.round(clamp(opening.pivot, 0.05, 0.95) * 1000) / 1000
+  }
+  if ((opening.kind === 'casement' || opening.kind === 'tilt_turn' || opening.kind === 'door') && opening.use && (LEAF_USES as readonly string[]).includes(opening.use)) {
+    next.use = opening.use
+  }
+  return next
 }
 
 /** Misma apertura ya normalizada (tipo, bisagras y sentido, sin claves de más). */
@@ -284,6 +357,7 @@ function applyGlass(node: DesignNode, glassId: Id): DesignNode {
  * por paño), de un paño, de todos los paños de una división o de un panel de corredera.
  */
 export function setGlass(design: WindowDesign, nodeId: Id | null, glassId: Id): WindowDesign {
+  if (isAssembly(design)) return nodeId ? design : mapUnitDesigns(design, (unit) => setGlass(unit, null, glassId))
   if (!glassId) return design
   if (nodeId === null || nodeId === undefined) {
     const root = design.root ? clearGlass(design.root) : design.root
@@ -303,6 +377,7 @@ export function setGlass(design: WindowDesign, nodeId: Id | null, glassId: Id): 
 
 /** Color exterior; `colorInId` distinto = bicolor; omitido o igual = un solo color. */
 export function setColor(design: WindowDesign, colorId: Id, colorInId?: Id): WindowDesign {
+  if (isAssembly(design)) return mapUnitDesigns(design, (unit) => setColor(unit, colorId, colorInId))
   if (!colorId) return design
   const inner = colorInId && colorInId !== colorId ? colorInId : undefined
   if (design.colorId === colorId && (inner ? design.colorInId === inner : !('colorInId' in design))) return design
@@ -334,6 +409,7 @@ function sameShape(a: Shape | undefined, b: Shape): boolean {
  * conservando medidas, vidrios por paño y el orden de izquierda a derecha.
  */
 export function setLine(design: WindowDesign, lineId: Id, catalog: Catalog): WindowDesign {
+  if (isAssembly(design)) return mapUnits(design, (unit) => setLine(unit, lineId, catalog), catalog)
   if (!lineId) return design
   const line = catalog?.lines?.find((l) => l.id === lineId)
   const convert = !!line && !!design.root && (line.kind === 'sliding') !== (design.root.type === 'sliding')
@@ -377,9 +453,75 @@ export function setSlidingPanels(design: WindowDesign, panels: number | SlidingP
   const railCount = rails === 1 || rails === 2 || rails === 3 ? rails : (current?.rails ?? 2)
   if (current && current.rails === railCount && !('shape' in design) && samePanels(current.panels, list)) return design
   const next: DesignNode = { id: current?.id ?? newId(), type: 'sliding', rails: railCount, panels: list }
+  // Se conserva el sistema (elevadora) y, si no cambia la cantidad, los anchos propios.
+  if (current?.system && current.system !== 'standard') next.system = current.system
+  if (current?.sizes && current.sizes.length === list.length) next.sizes = [...current.sizes]
   const out: WindowDesign = { ...design, root: next }
   delete out.shape
   return out
+}
+
+/** Corredera estándar o elevadora (HST). Solo para diseños de corredera. */
+export function setSlidingSystem(design: WindowDesign, system: SlidingSystem): WindowDesign {
+  const root = design.root
+  if (root?.type !== 'sliding' || (system !== 'standard' && system !== 'lift_slide')) return design
+  if ((root.system ?? 'standard') === system) return design
+  const next: DesignNode = { ...root }
+  if (system === 'standard') delete next.system
+  else next.system = system
+  return { ...design, root: next }
+}
+
+/**
+ * Extras de la ventana (persiana, mosquitero, alféizar, umbral). Cada clave con valor la pone; con
+ * `undefined` o `false` la quita. Sin extras queda sin la clave `extras`.
+ */
+/**
+ * Zócalo de una hoja: banda ciega abajo, bajo un travesaño de hoja. `undefined` lo quita. Una hoja
+ * sigue siendo una hoja: mismos herrajes, misma medida.
+ */
+export function setZocalo(design: WindowDesign, nodeId: Id, height: number | undefined): WindowDesign {
+  const node = findNode(design, nodeId)
+  if (!node || node.type !== 'leaf') return design
+  if (height === undefined) {
+    if (!node.zocalo) return design
+    const { zocalo: _gone, ...rest } = node
+    return withRoot(design, mapNode(design.root, nodeId, () => rest))
+  }
+  if (!valid(height)) return design
+  const value = mm1(height)
+  if (node.zocalo?.height === value) return design
+  return withRoot(design, mapNode(design.root, nodeId, (n) => (n.type === 'leaf' ? { ...n, zocalo: { height: value } } : n)))
+}
+
+export function setExtras(design: WindowDesign, patch: Partial<WindowExtras>): WindowDesign {
+  if (!patch || typeof patch !== 'object') return design
+  const current: WindowExtras = { ...(design.extras ?? {}) }
+  let changed = false
+  for (const key of Object.keys(patch) as (keyof WindowExtras)[]) {
+    const value = patch[key]
+    if (value === undefined || value === false || value === null) {
+      if (key in current) {
+        delete current[key]
+        changed = true
+      }
+      continue
+    }
+    if (JSON.stringify(current[key]) !== JSON.stringify(value)) {
+      ;(current as Record<string, unknown>)[key] = value
+      changed = true
+    }
+  }
+  // El mosquitero tipado reemplaza al booleano de v4.
+  if (patch.insectScreen && 'screen' in current) {
+    delete current.screen
+    changed = true
+  }
+  if (!changed) return design
+  const next: WindowDesign = { ...design }
+  if (Object.keys(current).length > 0) next.extras = current
+  else delete next.extras
+  return next
 }
 
 /** Mismos paneles en el mismo orden (id, tipo, sentido y vidrio). */

@@ -7,9 +7,17 @@ import type { EditorState, QuoteEditor } from '../model/store'
 /** Estado de interfaz del editor (no entra al historial ni se guarda). */
 export interface EditorUiState {
   pickerOpen: boolean
+  /** Galería de diseños del documento (miniaturas con esta cotización). */
+  templateGalleryOpen: boolean
   sendOpen: boolean
+  /** «Marcar abono recibido». */
+  depositOpen: boolean
+  /** «Duplicar para…». */
+  duplicateOpen: boolean
   /** Inspector como hoja lateral (tablet). */
   inspectorOpen: boolean
+  /** Pestaña del inspector: la ventana elegida o la cotización completa. */
+  inspectorTab: 'item' | 'quote'
   /** Hoja inferior del teléfono. */
   mobileSheet: 'item' | 'totals' | 'document' | null
   /** Escala del documento: calza el ancho del panel o tamaño real (100 %). */
@@ -24,8 +32,12 @@ export interface EditorUiState {
 export function createEditorUi(initial: Partial<Omit<EditorUiState, 'set'>> = {}): StoreApi<EditorUiState> {
   return createStore<EditorUiState>((set) => ({
     pickerOpen: false,
+    templateGalleryOpen: false,
     sendOpen: false,
+    depositOpen: false,
+    duplicateOpen: false,
     inspectorOpen: false,
+    inspectorTab: 'item',
     mobileSheet: null,
     docZoom: 'fit',
     sendIntent: null,

@@ -74,6 +74,12 @@ describe('textos del taller', () => {
     expect((steps?.[0].amount ?? 0) + (steps?.[1].amount ?? 0)).toBe(2952123)
     expect(paymentSchedule('60 % adelantado y 40 % contra entrega instalada', 1000)?.map((s) => s.amount)).toEqual([600, 400])
     expect(paymentSchedule('Contado', 1000)).toBeNull()
+    // Turco: el signo va antes del número y la descripción antes de la cifra.
+    expect(paymentSchedule('Teklifin kabulünde %50, teslimatta %50 ödenir.', 1000)).toEqual([
+      { pct: 50, label: 'Teklifin kabulünde', amount: 500 },
+      { pct: 50, label: 'Teslimatta', amount: 500 },
+    ])
+    expect(paymentSchedule('%30 peşin, %70 teslimde', 1000)?.map((s) => s.label)).toEqual(['Peşin', 'Teslimde'])
     expect(paymentSchedule('30% y 30%', 1000)).toBeNull()
   })
 
@@ -156,13 +162,13 @@ describe('tema, CSS, fuentes y HTML', () => {
     expect(documentCss({ accent: '#2747C2', font: 'serif', paper: 'a4' })).toContain('@page { size: A4; margin: 0; }')
   })
 
-  it('fuentes: @font-face de Instrument Sans, Fraunces e Inter Tight', () => {
-    const css = documentFontFaces({ instrument: 'data:font/woff2;base64,AAAA', fraunces: '/f.woff2', interTight: [{ url: '/i.woff2', unicodeRange: 'U+0000-00FF' }] })
+  it('fuentes: @font-face de Instrument Sans, Literata e Inter Tight', () => {
+    const css = documentFontFaces({ instrument: 'data:font/woff2;base64,AAAA', literata: '/f.woff2', interTight: [{ url: '/i.woff2', unicodeRange: 'U+0000-00FF' }] })
     expect(css).toContain("font-family: 'Instrument Sans Variable'")
-    expect(css).toContain("font-family: 'Fraunces Variable'")
+    expect(css).toContain("font-family: 'Literata Variable'")
     expect(css).toContain("font-family: 'Inter Tight Variable'")
     expect(css).toContain('unicode-range: U+0000-00FF')
-    expect(DOCUMENT_FONT_FILES.fraunces).toMatch(/fraunces.*\.woff2$/)
+    expect(DOCUMENT_FONT_FILES.literata).toMatch(/literata.*\.woff2$/)
     expect(documentFontFaces({})).toBe('')
   })
 

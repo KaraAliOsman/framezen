@@ -2,10 +2,10 @@ import { useState, type DragEvent } from 'react'
 import { Link } from 'react-router'
 import { AnimatePresence, LayoutGroup, motion, MotionConfig } from 'motion/react'
 import { ArrowRight, CalendarDays, Ellipsis } from 'lucide-react'
-import type { Catalog } from '@framezen/engine'
-import type { Station } from '@framezen/shared'
+import type { Catalog } from '@dekopen/engine'
+import type { Station } from '@dekopen/shared'
 import { cn } from '../../../lib/cn'
-import { formatSize } from '../../../lib/format'
+import { useFormat, useGlossary, useT } from '../../../lib/i18n'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,28 +14,31 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '../../../ui'
+import es from '../i18n/es'
 import type { BoardCard, BoardColumns } from '../model/board'
 import { dueInfo } from '../model/orders'
-import { nextStation, STATIONS, stationInfo } from '../model/stations'
-import { RefChip } from './bits'
+import { nextStation, STATIONS } from '../model/stations'
+import { RefChip, useOrderLabel } from './bits'
 import { DesignThumb } from './DesignThumb'
 
-const CARD_MIME = 'application/x-framezen-card'
+const CARD_MIME = 'application/x-dekopen-card'
 
 export interface StationBoardProps {
   columns: BoardColumns
   catalog?: Catalog
   now: Date
   onMove: (card: BoardCard, station: Station) => void
-  /** Mientras cargan las cotizaciones: tarjetas sin dibujo. */
-  loadingDetails?: boolean
+  /** Sin permiso para mover (plan o rol): se ve igual, sin arrastre ni botones. */
+  readOnly?: boolean
 }
 
 /**
  * Tablero por estación: se arrastra una ventana a otra columna, o se usa «→ Siguiente» y el
- * menú de cada tarjeta (teclado y pantallas táctiles).
+ * menú «Mover a…» de cada tarjeta (teclado y pantallas táctiles).
  */
-export function StationBoard({ columns, catalog, now, onMove }: StationBoardProps) {
+export function StationBoard({ columns, catalog, now, onMove, readOnly }: StationBoardProps) {
+  const t = useT(es)
+  const g = useGlossary()
   const [dragging, setDragging] = useState<BoardCard | null>(null)
   const [over, setOver] = useState<Station | null>(null)
 
@@ -60,22 +63,22 @@ export function StationBoard({ columns, catalog, now, onMove }: StationBoardProp
     <MotionConfig reducedMotion="user">
       <LayoutGroup>
         <div
-          className="scrollbar-quiet -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-3 sm:-mx-6 sm:px-6 lg:mx-0 lg:snap-none lg:px-0"
+          className="scrollbar-quiet -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-3 sm:-mx-6 sm:px-6 lg:-mx-8 lg:snap-none lg:px-8"
           role="list"
-          aria-label="Tablero de producción por estación"
+          aria-label={t('board.label')}
         >
           {STATIONS.map((station) => {
             const cards = columns[station.id]
             const Icon = station.icon
+            const name = g.station(station.id)
             const isOver = over === station.id && dragging?.station !== station.id
             // Una estación vacía queda como riel angosto; al arrastrar se abre para recibir.
             const slim = cards.length === 0 && !dragging
-            const done = station.id === 'installed' || station.id === 'ready'
             return (
               <section
                 key={station.id}
                 role="listitem"
-                aria-label={`${station.label}: ${cards.length} ${cards.length === 1 ? 'ventana' : 'ventanas'}`}
+                aria-label={t('board.column', { station: name, count: cards.length })}
                 onDragOver={(e) => {
                   if (!dragging) return
                   e.preventDefault()
@@ -87,27 +90,22 @@ export function StationBoard({ columns, catalog, now, onMove }: StationBoardProp
                 }}
                 onDrop={(e) => drop(e, station.id)}
                 className={cn(
-                  'flex shrink-0 snap-start flex-col rounded-lg border transition-[background-color,border-color,box-shadow] duration-160 ease-out',
-                  slim
-                    ? 'w-12 bg-paper-50'
-                    : 'w-[76vw] max-w-[264px] bg-paper-100/70 sm:w-[236px] lg:w-auto lg:min-w-[188px] lg:max-w-[300px] lg:flex-1',
-                  isOver ? 'border-ink-500 bg-ink-50 shadow-[inset_0_0_0_1px_var(--ink-500)]' : 'border-paper-200',
+                  'flex shrink-0 snap-start flex-col rounded-panel transition-colors duration-140 ease-out',
+                  slim ? 'w-11' : 'w-[78vw] max-w-[272px] sm:w-[256px]',
+                  isOver ? 'bg-accent-subtle-strong' : 'bg-sunken',
                 )}
               >
                 {slim ? (
-                  <header className="flex flex-1 flex-col items-center gap-2 py-3" title={`${station.label}: nada en esta estación`}>
-                    <Icon aria-hidden strokeWidth={1.75} className={cn('size-4', done ? 'text-ok-600' : 'text-paper-600')} />
-                    <h3 className="text-[13px] font-medium text-paper-600 [writing-mode:vertical-rl]">{station.label}</h3>
-                    <span className="text-meta text-paper-600/80 tabular">0</span>
+                  <header className="flex flex-1 flex-col items-center gap-2 py-3" title={t('board.emptyColumn', { station: name })}>
+                    <Icon aria-hidden strokeWidth={1.75} className="size-4 text-fg-muted" />
+                    <h3 className="text-table text-fg-muted [writing-mode:vertical-rl]">{name}</h3>
                   </header>
                 ) : (
                   <>
-                    <header className="flex items-center gap-2 px-3 pt-3 pb-2">
-                      <Icon aria-hidden strokeWidth={1.75} className={cn('size-4', done ? 'text-ok-600' : 'text-paper-600')} />
-                      <h3 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-paper-900">{station.label}</h3>
-                      <span className="rounded-full bg-paper-0 px-1.5 text-meta font-medium text-paper-600 tabular ring-1 ring-paper-200">
-                        {cards.length}
-                      </span>
+                    <header className="flex h-11 items-center gap-2 px-3">
+                      <Icon aria-hidden strokeWidth={1.75} className="size-4 text-fg-muted" />
+                      <h3 className="min-w-0 flex-1 truncate font-medium text-fg-strong">{name}</h3>
+                      <span className="text-table text-fg-muted tabular">{cards.length}</span>
                     </header>
                     <div className="flex min-h-32 flex-1 flex-col gap-2 px-2 pb-2">
                       <AnimatePresence initial={false}>
@@ -119,12 +117,13 @@ export function StationBoard({ columns, catalog, now, onMove }: StationBoardProp
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
-                            transition={{ duration: 0.2, ease: [0.2, 0, 0, 1] }}
+                            transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
                           >
                             <Card
                               card={card}
                               catalog={catalog}
                               now={now}
+                              readOnly={readOnly}
                               dragging={dragging?.id === card.id}
                               onDragStart={(e) => {
                                 e.dataTransfer.effectAllowed = 'move'
@@ -142,8 +141,8 @@ export function StationBoard({ columns, catalog, now, onMove }: StationBoardProp
                         ))}
                       </AnimatePresence>
                       {cards.length === 0 ? (
-                        <div className="flex flex-1 items-center justify-center rounded-md border border-dashed border-ink-500/60 px-3 py-6 text-center text-meta text-ink-700">
-                          Suelta aquí
+                        <div className="flex flex-1 items-center justify-center px-3 py-6 text-center text-table text-fg-muted">
+                          {t('board.drop')}
                         </div>
                       ) : null}
                     </div>
@@ -162,6 +161,7 @@ function Card({
   card,
   catalog,
   now,
+  readOnly,
   dragging,
   onDragStart,
   onDragEnd,
@@ -170,94 +170,104 @@ function Card({
   card: BoardCard
   catalog?: Catalog
   now: Date
+  readOnly?: boolean
   dragging: boolean
   onDragStart: (e: DragEvent) => void
   onDragEnd: () => void
   onMove: (station: Station) => void
 }) {
+  const t = useT(es)
+  const fmt = useFormat()
+  const g = useGlossary()
+  const orderLabel = useOrderLabel()
   const next = nextStation(card.station)
-  const due = dueInfo(card.dueDate, { now, done: card.station === 'ready' || card.station === 'installed' })
+  const due = dueInfo(card.dueDate, { now, done: card.station === 'ready' || card.station === 'installed', locale: t.locale })
   const item = card.item
+  const order = orderLabel(card.orderNumber)
+  const title = item?.name || card.title || t('common.quoteNumber', { number: fmt.docNumber(card.quoteNumber) })
+  const subtitle = item?.name ? card.title : card.clientName
   return (
     <article
-      draggable
+      draggable={!readOnly}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      aria-label={`${card.ref} de la OT N° ${card.orderNumber}, en ${stationInfo(card.station).label}`}
+      aria-label={t('board.card', { ref: card.ref, order, station: g.station(card.station) })}
       className={cn(
-        'group relative cursor-grab rounded-md border border-paper-200 bg-paper-0 p-2.5 shadow-[0_1px_1px_rgb(31_28_24/0.04)] transition-[opacity,border-color,box-shadow] duration-120 active:cursor-grabbing',
-        'hover:border-paper-350/70 hover:shadow-[0_1px_2px_rgb(31_28_24/0.06)]',
+        'group relative rounded-sm bg-surface p-2.5 shadow-raised transition-[opacity,box-shadow] duration-100',
+        !readOnly && 'cursor-grab hover:shadow-float active:cursor-grabbing',
         dragging && 'opacity-40',
       )}
     >
-      <div className="flex items-start gap-2.5">
-        {item ? (
-          <DesignThumb design={item.design} catalog={catalog} size={40} className="mt-0.5 rounded-xs bg-paper-50" />
-        ) : (
-          <span className="mt-0.5 size-10 shrink-0 rounded-xs bg-paper-100" aria-hidden />
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <RefChip size="sm">{card.ref}</RefChip>
-            <Link
-              to={`/taller/${card.orderId}`}
-              draggable={false}
-              className="truncate text-meta font-medium text-paper-600 hover:text-ink-700"
-            >
-              OT N° {card.orderNumber}
-            </Link>
-            {item && item.qty > 1 ? <span className="ml-auto shrink-0 text-meta font-medium text-paper-900 tabular">× {item.qty}</span> : null}
-          </div>
-          <div className="mt-1 truncate text-[13px] leading-[18px] text-paper-900">{item?.name || card.title}</div>
-          <div className="truncate text-meta text-paper-600 tabular">
-            {item ? formatSize(item.design.width, item.design.height) : card.clientName || card.title}
-          </div>
-        </div>
-      </div>
-      <div className="mt-2 flex items-center gap-1 border-t border-paper-100 pt-2">
-        {due.tone === 'late' || due.tone === 'soon' ? (
-          <span className={cn('min-w-0 truncate text-meta font-medium', due.tone === 'late' ? 'text-bad-600' : 'text-warn-600')}>{due.label}</span>
-        ) : due.date ? (
-          <span className="inline-flex min-w-0 items-center gap-1 truncate text-meta text-paper-600 tabular" title={`Entrega ${due.date}`}>
-            <CalendarDays aria-hidden strokeWidth={1.75} className="size-3.5 shrink-0" />
-            {due.date}
-          </span>
-        ) : null}
-        <span className="ml-auto flex shrink-0 items-center gap-0.5">
-          {next ? (
-            <button
-              type="button"
-              onClick={() => onMove(next)}
-              className="inline-flex h-6 items-center gap-1 rounded-xs px-1.5 text-meta font-medium text-ink-700 transition-colors duration-120 hover:bg-ink-50 touch:h-8"
-              aria-label={`Pasar ${card.ref} de la OT N° ${card.orderNumber} a ${stationInfo(next).label}`}
-            >
-              {stationInfo(next).label}
-              <ArrowRight aria-hidden strokeWidth={1.75} className="size-3.5" />
-            </button>
-          ) : null}
+      <div className="flex items-center gap-1.5">
+        <RefChip size="sm">{card.ref}</RefChip>
+        {item && item.qty > 1 ? <span className="text-meta font-medium text-fg tabular">× {item.qty}</span> : null}
+        <Link
+          to={`/taller/${card.orderId}`}
+          draggable={false}
+          className="code-id ml-auto truncate rounded-xs text-meta text-fg-muted hover:underline"
+        >
+          {order}
+        </Link>
+        {!readOnly ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="inline-flex size-6 items-center justify-center rounded-xs text-paper-600 transition-colors duration-120 hover:bg-paper-100 hover:text-paper-900 touch:size-8"
-                aria-label={`Mover ${card.ref} de la OT N° ${card.orderNumber} a otra estación`}
+                className="-mr-1 inline-flex size-6 shrink-0 items-center justify-center rounded-xs text-fg-muted transition-colors duration-100 hover:bg-hover hover:text-fg touch:size-8"
+                aria-label={t('board.menu', { ref: card.ref, order })}
               >
                 <Ellipsis aria-hidden strokeWidth={1.75} className="size-4" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-44">
-              <DropdownMenuLabel>Mover a</DropdownMenuLabel>
+              <DropdownMenuLabel>{t('board.moveTo')}</DropdownMenuLabel>
               <DropdownMenuRadioGroup value={card.station} onValueChange={(v) => onMove(v as Station)}>
                 {STATIONS.map((s) => (
                   <DropdownMenuRadioItem key={s.id} value={s.id}>
-                    {s.label}
+                    {g.station(s.id)}
                   </DropdownMenuRadioItem>
                 ))}
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-        </span>
+        ) : null}
       </div>
+      <div className="mt-2 flex items-start gap-2.5">
+        <span className="inline-flex size-11 shrink-0 items-center justify-center rounded-xs bg-sunken">
+          {item ? <DesignThumb design={item.design} catalog={catalog} size={36} /> : null}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="line-clamp-2 font-medium break-words text-fg-strong">{title}</div>
+          {item ? <div className="dim mt-0.5 text-meta text-fg-muted">{fmt.size(item.design.width, item.design.height)}</div> : null}
+          {subtitle ? <div className="truncate text-meta text-fg-muted">{subtitle}</div> : null}
+        </div>
+      </div>
+      {due.tone !== 'none' || (next && !readOnly) ? (
+        <div className="mt-2 flex items-center gap-2">
+          {due.tone === 'late' || due.tone === 'soon' ? (
+            <span className={cn('inline-flex min-w-0 items-center gap-1.5 truncate text-meta font-medium', due.tone === 'late' ? 'text-danger' : 'text-warning')}>
+              <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', due.tone === 'late' ? 'bg-danger' : 'bg-warning-solid')} />
+              <span className="truncate">{due.label}</span>
+            </span>
+          ) : due.date ? (
+            <span className="inline-flex min-w-0 items-center gap-1 truncate text-meta text-fg-muted tabular" title={t('board.due', { date: due.date })}>
+              <CalendarDays aria-hidden strokeWidth={1.75} className="size-3.5 shrink-0" />
+              {due.date}
+            </span>
+          ) : null}
+          {next && !readOnly ? (
+            <button
+              type="button"
+              onClick={() => onMove(next)}
+              className="-mr-1 ml-auto inline-flex h-6 shrink-0 items-center gap-1 rounded-xs px-1.5 text-table font-medium text-fg transition-colors duration-100 hover:bg-hover touch:h-10"
+              aria-label={t('board.next', { ref: card.ref, order, station: g.station(next) })}
+            >
+              {g.station(next)}
+              <ArrowRight aria-hidden strokeWidth={1.75} className="size-3.5" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   )
 }

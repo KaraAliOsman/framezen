@@ -3,13 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import type { Me } from '@framezen/shared'
+import type { Me } from '@dekopen/shared'
 import { useAssistantStore } from '../../lib/stores'
 import { qk } from '../../lib/queryClient'
 import { TooltipProvider } from '../../ui'
 import { undoRegistry } from './conversation'
-import { MarcoRoot } from './MarcoRoot'
-import { useMarcoStore } from './store'
+import { AssistantRoot } from './AssistantRoot'
+import { useAssistantPanel as useMarcoStore } from './store'
 
 const SECRET = 'SECRETO-ORG-A margen 42 por ciento'
 
@@ -30,7 +30,7 @@ function renderAs(me: Me | null) {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={['/inicio']}>
         <TooltipProvider>
-          <MarcoRoot />
+          <AssistantRoot />
         </TooltipProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -38,7 +38,7 @@ function renderAs(me: Me | null) {
   return { client, view }
 }
 
-const stored = () => sessionStorage.getItem('fz-marco') ?? ''
+const stored = () => sessionStorage.getItem('fz-assistant') ?? ''
 
 /** La conversación que dejó la empresa A en la pestaña. */
 function leaveConversationOfA() {
@@ -46,7 +46,7 @@ function leaveConversationOfA() {
   useMarcoStore.getState().bindSession('uA:oA')
   useMarcoStore.setState({
     entries: [{ id: 'e1', role: 'user', text: SECRET, at: Date.now() }],
-    history: [{ role: 'user', content: SECRET }],
+    conversationId: 'conv-de-A',
     draft: 'SECRETO borrador',
   })
   undoRegistry.set('r-a', () => true)
@@ -66,7 +66,7 @@ afterEach(() => {
   sessionStorage.clear()
 })
 
-describe('Marco · la conversación es de una sesión', () => {
+describe('Asistente · la conversación es de una sesión', () => {
   it('otra persona de otra empresa en la misma pestaña no ve ni reenvía la conversación anterior', () => {
     leaveConversationOfA()
     expect(stored()).toContain(SECRET)
@@ -77,8 +77,8 @@ describe('Marco · la conversación es de una sesión', () => {
     const state = useMarcoStore.getState()
     expect(state.owner).toBe('uB:oB')
     expect(state.entries).toEqual([])
-    // Es lo que viajaría a /api/assistant/chat en el próximo mensaje.
-    expect(state.history).toEqual([])
+    // El próximo mensaje no continuaría la conversación de la otra empresa.
+    expect(state.conversationId).toBeNull()
     expect(state.draft).toBe('')
     expect(stored()).not.toContain('SECRETO')
     // El deshacer en memoria apuntaba a la cotización de la otra empresa.
@@ -99,16 +99,16 @@ describe('Marco · la conversación es de una sesión', () => {
     const { client, view } = renderAs(session('uA', 'oA', 'Empresa A'))
     act(() => {
       useMarcoStore.getState().addEntry({ id: 'e1', role: 'user', text: SECRET, at: Date.now() })
-      useMarcoStore.getState().pushHistory({ role: 'user', content: SECRET })
+      useMarcoStore.getState().setConversation('conv-1')
     })
     expect(stored()).toContain(SECRET)
 
-    // useLogout: limpia la sesión y el shell (con Marco) se desmonta al ir a /entrar.
+    // useLogout: limpia la sesión y el shell (con el asistente) se desmonta al ir a /entrar.
     act(() => client.setQueryData(qk.me, null))
     view.unmount()
 
     expect(stored()).not.toContain('SECRETO')
-    expect(useMarcoStore.getState()).toMatchObject({ owner: null, entries: [], history: [], draft: '' })
+    expect(useMarcoStore.getState()).toMatchObject({ owner: null, entries: [], conversationId: null, draft: '' })
     expect(useAssistantStore.getState().open).toBe(false)
 
     // Una respuesta tardía de la sesión anterior ya no queda guardada en la pestaña.
@@ -116,10 +116,10 @@ describe('Marco · la conversación es de una sesión', () => {
     expect(stored()).not.toContain('RESPUESTA-TARDIA')
   })
 
-  it('una conversación guardada sin dueño (versión anterior) se descarta al abrir la pestaña', async () => {
-    sessionStorage.setItem('fz-marco', JSON.stringify({ state: { entries: [{ id: 'e1', role: 'user', text: SECRET, at: 1 }], history: [{ role: 'user', content: SECRET }] }, version: 1 }))
+  it('una conversación guardada por una versión anterior se descarta al abrir la pestaña', async () => {
+    sessionStorage.setItem('fz-assistant', JSON.stringify({ state: { owner: 'uA:oA', entries: [{ id: 'e1', role: 'user', text: SECRET, at: 1 }] }, version: 2 }))
     await useMarcoStore.persist.rehydrate()
     expect(useMarcoStore.getState().entries).toEqual([])
-    expect(useMarcoStore.getState().history).toEqual([])
+    expect(useMarcoStore.getState().owner).toBeNull()
   })
 })

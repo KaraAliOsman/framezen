@@ -1,10 +1,16 @@
 {
-  "name": "@framezen/shared",
-  "version": "4.0.0",
+  "name": "@dekopen/shared",
+  "version": "5.0.0",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "exports": { ".": "./src/index.ts" },
-  "dependencies": { "@framezen/engine": "4.0.0" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@dekopen/engine": "5.0.0",
+    "zod": "^4.6.7"
+  }
 }

@@ -1,4 +1,6 @@
 import clsx from 'clsx'
+import { useT } from '../../lib/i18n'
+import es from './i18n/es'
 
 /** Dibujo de ventana en trazo fino (marco, travesaño a un tercio y reflejo). */
 function WindowGlyph({ className }: { className?: string }) {
@@ -14,29 +16,28 @@ function WindowGlyph({ className }: { className?: string }) {
 
 /** Mensaje cuando el navegador no puede dibujar en 3D. Nunca bloquea: el resto sigue igual. */
 export function Viewer3DUnavailable({ className }: { className?: string }) {
+  const t = useT(es)
   return (
     <div role="status" className={clsx('flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-center', className)}>
-      <WindowGlyph className="h-10 w-10 text-paper-350" />
-      <p className="text-[14px] font-medium leading-5 text-paper-900">No pudimos mostrar la vista 3D</p>
-      <p className="max-w-[36ch] text-[13px] leading-[18px] text-paper-600">
-        Este navegador no puede dibujar en 3D. El dibujo y la cotización se ven igual; para girar la ventana, prueba con Chrome, Edge o Safari
-        actualizados.
-      </p>
+      <WindowGlyph className="h-10 w-10 text-fg-faint" />
+      <p className="text-base font-medium text-fg-strong">{t('unavailable.title')}</p>
+      <p className="max-w-[36ch] text-table text-fg-muted">{t('unavailable.body')}</p>
     </div>
   )
 }
 
 /** Lugar reservado mientras carga el visor (bloque quieto, sin brillo). */
 export function Viewer3DPlaceholder({ className, height = 420 }: { className?: string; height?: number | string }) {
+  const t = useT(es)
   return (
     <div
-      className={clsx('relative isolate flex items-center justify-center overflow-hidden', className)}
-      style={{ height: typeof height === 'number' ? `${height}px` : height, backgroundColor: '#FAF8F5' }}
+      className={clsx('relative isolate flex items-center justify-center overflow-hidden bg-canvas', className)}
+      style={{ height: typeof height === 'number' ? `${height}px` : height }}
       aria-busy="true"
     >
-      <div className="flex flex-col items-center gap-2 text-paper-600">
-        <WindowGlyph className="h-9 w-9 text-paper-200" />
-        <span className="text-[12px] leading-4">Preparando la vista 3D…</span>
+      <div className="flex flex-col items-center gap-2 text-fg-muted">
+        <WindowGlyph className="h-9 w-9 text-fg-faint" />
+        <span className="text-meta">{t('loading')}</span>
       </div>
     </div>
   )

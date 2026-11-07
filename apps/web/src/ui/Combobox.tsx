@@ -3,6 +3,8 @@ import { Command } from 'cmdk'
 import { Check, ChevronsUpDown, Plus, Search } from 'lucide-react'
 import { cn } from '../lib/cn'
 import { normalizeSearch } from '../lib/format'
+import { useT } from '../lib/i18n'
+import es from './i18n/es'
 import { fieldClass, fieldWidth } from './Input'
 import { Popover, PopoverContent, PopoverTrigger } from './Popover'
 
@@ -40,9 +42,13 @@ export interface ComboboxProps {
 
 /** Separa la etiqueta visible del id dentro del `value` de cmdk (el id no se busca). */
 export const ID_SEPARATOR = String.fromCharCode(0x2063)
+const CREATE_ID = '__create__'
 
 /** Filtro de cmdk tolerante a tildes: «perez» encuentra «Pérez». */
 export function accentFilter(value: string, search: string, keywords?: string[]): number {
+  // «Crear…» siempre visible pero al final: Enter elige primero lo que ya existe («Aromos» →
+  // «Constructora Los Aromos») en vez de duplicar el cliente.
+  if (value.endsWith(`${ID_SEPARATOR}${CREATE_ID}`)) return 0.01
   const label = value.split(ID_SEPARATOR)[0]
   const haystack = normalizeSearch([label, ...(keywords ?? [])].join(' '))
   const terms = normalizeSearch(search).split(/\s+/).filter(Boolean)
@@ -57,24 +63,23 @@ export function Combobox({
   onChange,
   options,
   onCreate,
-  createLabel = (q) => (
-    <>
-      Crear <span className="font-medium">«{q}»</span>
-    </>
-  ),
-  placeholder = 'Elige o escribe…',
-  searchPlaceholder = 'Buscar…',
-  emptyText = 'Sin coincidencias.',
+  createLabel,
+  placeholder,
+  searchPlaceholder,
+  emptyText,
   clearable = false,
-  clearLabel = 'Quitar selección',
+  clearLabel,
   disabled,
   id,
   className,
   ...aria
 }: ComboboxProps) {
+  const t = useT(es)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [creating, setCreating] = useState(false)
+  const createText = (q: string): ReactNode =>
+    createLabel ? createLabel(q) : t.rich('combobox.create', { b: <span className="font-medium" />, query: q })
   const selected = options.find((o) => o.value === value)
   const trimmed = query.trim()
   const exact = useMemo(
@@ -111,31 +116,32 @@ export function Combobox({
             fieldClass,
             fieldWidth(className),
             'inline-flex h-9 items-center justify-between gap-2 px-3 text-left touch:h-11',
-            !selected && 'text-paper-600',
+            'data-[state=open]:border-focus data-[state=open]:shadow-[0_0_0_3px_var(--dk-focus-ring)]',
+            !selected && 'text-fg-faint',
             className,
           )}
         >
           <span className="flex min-w-0 items-center gap-2">
             {selected?.leading}
-            <span className="truncate">{selected ? selected.label : placeholder}</span>
+            <span className="truncate">{selected ? selected.label : (placeholder ?? t('combobox.placeholder'))}</span>
           </span>
-          <ChevronsUpDown aria-hidden strokeWidth={1.75} className="size-4 shrink-0 text-paper-600" />
+          <ChevronsUpDown aria-hidden strokeWidth={1.75} className="size-4 shrink-0 text-fg-muted" />
         </button>
       </PopoverTrigger>
       <PopoverContent flush className="w-[max(var(--radix-popover-trigger-width),280px)]">
         <Command filter={accentFilter} loop>
-          <div className="flex items-center gap-2 border-b border-paper-200 px-3">
-            <Search aria-hidden strokeWidth={1.75} className="size-4 shrink-0 text-paper-600" />
+          <div className="flex items-center gap-2 border-b border-divider px-3">
+            <Search aria-hidden strokeWidth={1.75} className="size-4 shrink-0 text-fg-muted" />
             <Command.Input
               value={query}
               onValueChange={setQuery}
-              placeholder={searchPlaceholder}
-              className="h-10 w-full bg-transparent text-base outline-none placeholder:text-paper-600/70 focus-visible:outline-none"
+              placeholder={searchPlaceholder ?? t('combobox.search')}
+              className="h-10 w-full bg-transparent text-base outline-none placeholder:text-fg-faint focus-visible:outline-none"
             />
           </div>
           <Command.List className="scrollbar-quiet max-h-72 overflow-y-auto p-1">
-            <Command.Empty className="px-2 py-3 text-[13px] text-paper-600">
-              {onCreate && trimmed ? null : emptyText}
+            <Command.Empty className="px-2 py-3 text-table text-fg-muted">
+              {onCreate && trimmed ? null : (emptyText ?? t('combobox.empty'))}
             </Command.Empty>
             {clearable && selected ? (
               <Command.Item
@@ -144,9 +150,9 @@ export function Combobox({
                   onChange(undefined)
                   close()
                 }}
-                className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-paper-600 data-[selected=true]:bg-paper-100"
+                className="flex cursor-default items-center gap-2 min-h-8 rounded-xs px-2 py-1.5 text-fg-muted data-[selected=true]:bg-hover"
               >
-                {clearLabel}
+                {clearLabel ?? t('combobox.clear')}
               </Command.Item>
             ) : null}
             {options.map((option) => (
@@ -158,28 +164,28 @@ export function Combobox({
                   onChange(option.value)
                   close()
                 }}
-                className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 data-[selected=true]:bg-paper-100"
+                className="flex cursor-default items-center gap-2 min-h-8 rounded-xs px-2 py-1.5 data-[selected=true]:bg-hover touch:min-h-10"
               >
                 {option.leading}
                 <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                {option.hint ? <span className="shrink-0 text-meta text-paper-600">{option.hint}</span> : null}
+                {option.hint ? <span className="shrink-0 text-meta text-fg-muted">{option.hint}</span> : null}
                 <Check
                   aria-hidden
                   strokeWidth={2}
-                  className={cn('size-4 shrink-0 text-ink-600', option.value === value ? 'opacity-100' : 'opacity-0')}
+                  className={cn('size-4 shrink-0 text-accent', option.value === value ? 'opacity-100' : 'opacity-0')}
                 />
               </Command.Item>
             ))}
             {onCreate && trimmed && !exact ? (
               <Command.Item
-                value={`${trimmed}${ID_SEPARATOR}__create__`}
+                value={`${trimmed}${ID_SEPARATOR}${CREATE_ID}`}
                 forceMount
                 onSelect={() => void create()}
                 disabled={creating}
-                className="flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-ink-600 data-[selected=true]:bg-ink-50"
+                className="flex cursor-default items-center gap-2 min-h-8 rounded-xs px-2 py-1.5 font-medium text-fg-strong data-[selected=true]:bg-hover"
               >
                 <Plus aria-hidden strokeWidth={2} className="size-4 shrink-0" />
-                <span className="truncate">{createLabel(trimmed)}</span>
+                <span className="truncate">{createText(trimmed)}</span>
               </Command.Item>
             ) : null}
           </Command.List>

@@ -27,7 +27,7 @@ export interface RadioCardsProps<V extends string = string> {
 
 const cols = { 1: 'grid-cols-1', 2: 'sm:grid-cols-2', 3: 'sm:grid-cols-3', 4: 'sm:grid-cols-2 lg:grid-cols-4' }
 
-/** Opciones excluyentes con más contexto que un radio simple (plantillas, modos de precio). */
+/** Opciones excluyentes con más contexto que un radio simple (plantillas, modos de precio, tipologías). */
 export function RadioCards<V extends string = string>({
   value,
   onValueChange,
@@ -51,33 +51,29 @@ export function RadioCards<V extends string = string>({
             value={option.value}
             disabled={option.disabled}
             className={cn(
-              'group relative flex flex-col gap-2 rounded-md border border-paper-200 bg-paper-0 p-3 text-left',
-              'transition-[border-color,background-color,box-shadow] duration-120 ease-out hover:border-paper-350',
-              'data-[state=checked]:border-ink-600 data-[state=checked]:bg-ink-50/40 data-[state=checked]:shadow-[inset_0_0_0_1px_var(--ink-600)]',
-              'disabled:opacity-50',
+              'group relative flex flex-col gap-2.5 rounded-md border border-divider bg-surface p-3 text-left',
+              'transition-[border-color,background-color,box-shadow] duration-100 ease-out hover:border-divider-strong hover:bg-sunken',
+              'data-[state=checked]:border-accent data-[state=checked]:shadow-[inset_0_0_0_1px_var(--dk-accent)]',
+              'disabled:cursor-not-allowed disabled:opacity-50',
             )}
           >
-            {option.media ? <div className="overflow-hidden rounded-sm">{option.media}</div> : null}
+            {option.media ? <div className="overflow-hidden rounded-[6px] bg-sunken">{option.media}</div> : null}
             <div className="flex items-start gap-2.5">
               {Icon ? (
-                <span className="mt-px inline-flex size-8 shrink-0 items-center justify-center rounded-sm bg-paper-100 text-paper-900 group-data-[state=checked]:bg-ink-100 group-data-[state=checked]:text-ink-700">
-                  <Icon aria-hidden strokeWidth={1.75} className="size-[18px]" />
-                </span>
+                <Icon aria-hidden strokeWidth={1.75} className="mt-0.5 size-[18px] shrink-0 text-fg-muted group-data-[state=checked]:text-fg-strong" />
               ) : null}
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="font-medium text-paper-900">{option.title}</span>
+                  <span className="font-medium text-fg-strong">{option.title}</span>
                   {option.badge}
                 </div>
-                {option.description ? (
-                  <p className="mt-0.5 text-[13px] leading-[18px] text-paper-600">{option.description}</p>
-                ) : null}
+                {option.description ? <p className="mt-0.5 text-table text-fg-muted">{option.description}</p> : null}
               </div>
               <span
                 aria-hidden
-                className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full border border-paper-350 bg-paper-0 group-data-[state=checked]:border-ink-600"
+                className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full border border-control bg-surface transition-colors duration-100 group-data-[state=checked]:border-accent group-data-[state=checked]:bg-accent"
               >
-                <span className="size-2 scale-0 rounded-full bg-ink-600 transition-transform duration-120 ease-out group-data-[state=checked]:scale-100" />
+                <span className="size-1.5 scale-0 rounded-full bg-fg-on-accent transition-transform duration-140 ease-out group-data-[state=checked]:scale-100" />
               </span>
             </div>
           </RadioGroup.Item>

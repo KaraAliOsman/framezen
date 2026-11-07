@@ -1,69 +1,87 @@
 /**
- * Ficha del cliente (SPEC §4): datos editables en el lugar con guardado automático (RUT con aviso
- * suave de módulo 11), sus cotizaciones, lo aceptado y «Nueva cotización para este cliente».
+ * Ficha del cliente: nombre grande, sus datos en línea editables en el sitio (guardado automático,
+ * RUT con aviso suave de módulo 11), cifras sueltas y el historial en pestañas (cotizaciones,
+ * actividad, notas). Sin tarjetas.
  */
-import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { Ellipsis, FilePlus2, Mail, MessageCircle, Phone, Trash2, type LucideIcon } from 'lucide-react'
-import type { Client } from '@framezen/shared'
+import { Copy, Ellipsis, FilePlus2, Mail, MessageCircle, Phone, Trash2 } from 'lucide-react'
+import { DEFAULT_LOCALE, type Client } from '@dekopen/shared'
 import { api, ApiRequestError, humanError } from '../../lib/api'
-import { formatCLP, formatLongDate, formatNumber, formatRelative } from '../../lib/format'
+import { useOptionalSession } from '../../lib/auth'
 import { useCatalog, useClient, useCreateQuote, useQuotes } from '../../lib/hooks'
+import { loadLocale, translate, useFormat, useT } from '../../lib/i18n'
+import { usePlan } from '../../lib/plan'
 import { usePageTitle } from '../../lib/usePageTitle'
 import {
-  Avatar,
   Button,
   buttonClass,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
   EmptyState,
   IconButton,
+  KPI,
+  Notice,
   Page,
+  PageHeader,
   SaveIndicator,
   Skeleton,
-  StatusPill,
+  SkeletonRows,
+  StatStrip,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
   toast,
   toastUndo,
 } from '../../ui'
 import { callName, whatsappUrl } from '../home/homeModel'
-import { QuoteThumb } from '../home/QuoteThumb'
 import { useAutosave } from '../settings/lib/useAutosave'
 import { useUpdateClient } from './api'
+import { ClientActivity } from './components/ClientActivity'
+import { ClientNotes } from './components/ClientNotes'
+import { ClientQuotes } from './components/ClientQuotes'
+import es from './i18n/es'
 import { InlineField } from './InlineField'
-import { formatRut, rutHint } from './rut'
+import { inPlayTotal } from './model/timeline'
+import { useTaxIdRules } from './taxId'
 
 type Editable = Pick<Client, 'name' | 'phone' | 'email' | 'rut' | 'address' | 'city' | 'notes'>
-const FIELDS: (keyof Editable)[] = ['name', 'phone', 'email', 'rut', 'address', 'city', 'notes']
+type EditableKey = keyof Editable
+const FIELDS: EditableKey[] = ['name', 'phone', 'email', 'rut', 'address', 'city', 'notes']
+const TABS = ['cotizaciones', 'actividad', 'notas'] as const
+type Tab = (typeof TABS)[number]
+/** Cuánto se ve el ✓ de «guardado» junto al dato. */
+const SAVED_FLASH_MS = 1600
 
-function toDraft(client: Client): Record<keyof Editable, string> {
-  return Object.fromEntries(FIELDS.map((k) => [k, client[k] ?? ''])) as Record<keyof Editable, string>
+function toDraft(client: Client): Record<EditableKey, string> {
+  return Object.fromEntries(FIELDS.map((k) => [k, client[k] ?? ''])) as Record<EditableKey, string>
 }
 
 export default function ClientDetailPage() {
+  const t = useT(es)
   const { id = '' } = useParams()
   const client = useClient(id)
-  usePageTitle(client.data?.name ?? 'Cliente')
+  usePageTitle(client.data?.name ?? t('detail.titleFallback'))
 
   if (client.isPending) return <DetailSkeleton />
   if (client.isError || !client.data) {
     const missing = client.error instanceof ApiRequestError && client.error.status === 404
     return (
-      <Page width="wide">
-        <div className="rounded-lg border border-paper-200 bg-paper-0">
-          <EmptyState
-            sketch="door"
-            title={missing ? 'No encontramos este cliente' : 'No pudimos abrir la ficha'}
-            description={missing ? 'Puede que lo hayan eliminado. Si fue sin querer, búscalo en la papelera desde la lista.' : humanError(client.error)}
-            action={
-              <Link to="/clientes" className={buttonClass('secondary')}>
-                Volver a clientes
-              </Link>
-            }
-          />
-        </div>
+      <Page width="default">
+        <EmptyState
+          title={missing ? t('detail.missing.title') : t('detail.missing.errorTitle')}
+          description={missing ? t('detail.missing.description') : humanError(client.error)}
+          action={
+            <Link to="/clientes" className={buttonClass('secondary')}>
+              {t('detail.missing.back')}
+            </Link>
+          }
+        />
       </Page>
     )
   }
@@ -71,8 +89,13 @@ export default function ClientDetailPage() {
 }
 
 function ClientDetail({ client }: { client: Client }) {
+  const t = useT(es)
+  const fmt = useFormat()
+  const tax = useTaxIdRules()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const session = useOptionalSession()
+  const readOnly = usePlan()?.readOnly ?? false
   const update = useUpdateClient(client.id)
   const autosave = useAutosave<Partial<Editable>>((patch) => update.mutateAsync(patch), { delay: 300, key: `client:${client.id}` })
   // Si saliste con un cambio sin guardar (sin conexión), lo sigues viendo al volver.
@@ -80,6 +103,15 @@ function ClientDetail({ client }: { client: Client }) {
   const quotes = useQuotes({ clientId: client.id })
   const catalog = useCatalog()
   const createQuote = useCreateQuote()
+  const [params, setParams] = useSearchParams()
+  const tabParam = params.get('pestana')
+  const tab: Tab = (TABS as readonly string[]).includes(tabParam ?? '') ? (tabParam as Tab) : 'cotizaciones'
+  const setTab = (next: string) => {
+    const p = new URLSearchParams(params)
+    if (next === 'cotizaciones') p.delete('pestana')
+    else p.set('pestana', next)
+    setParams(p, { replace: true })
+  }
 
   // Si la ficha cambia desde otra pestaña y no hay nada pendiente, la seguimos.
   const { dirty } = autosave
@@ -87,23 +119,44 @@ function ClientDetail({ client }: { client: Client }) {
     if (!dirty()) setDraft(toDraft(client))
   }, [client, dirty])
 
-  const commit = (key: keyof Editable) => (value: string) => {
+  // ✓ junto a cada dato recién guardado: los que se confirmaron con el último guardado.
+  const pendingKeys = useRef(new Set<EditableKey>())
+  const [savedKeys, setSavedKeys] = useState<ReadonlySet<EditableKey>>(new Set())
+  useEffect(() => {
+    if (autosave.status !== 'saved' || pendingKeys.current.size === 0) return
+    setSavedKeys(new Set(pendingKeys.current))
+    pendingKeys.current.clear()
+    const timer = setTimeout(() => setSavedKeys(new Set()), SAVED_FLASH_MS)
+    return () => clearTimeout(timer)
+  }, [autosave.status, autosave.savedAt])
+
+  const commit = (key: EditableKey) => (value: string) => {
     if (key === 'name' && !value.trim()) {
-      toast('El cliente necesita un nombre: dejamos el anterior.')
+      toast(t('detail.nameRequired'))
       return
     }
     setDraft((d) => ({ ...d, [key]: value }))
+    pendingKeys.current.add(key)
     autosave.queue({ [key]: value || null } as Partial<Editable>)
   }
 
   const list = quotes.data ?? []
   const accepted = client.totalAccepted ?? 0
-  const inPlay = useMemo(() => list.filter((q) => q.status === 'sent' || q.status === 'draft').reduce((a, q) => a + q.total, 0), [list])
+  const inPlay = useMemo(() => inPlayTotal(list), [list])
   const last = list[0]
+
+  // El saludo de WhatsApp va al cliente: en el idioma de los documentos de la empresa.
+  const docLocale = session?.org.locale ?? DEFAULT_LOCALE
+  useEffect(() => {
+    void loadLocale(docLocale)
+  }, [docLocale])
+  const hello = callName(draft.name)
+  const greeting = hello ? translate(es, 'detail.whatsappHello', { name: hello }, docLocale) : translate(es, 'detail.whatsappHelloAnon', undefined, docLocale)
+  const wa = whatsappUrl(draft.phone, greeting)
 
   const newQuote = () =>
     createQuote.mutate(
-      { clientId: client.id, title: `Obra ${draft.name}` },
+      { clientId: client.id, title: t('detail.quoteTitle', { name: draft.name }) },
       {
         onSuccess: (quote) => navigate(`/cotizaciones/${quote.id}`),
         onError: (error) => toast.error(humanError(error)),
@@ -116,7 +169,7 @@ function ClientDetail({ client }: { client: Client }) {
       .then(() => {
         void queryClient.invalidateQueries({ queryKey: ['clients'] })
         navigate('/clientes')
-        toastUndo(`Eliminaste a ${client.name}`, () => {
+        toastUndo(t('detail.removed', { name: client.name }), () => {
           api.clients
             .restore(client.id)
             .then(() => {
@@ -129,199 +182,129 @@ function ClientDetail({ client }: { client: Client }) {
       .catch((error) => toast.error(humanError(error)))
   }
 
-  const hello = callName(draft.name)
-  const wa = whatsappUrl(draft.phone, hello ? `Hola ${hello}, ` : 'Hola, ')
+  const copyContact = () => {
+    const lines = [draft.name, draft.phone, draft.email, draft.rut ? `${tax.label} ${draft.rut}` : '', [draft.address, draft.city].filter(Boolean).join(', ')].filter(Boolean)
+    navigator.clipboard
+      ?.writeText(lines.join('\n'))
+      .then(() => toast.success(t('detail.copied', { name: draft.name })))
+      .catch(() => undefined)
+  }
+
+  const since = useMemo(() => {
+    if (Number.isNaN(Date.parse(client.createdAt))) return null
+    return t('detail.since', { date: fmt.date(client.createdAt, 'monthYear') })
+  }, [client.createdAt, fmt, t])
+
+  const phoneHref = `tel:${draft.phone.replace(/[^\d+]/g, '')}`
+
+  const field = (key: EditableKey) => ({ value: draft[key], onCommit: commit(key), saved: savedKeys.has(key), readOnly })
 
   return (
-    <Page width="wide">
-      <nav aria-label="Ruta" className="mb-4 flex items-center gap-1 text-[13px] text-paper-600">
-        <Link to="/clientes" className="rounded-xs hover:text-paper-900">
-          Clientes
-        </Link>
-        <span aria-hidden className="text-paper-350">/</span>
-        <span aria-current="page" className="truncate text-paper-900">
-          {draft.name}
-        </span>
-      </nav>
-
-      {/* El nombre manda: completo, en hasta tres líneas; las acciones van debajo hasta xl. */}
-      <header className="flex flex-col gap-4 pb-6 xl:flex-row xl:items-start xl:justify-between xl:gap-x-8">
-        <div className="flex min-w-0 flex-1 items-center gap-4">
-          <Avatar name={draft.name} size="lg" className="size-12 shrink-0 text-[16px]" />
-          <div className="min-w-0 flex-1">
-            <EditableTitle value={draft.name} onCommit={commit('name')} />
-            <p className="mt-0.5 text-[13px] text-paper-600">
-              {[draft.city, `Cliente desde ${formatLongDate(client.createdAt).replace(/^\d+ de /, '')}`].filter(Boolean).join(' · ')}
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 xl:shrink-0 xl:pt-1">
-          <SaveIndicator status={autosave.status} savedAt={autosave.savedAt} className="max-sm:hidden" />
-          {draft.phone ? (
-            <a href={wa} target="_blank" rel="noopener noreferrer" aria-label="Escribir por WhatsApp" className={buttonClass('secondary', 'md', 'max-sm:px-3')}>
-              <MessageCircle aria-hidden strokeWidth={1.75} />
-              <span className="max-sm:hidden">WhatsApp</span>
-            </a>
-          ) : null}
-          <Button variant="primary" icon={FilePlus2} onClick={newQuote} loading={createQuote.isPending} className="max-sm:flex-1">
-            <span className="sm:hidden">Nueva cotización</span>
-            <span className="max-sm:hidden">Nueva cotización para este cliente</span>
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <IconButton icon={Ellipsis} label="Más acciones" variant="secondary" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem icon={Trash2} danger onSelect={remove}>
-                Eliminar cliente
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </header>
+    <Page width="default">
+      <PageHeader
+        breadcrumbs={[{ label: t('detail.crumb'), to: '/clientes' }, { label: draft.name }]}
+        title={<EditableTitle value={draft.name} onCommit={commit('name')} readOnly={readOnly} />}
+        meta={since ? <span>{since}</span> : undefined}
+        actions={
+          <>
+            <SaveIndicator status={autosave.status} savedAt={autosave.savedAt} className="max-sm:hidden" />
+            <Button variant="primary" icon={FilePlus2} onClick={newQuote} loading={createQuote.isPending} disabled={readOnly} className="max-sm:flex-1">
+              <span className="sm:hidden">{t('detail.newQuoteShort')}</span>
+              <span className="max-sm:hidden">{t('detail.newQuote')}</span>
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <IconButton icon={Ellipsis} label={t('detail.more')} variant="secondary" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem icon={Copy} onSelect={copyContact}>
+                  {t('detail.copy')}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem icon={Trash2} danger disabled={readOnly} onSelect={remove}>
+                  {t('detail.remove')}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        }
+      />
 
       {autosave.error ? (
-        <p role="alert" className="mb-5 rounded-md border border-bad-600/20 bg-bad-50 px-3 py-2 text-[13px] text-bad-800">
+        <Notice tone="danger" className="mb-5">
           {autosave.error}
-        </p>
+        </Notice>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
-        <section aria-labelledby="client-data" className="self-start rounded-lg border border-paper-200 bg-paper-0 max-lg:order-2">
-          <header className="border-b border-paper-200 px-4 py-3">
-            <h2 id="client-data" className="font-semibold text-paper-900">
-              Datos
-            </h2>
-            <p className="text-meta text-paper-600">Haz clic en un dato para cambiarlo. Se guarda solo.</p>
-          </header>
-          <div className="divide-y divide-paper-200 px-4">
-            <InlineField
-              label="Teléfono"
-              type="tel"
-              value={draft.phone}
-              placeholder="Agregar teléfono"
-              onCommit={commit('phone')}
-              action={
-                <>
-                  <ActionLink href={`tel:${draft.phone.replace(/[^\d+]/g, '')}`} label="Llamar" icon={Phone} />
-                  <ActionLink href={wa} label="Escribir por WhatsApp" icon={MessageCircle} external />
-                </>
-              }
-            />
-            <InlineField
-              label="Correo"
-              type="email"
-              value={draft.email}
-              placeholder="Agregar correo"
-              onCommit={commit('email')}
-              action={
-                <ActionLink href={`mailto:${draft.email}`} label="Escribir un correo" icon={Mail} />
-              }
-            />
-            <InlineField label="RUT" value={draft.rut} placeholder="Agregar RUT" normalize={(v) => formatRut(v)} hint={rutHint(draft.rut)} onCommit={commit('rut')} />
-            <InlineField label="Dirección" value={draft.address} placeholder="Agregar dirección" onCommit={commit('address')} />
-            <InlineField label="Ciudad" value={draft.city} placeholder="Agregar ciudad" onCommit={commit('city')} />
-            <InlineField label="Notas" value={draft.notes} placeholder="Cómo llegó, qué le interesa, horario para llamar…" multiline onCommit={commit('notes')} />
-          </div>
-        </section>
-
-        <div className="flex min-w-0 flex-col gap-5 max-lg:order-1">
-          {/* Tres columnas solo si caben las cifras completas (contenedor ≥ 560 px); si no, filas. */}
-          <div className="@container">
-            <dl className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-paper-200 bg-paper-200 @[560px]:grid-cols-3">
-              <Stat label="Aceptado" value={formatCLP(accepted)} hint="ventas cerradas, con IVA" />
-              <Stat label="En curso" value={formatCLP(inPlay)} hint="borradores y enviadas, con IVA" />
-              <Stat label="Cotizaciones" value={formatNumber(client.quotesCount ?? list.length)} hint={last ? `última ${formatRelative(last.updatedAt)}` : 'ninguna todavía'} />
-            </dl>
-          </div>
-
-          <section aria-labelledby="client-quotes" className="overflow-hidden rounded-lg border border-paper-200 bg-paper-0">
-            <header className="flex items-center justify-between gap-3 border-b border-paper-200 px-5 py-3.5">
-              <h2 id="client-quotes" className="font-semibold text-paper-900">
-                Cotizaciones
-              </h2>
-              {list.length ? (
-                <button type="button" onClick={newQuote} className="text-[13px] font-medium text-ink-600 hover:text-ink-700">
-                  Nueva
-                </button>
-              ) : null}
-            </header>
-            {quotes.isPending ? (
-              <div className="space-y-3 p-5">
-                <Skeleton className="h-12" />
-                <Skeleton className="h-12" />
-              </div>
-            ) : list.length === 0 ? (
-              <EmptyState
-                size="compact"
-                sketch="sliding"
-                title="Aún no hay cotizaciones para este cliente"
-                description="Crea la primera y queda asociada a esta ficha."
-                action={
-                  <Button variant="secondary" icon={FilePlus2} onClick={newQuote} loading={createQuote.isPending}>
-                    Nueva cotización
-                  </Button>
-                }
-              />
-            ) : (
-              <ul className="divide-y divide-paper-200">
-                {list.map((q) => (
-                  <li key={q.id}>
-                    <Link to={`/cotizaciones/${q.id}`} className="flex items-center gap-4 px-5 py-3 transition-colors duration-120 hover:bg-paper-50 max-sm:gap-3 max-sm:px-4">
-                      <QuoteThumb item={q.firstItem} catalog={catalog.data} size={40} />
-                      <div className="min-w-0 flex-1">
-                        <p className="line-clamp-2 break-words">
-                          <span className="mr-2 text-[13px] text-paper-600 tabular">N° {q.number}</span>
-                          <span className="font-medium text-paper-900">{q.title || 'Sin título'}</span>
-                        </p>
-                        <p className="text-[13px] text-paper-600">
-                          {q.units ? `${formatNumber(q.units)} ${q.units === 1 ? 'ventana' : 'ventanas'} · ` : ''}
-                          {formatRelative(q.updatedAt)}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 flex-col items-end gap-1">
-                        <span className="font-medium whitespace-nowrap text-paper-900 tabular">{formatCLP(q.total)}</span>
-                        <StatusPill status={q.status} />
-                      </div>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+      {draft.phone || draft.email ? (
+        <div className="mb-5 flex flex-wrap gap-2">
+          {draft.phone ? (
+            <a href={phoneHref} aria-label={t('detail.call')} className={buttonClass('secondary', 'sm')}>
+              <Phone aria-hidden strokeWidth={1.75} />
+              {t('detail.call')}
+            </a>
+          ) : null}
+          {draft.phone ? (
+            <a href={wa} target="_blank" rel="noopener noreferrer" aria-label={t('detail.whatsappLabel')} className={buttonClass('secondary', 'sm')}>
+              <MessageCircle aria-hidden strokeWidth={1.75} />
+              {t('detail.whatsapp')}
+            </a>
+          ) : null}
+          {draft.email ? (
+            <a href={`mailto:${draft.email}`} aria-label={t('detail.email')} className={buttonClass('secondary', 'sm')}>
+              <Mail aria-hidden strokeWidth={1.75} />
+              {t('fields.email')}
+            </a>
+          ) : null}
         </div>
-      </div>
+      ) : null}
+
+      <section aria-label={t('detail.sections.contact')} className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
+        <InlineField label={t('fields.phone')} type="tel" placeholder={t('add.phone')} {...field('phone')} />
+        <InlineField label={t('fields.email')} type="email" placeholder={t('add.email')} {...field('email')} />
+        <InlineField label={tax.label} placeholder={tax.addLabel} normalize={tax.normalize} hint={tax.hint(draft.rut)} mono={tax.chile} {...field('rut')} />
+        <InlineField label={t('fields.address')} placeholder={t('add.address')} {...field('address')} />
+        <InlineField label={t('fields.city')} placeholder={t('add.city')} {...field('city')} />
+      </section>
+
+      <StatStrip className="mt-8">
+        <KPI variant="plain" label={t('detail.stats.accepted')} value={fmt.money(accepted)} hint={t('detail.stats.acceptedHint')} />
+        <KPI variant="plain" label={t('detail.stats.inPlay')} value={fmt.money(inPlay)} hint={t('detail.stats.inPlayHint')} />
+        <KPI
+          variant="plain"
+          label={t('detail.stats.quotes')}
+          value={fmt.number(client.quotesCount ?? list.length)}
+          hint={last ? t('detail.stats.lastQuote', { when: fmt.relative(last.updatedAt) }) : t('detail.stats.none')}
+        />
+      </StatStrip>
+
+      <Tabs value={tab} onValueChange={setTab} className="mt-8">
+        <TabsList aria-label={t('detail.tabs.label')}>
+          <TabsTrigger value="cotizaciones" badge={list.length > 0 ? fmt.number(list.length) : undefined}>
+            {t('detail.tabs.quotes')}
+          </TabsTrigger>
+          <TabsTrigger value="actividad">{t('detail.tabs.activity')}</TabsTrigger>
+          <TabsTrigger value="notas" badge={draft.notes.trim() ? '•' : undefined}>
+            {t('detail.tabs.notes')}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="cotizaciones" className="pt-3">
+          <ClientQuotes clientName={draft.name} quotes={list} loading={quotes.isPending} catalog={catalog.data} onNewQuote={newQuote} creating={createQuote.isPending} readOnly={readOnly} />
+        </TabsContent>
+        <TabsContent value="actividad" className="pt-4">
+          <ClientActivity client={client} clientName={draft.name} quotes={list} loading={quotes.isPending} />
+        </TabsContent>
+        <TabsContent value="notas" className="pt-4">
+          <ClientNotes value={draft.notes} onChange={commit('notes')} status={autosave.status} savedAt={autosave.savedAt} readOnly={readOnly} />
+        </TabsContent>
+      </Tabs>
     </Page>
   )
 }
 
-function ActionLink({ href, label, icon: Icon, external }: { href: string; label: string; icon: LucideIcon; external?: boolean }) {
-  return (
-    <a
-      href={href}
-      aria-label={label}
-      title={label}
-      target={external ? '_blank' : undefined}
-      rel={external ? 'noopener noreferrer' : undefined}
-      className="inline-flex size-8 items-center justify-center rounded-sm text-paper-600 transition-colors duration-120 hover:bg-paper-100 hover:text-paper-900 touch:size-10"
-    >
-      <Icon aria-hidden strokeWidth={1.75} className="size-4" />
-    </a>
-  )
-}
-
-function Stat({ label, value, hint }: { label: string; value: string; hint: string }) {
-  return (
-    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 bg-paper-0 px-4 py-3 @[560px]:block @[560px]:px-5 @[560px]:py-3.5">
-      <dt className="text-[13px] text-paper-600">{label}</dt>
-      <dd className="row-span-2 text-h3 font-semibold whitespace-nowrap text-paper-900 tabular @[560px]:mt-0.5 @[560px]:text-h2">{value}</dd>
-      <dd className="text-meta text-pretty text-paper-600">{hint}</dd>
-    </div>
-  )
-}
-
-/** Nombre del cliente editable en el lugar (título de la página). */
-function EditableTitle({ value, onCommit }: { value: string; onCommit: (value: string) => void }) {
+/** Nombre del cliente editable en el lugar: toma el tamaño del título de la página. */
+function EditableTitle({ value, onCommit, readOnly }: { value: string; onCommit: (value: string) => void; readOnly?: boolean }) {
+  const t = useT(es)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
   useEffect(() => {
@@ -335,7 +318,7 @@ function EditableTitle({ value, onCommit }: { value: string; onCommit: (value: s
     return (
       <input
         autoFocus
-        aria-label="Nombre del cliente"
+        aria-label={t('detail.nameLabel')}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onFocus={(e) => e.currentTarget.select()}
@@ -344,38 +327,41 @@ function EditableTitle({ value, onCommit }: { value: string; onCommit: (value: s
           if (e.key === 'Enter') finish(true)
           if (e.key === 'Escape') finish(false)
         }}
-        className="-mx-1.5 w-full max-w-[720px] rounded-sm border border-ink-500 bg-paper-0 px-1.5 text-h2 font-semibold tracking-[-0.01em] text-paper-900 outline-none sm:text-h1"
+        className="ring-focus -mx-2 w-full rounded-sm bg-surface px-2 outline-none"
       />
     )
   }
   return (
-    <h1>
-      <button
-        type="button"
-        onClick={() => setEditing(true)}
-        title="Cambiar nombre"
-        className="-mx-1.5 max-w-full rounded-sm px-1.5 text-left text-h2 font-semibold tracking-[-0.01em] text-balance text-paper-900 transition-colors duration-120 hover:bg-paper-100 sm:text-h1"
-      >
-        <span className="line-clamp-3 break-words">{value}</span>
-      </button>
-    </h1>
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      disabled={readOnly}
+      title={t('detail.rename')}
+      className="-mx-2 max-w-full rounded-sm px-2 text-left text-balance transition-colors duration-100 hover:bg-hover disabled:pointer-events-none"
+    >
+      <span className="line-clamp-3 break-words">{value}</span>
+    </button>
   )
 }
 
 function DetailSkeleton() {
   return (
-    <Page width="wide">
-      <Skeleton className="mb-6 h-4 w-40" />
-      <div className="mb-8 flex items-center gap-4">
-        <Skeleton className="size-12 rounded-full" />
-        <div className="space-y-2">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-3.5 w-40" />
-        </div>
+    <Page width="default" aria-busy="true">
+      <div className="flex flex-col gap-3 pb-6">
+        <Skeleton className="h-4 w-40" />
+        <Skeleton className="h-9 w-72" />
       </div>
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
-        <Skeleton className="h-80" />
-        <Skeleton className="h-80" />
+      <div className="grid gap-x-8 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 5 }, (_, i) => (
+          <Skeleton key={i} className="h-8" />
+        ))}
+      </div>
+      <div className="mt-8 flex gap-14">
+        <Skeleton className="h-16 w-40" />
+        <Skeleton className="h-16 w-40" />
+      </div>
+      <div className="mt-8">
+        <SkeletonRows rows={3} columns={3} />
       </div>
     </Page>
   )

@@ -4,7 +4,7 @@
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { desc, eq, sql } from 'drizzle-orm'
-import type { BrandSettings, Catalog, Id, Line, Pauta } from '@framezen/engine'
+import type { BrandSettings, Catalog, Id, Line, Pauta } from '@dekopen/engine'
 import type {
   CatalogBrandSummary,
   CatalogResponse,
@@ -14,11 +14,12 @@ import type {
   PautaPatch,
   PriceOverride,
   Quote,
-} from '@framezen/shared'
+} from '@dekopen/shared'
 import { rowsOf, type Db } from '../db/client'
 import { catalogBase, orgCatalog, quotes, type CustomCatalog } from '../db/schema'
 import { newId, sha256 } from '../lib/crypto'
 import type { Logger } from '../lib/logger'
+import { applyCustomColors } from './textures/custom-colors'
 
 // Tipos del contrato (antes definidos aquí): se re-exportan para las rutas y pruebas.
 export type { CatalogBrandSummary, EffectiveLine, FactoryPauta, LineOverride, PautaPatch }
@@ -357,7 +358,8 @@ export function buildEffectiveCatalog(base: Catalog, org: OrgCatalogState, optio
     glass: allGlass,
     brandSettings,
   }
-  return applyOverrides(merged, org.priceOverrides)
+  // Colores propios (líneas, precio por factor) y texturas propias: después de los precios propios.
+  return applyCustomColors(applyOverrides(merged, org.priceOverrides), custom)
 }
 
 export function summarizeBrands(base: Catalog, org: OrgCatalogState, kerf = 4): CatalogBrandSummary[] {
@@ -408,13 +410,14 @@ export function summarizeBrands(base: Catalog, org: OrgCatalogState, kerf = 4): 
   }
   return base.brands.map((brand) => {
     const lv = levels.get(brand.id)
+    // Una marca es tan completa como su línea más floja: dos líneas verificadas no verifican las otras ocho.
     const completeness: CatalogBrandSummary['completeness'] = !lv
       ? 'none'
-      : lv.has('verified')
-        ? 'verified'
+      : lv.has('partial')
+        ? 'partial'
         : lv.has('complete')
           ? 'complete'
-          : 'partial'
+          : 'verified'
     return {
       brand,
       enabled: enabled.has(brand.id),

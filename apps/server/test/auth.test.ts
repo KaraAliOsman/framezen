@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { Me, OrgSettings } from '@framezen/shared'
+import type { Me, OrgSettings } from '@dekopen/shared'
 import { signup, startServer, type TestServer } from './helpers'
 
 let server: TestServer
@@ -63,8 +63,8 @@ describe('crear cuenta, entrar y salir', () => {
     expect(settings.pricing.ivaPct).toBe(19)
     expect(settings.cut.barLength).toBe(5800)
     expect(settings.nextQuoteNumber).toBe(1)
-    expect(settings.documents.validityDays).toBe(15)
-    expect(settings.documents.intro.length).toBeGreaterThan(40)
+    expect(settings.documents.validityDays).toBe(0)
+    expect(settings.documents.intro).toBe('')
     const brands = (await agent.get('/api/catalog/brands')).body
     const enabled = brands.items.filter((b: { enabled: boolean }) => b.enabled)
     expect(enabled.length).toBe(Math.min(3, brands.total))
@@ -170,7 +170,7 @@ describe('crear cuenta, entrar y salir', () => {
     expect(res.body.pricing.marginPct).toBe(35)
     expect(res.body.pricing.ivaPct).toBe(19)
     expect(res.body.documents.paymentTerms).toBe('Contado')
-    expect(res.body.documents.validityDays).toBe(15)
+    expect(res.body.documents.validityDays).toBe(0)
     expect(res.body.nextQuoteNumber).toBe(412)
     const bad = await agent.patch('/api/settings', { pricing: { marginPct: 120 } })
     expect(bad.status).toBe(400)

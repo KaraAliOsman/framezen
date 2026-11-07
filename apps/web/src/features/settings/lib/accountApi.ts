@@ -1,12 +1,11 @@
 /**
  * Datos de la cuenta que no están en lib/hooks: empresa, equipo, facturación y marcas.
  * Las formas de respuesta replican las del servidor (apps/server/src/routes/team.ts,
- * services/catalog.ts) mientras no estén en @framezen/shared.
+ * services/catalog.ts) mientras no estén en @dekopen/shared.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { Brand, BrandSettings } from '@framezen/engine'
+import type { Brand, BrandSettings } from '@dekopen/engine'
 import {
-  PLANS,
   type ActivityEvent,
   type BillingActionResult,
   type BillingStateDetail,
@@ -16,10 +15,12 @@ import {
   type Paged,
   type PlanCode,
   type Role,
-} from '@framezen/shared'
+} from '@dekopen/shared'
 import { api, request } from '../../../lib/api'
 import { formatDate } from '../../../lib/format'
+import { getGlossary, translate, useLocale } from '../../../lib/i18n'
 import { qk } from '../../../lib/queryClient'
+import es from '../i18n/es'
 
 // ── Empresa ──────────────────────────────────────────────────────────────────
 
@@ -196,7 +197,14 @@ export interface BillingCheckoutRow {
   meta?: { scheduled?: boolean; at?: string } & Record<string, unknown>
 }
 
-const PERIOD_LABEL: Record<Period, string> = { monthly: 'mensual', yearly: 'anual' }
+/** «mensual» / «anual» en el idioma de la interfaz. */
+function periodWord(period: Period | string): string {
+  return period === 'monthly' || period === 'yearly' ? translate(es, `history.period.${period}`) : ''
+}
+
+function planWord(code: PlanCode | string): string {
+  return getGlossary().plan(code)
+}
 
 /**
  * Baja programada: el servidor la guarda como un cambio aplicado sin cobro ni saldo usado. Si
@@ -208,24 +216,26 @@ function isScheduledRow(row: BillingCheckoutRow): boolean {
   return row.amount === 0 && !row.credit && (row.status === 'applied' || row.status === 'paid')
 }
 
-/** Convierte una fila del servidor en una línea legible del historial. */
+const tidy = (text: string) => text.replace(/\s+/g, ' ').trim()
+
+/** Convierte una fila del servidor en una línea legible del historial (idioma de la interfaz). */
 export function historyEntry(row: BillingCheckoutRow): BillingHistoryEntry {
-  const plan = PLANS[row.plan]?.name ?? row.plan
-  const period = PERIOD_LABEL[row.period] ?? ''
+  const params = { plan: planWord(row.plan), period: periodWord(row.period) }
   if (isScheduledRow(row)) {
     return {
       id: row.id,
       at: row.createdAt,
-      text: `Cambio al plan ${plan} ${period}`.replace(/\s+/g, ' ').trim(),
+      text: tidy(translate(es, 'history.change', params)),
       status: 'scheduled',
       scheduled: { plan: row.plan, period: row.period, ...(typeof row.meta?.at === 'string' ? { at: row.meta.at } : {}) },
     }
   }
-  const what = row.kind === 'change' ? `Cambio al plan ${plan}` : row.kind === 'resume' ? `Reactivaste el plan ${plan}` : `Plan ${plan}`
+  const what = tidy(translate(es, row.kind === 'change' ? 'history.change' : row.kind === 'resume' ? 'history.resume' : 'history.subscribe', params))
   const status: BillingHistoryEntry['status'] =
     row.status === 'applied' || row.status === 'paid' ? 'paid' : row.status === 'failed' || row.status === 'rejected' ? 'failed' : row.status === 'canceled' ? 'info' : 'pending'
-  const suffix = status === 'failed' ? ' · no se pudo cobrar' : status === 'pending' ? ' · en proceso' : row.status === 'canceled' ? ' · anulado' : ''
-  return { id: row.id, at: row.appliedAt ?? row.createdAt, text: `${what} ${period}${suffix}`.replace(/\s+/g, ' ').trim(), amount: row.amount, status }
+  const state = status === 'failed' ? 'failed' : status === 'pending' ? 'pending' : row.status === 'canceled' ? 'canceled' : null
+  const text = state ? translate(es, 'history.withState', { text: what, state: translate(es, `history.state.${state}`) }) : what
+  return { id: row.id, at: row.appliedAt ?? row.createdAt, text, amount: row.amount, status }
 }
 
 /**
@@ -240,23 +250,25 @@ export function withPendingChange(
   let matched = false
   return entries.map((entry) => {
     if (!entry.scheduled) return entry
+    const params = { plan: planWord(entry.scheduled.plan), period: periodWord(entry.scheduled.period) }
     const isCurrent = !matched && pending && entry.scheduled.plan === pending.plan && entry.scheduled.period === pending.period
     if (isCurrent) {
       matched = true
-      return { ...entry, text: `${entry.text} · programado para el ${formatDate(pending.at)}`, status: 'scheduled' }
+      return { ...entry, text: tidy(translate(es, 'history.scheduledFor', { ...params, date: formatDate(pending.at) })), status: 'scheduled' }
     }
-    const plan = PLANS[entry.scheduled.plan]?.name ?? entry.scheduled.plan
-    return { ...entry, text: `Programaste el cambio al plan ${plan} ${PERIOD_LABEL[entry.scheduled.period] ?? ''}`.trim(), status: 'info' }
+    return { ...entry, text: tidy(translate(es, 'history.scheduledPast', params)), status: 'info' }
   })
 }
 
 /**
  * Historial simple: los pagos y cambios de plan del servidor (GET /api/billing/history) más el
- * inicio de la prueba. Si el historial no está disponible, lo armamos con la actividad.
+ * inicio de la prueba. Si el historial no está disponible, lo armamos con la actividad. Las líneas
+ * se escriben en el idioma de la interfaz (la clave lo incluye: al cambiar de idioma se rehacen).
  */
 export function useBillingHistory(orgCreatedAt: string | undefined) {
+  const { locale } = useLocale()
   return useQuery({
-    queryKey: ['billing', 'history'],
+    queryKey: ['billing', 'history', locale],
     queryFn: async (): Promise<BillingHistoryEntry[]> => {
       let entries: BillingHistoryEntry[]
       try {
@@ -268,7 +280,7 @@ export function useBillingHistory(orgCreatedAt: string | undefined) {
           .filter((e) => e.kind.startsWith('billing.'))
           .map((e) => ({ id: e.id, at: e.at, text: e.text, status: 'info' as const }))
       }
-      if (orgCreatedAt) entries.push({ id: 'trial-start', at: orgCreatedAt, text: 'Empezaste la prueba con todo lo de Pro', status: 'info' })
+      if (orgCreatedAt) entries.push({ id: 'trial-start', at: orgCreatedAt, text: translate(es, 'history.trialStart'), status: 'info' })
       return entries.sort((a, b) => b.at.localeCompare(a.at))
     },
     staleTime: 60_000,

@@ -13,14 +13,14 @@ await build({
   jsx: 'automatic',
   plugins: [
     {
-      // Los paquetes del monorepo (@framezen/*, TypeScript fuente) van dentro del bundle;
+      // Los paquetes del monorepo (@dekopen/*, TypeScript fuente) van dentro del bundle;
       // las dependencias reales de npm y los módulos de Node quedan externos.
       name: 'bundle-workspace-only',
       setup(b) {
         b.onResolve({ filter: /.*/ }, (args) => {
           if (args.kind === 'entry-point') return undefined
           if (args.path.startsWith('.') || isAbsolute(args.path)) return undefined
-          if (args.path.startsWith('@framezen/')) return undefined
+          if (args.path.startsWith('@dekopen/')) return undefined
           return { path: args.path, external: true }
         })
       },

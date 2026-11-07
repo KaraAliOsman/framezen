@@ -11,19 +11,21 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { ArrowLeft, RotateCcw } from 'lucide-react'
-import type { Catalog } from '@framezen/engine'
-import type { OrgSettings, Quote } from '@framezen/shared'
+import type { Catalog } from '@dekopen/engine'
+import type { OrgSettings, Quote } from '@dekopen/shared'
 import { api, ApiRequestError, humanError } from '../../lib/api'
 import { useCatalog, useSettings } from '../../lib/hooks'
+import { translate, useT } from '../../lib/i18n'
 import { qk } from '../../lib/queryClient'
 import { usePageTitle } from '../../lib/usePageTitle'
 import { Button, buttonClass, EmptyState, Skeleton } from '../../ui'
 import { toast } from './editor/toasts'
+import es from './i18n/es'
 import { createEditorUi, EditorProvider } from './editor/context'
 import { Editor } from './editor/Editor'
 import { localDrafts, pruneLocalDrafts } from './model/localDrafts'
 import { acquireEditor, releaseEditor, retainEditor } from './model/registry'
-import { createQuoteEditor, type EditorNotice, type EditorSettings } from './model/store'
+import { createQuoteEditor, type EditorNotice, type EditorSettings, type EditorView } from './model/store'
 
 type LoadedQuote = Quote & { deletedAt?: string }
 
@@ -38,6 +40,7 @@ function isRefreshing(query: Pick<UseQueryResult, 'isStale' | 'isFetching'>): bo
 let pruned = false
 
 export default function QuoteEditorPage() {
+  const t = useT(es)
   const { id = '' } = useParams()
   const queryClient = useQueryClient()
   const quote = useQuery<LoadedQuote>({
@@ -67,8 +70,8 @@ export default function QuoteEditorPage() {
     const notFound = failed instanceof ApiRequestError && failed.status === 404
     return (
       <PageMessage
-        title={notFound ? 'No encontramos esa cotización' : 'No pudimos abrir la cotización'}
-        description={notFound ? 'Puede que la hayan eliminado o que el enlace esté incompleto.' : humanError(failed)}
+        title={notFound ? t('page.notFound.title') : t('page.openError')}
+        description={notFound ? t('page.notFound.description') : humanError(failed)}
         retry={
           notFound
             ? undefined
@@ -86,8 +89,8 @@ export default function QuoteEditorPage() {
   if (quote.data.deletedAt) {
     return (
       <PageMessage
-        title={`La N° ${quote.data.number} está en la papelera`}
-        description="Restáurala para seguir editándola. Nada se perdió."
+        title={t('page.trashed.title', { number: quote.data.number })}
+        description={t('page.trashed.description')}
         action={
           <Button
             variant="primary"
@@ -102,7 +105,7 @@ export default function QuoteEditorPage() {
               )
             }
           >
-            Restaurar
+            {t('page.trashed.restore')}
           </Button>
         }
       />
@@ -113,23 +116,42 @@ export default function QuoteEditorPage() {
 }
 
 function notify(notice: EditorNotice) {
-  if (notice.kind === 'merged') toast('Sumamos los cambios hechos en otra pestaña.')
-  else if (notice.kind === 'restored') toast('Recuperamos cambios que no alcanzaron a guardarse en este equipo. Los estamos guardando.', { duration: 8000 })
+  if (notice.kind === 'merged') toast(translate(es, 'page.notice.merged'))
+  else if (notice.kind === 'restored') toast(translate(es, 'page.notice.restored'), { duration: 8000 })
   else if (notice.kind === 'conflict')
-    toast('Esta cotización cambió en otra pestaña. Te mostramos la versión más reciente.', {
+    toast(translate(es, 'page.notice.conflict'), {
       duration: 12_000,
-      action: { label: 'Recuperar mis cambios', onClick: notice.recover },
+      action: { label: translate(es, 'page.notice.recover'), onClick: notice.recover },
     })
   else toast.error(notice.message)
 }
 
 function editorSettings(settings: OrgSettings): EditorSettings {
-  return { pricing: settings.pricing, cut: settings.cut, documents: settings.documents, defaults: settings.defaults }
+  return {
+    pricing: settings.pricing,
+    cut: settings.cut,
+    documents: settings.documents,
+    defaults: settings.defaults,
+    locale: settings.locale,
+    currency: settings.currency,
+    taxLabel: settings.taxLabel,
+    sending: settings.sending,
+    payments: settings.payments,
+  }
+}
+
+/** Parámetro de la URL con la vista del editor: recargar o compartir el enlace vuelve a ella. */
+const VIEW_PARAM = 'vista'
+const VIEW_DOCUMENT = 'documento'
+
+function viewFromParams(params: URLSearchParams): EditorView {
+  return params.get(VIEW_PARAM) === VIEW_DOCUMENT ? 'document' : 'design'
 }
 
 function EditorRoot({ quote, catalog, settings }: { quote: LoadedQuote; catalog: Catalog; settings: OrgSettings }) {
   const queryClient = useQueryClient()
   const [params, setParams] = useSearchParams()
+  const urlView = viewFromParams(params)
   const [editor] = useState(() =>
     acquireEditor(quote.id, () => {
       if (!pruned) {
@@ -137,7 +159,7 @@ function EditorRoot({ quote, catalog, settings }: { quote: LoadedQuote; catalog:
         pruneLocalDrafts()
       }
       return createQuoteEditor(
-        { quote, catalog, settings: editorSettings(settings) },
+        { quote, catalog, settings: editorSettings(settings), initialView: urlView },
         {
           transport: { save: (id, body) => api.quotes.save(id, body), get: (id) => api.quotes.get(id) },
           notify,
@@ -174,6 +196,28 @@ function EditorRoot({ quote, catalog, settings }: { quote: LoadedQuote; catalog:
     editor.adoptServerQuote(quote)
   }, [editor, quote])
 
+  // Vista Diseño / Documento ↔ `?vista=documento` (la URL manda al abrir o al navegar atrás).
+  useEffect(() => {
+    editor.setView(urlView)
+  }, [editor, urlView])
+  useEffect(
+    () =>
+      editor.store.subscribe((state, previous) => {
+        if (state.view === previous.view) return
+        setParams(
+          (current) => {
+            if (viewFromParams(current) === state.view) return current
+            const next = new URLSearchParams(current)
+            if (state.view === 'document') next.set(VIEW_PARAM, VIEW_DOCUMENT)
+            else next.delete(VIEW_PARAM)
+            return next
+          },
+          { replace: true },
+        )
+      }),
+    [editor, setParams],
+  )
+
   useEffect(() => {
     if (params.has('enviar')) {
       params.delete('enviar')
@@ -189,30 +233,30 @@ function EditorRoot({ quote, catalog, settings }: { quote: LoadedQuote; catalog:
 }
 
 function PageMessage({ title, description, retry, action }: { title: string; description: string; retry?: () => void; action?: ReactNode }) {
-  usePageTitle('Cotización')
+  const t = useT(es)
+  usePageTitle(t('page.title'))
   return (
     <div className="mx-auto max-w-xl px-4 py-16">
       <EmptyState
-        sketch="casement"
         title={title}
         description={description}
         action={
           action ??
           (retry ? (
             <Button variant="primary" onClick={retry}>
-              Reintentar
+              {t('page.retry')}
             </Button>
           ) : (
             <Link to="/cotizaciones" className={buttonClass('primary')}>
               <ArrowLeft aria-hidden className="size-4" strokeWidth={1.75} />
-              Volver a cotizaciones
+              {t('page.back')}
             </Link>
           ))
         }
         secondary={
           action || retry ? (
             <Link to="/cotizaciones" className={buttonClass('ghost')}>
-              Volver a cotizaciones
+              {t('page.back')}
             </Link>
           ) : undefined
         }
@@ -221,41 +265,43 @@ function PageMessage({ title, description, retry, action }: { title: string; des
   )
 }
 
-/** Bloques quietos con la forma del editor (sin shimmer). */
+/** Bloques quietos con la forma del editor (sin shimmer): cabecera, ventanas, lienzo, inspector y resumen. */
 function EditorSkeleton() {
-  usePageTitle('Cotización')
+  const t = useT(es)
+  usePageTitle(t('page.title'))
   return (
-    <div className="flex h-full min-h-0 flex-col" aria-busy="true" aria-label="Abriendo la cotización">
-      <div className="flex min-h-0 flex-1">
-        <div className="hidden w-[280px] shrink-0 flex-col gap-3 border-r border-paper-200 bg-paper-0 p-4 lg:flex">
-          <Skeleton className="h-4 w-24" />
-          <Skeleton className="h-7 w-48" />
-          <Skeleton className="h-9 w-full" />
-          <div className="mt-4 space-y-2">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="flex items-center gap-3">
-                <Skeleton className="size-12" />
-                <div className="flex-1 space-y-1.5">
-                  <Skeleton className="h-3.5 w-3/4" />
-                  <Skeleton className="h-3 w-1/2" />
-                </div>
+    <div className="flex h-full min-h-0 flex-col bg-canvas" aria-busy="true" aria-label={t('page.opening')}>
+      <div className="flex h-14 shrink-0 items-center gap-3 px-5 max-lg:hidden">
+        <Skeleton className="h-6 w-64" />
+        <Skeleton className="h-5 w-32" />
+        <div className="ml-auto flex items-center gap-3">
+          <Skeleton className="h-5 w-24" />
+          <Skeleton className="h-9 w-40" />
+        </div>
+      </div>
+      <div className="flex min-h-0 flex-1 bg-sunken">
+        <div className="hidden w-[264px] shrink-0 flex-col gap-1 p-2 lg:flex xl:w-[272px]">
+          <Skeleton className="mx-3 my-3 h-4 w-24" />
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="flex items-center gap-3 px-2.5 py-2">
+              <Skeleton className="size-12" />
+              <div className="flex-1 space-y-1.5">
+                <Skeleton className="h-3.5 w-3/4" />
+                <Skeleton className="h-3 w-1/2" />
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="h-12 border-b border-paper-200" />
-          <div className="grid flex-1 place-items-center">
-            <Skeleton className="h-64 w-56" />
-          </div>
+        <div className="grid min-w-0 flex-1 place-items-center">
+          <Skeleton className="h-64 w-56" />
         </div>
-        <div className="hidden w-[320px] shrink-0 space-y-3 border-l border-paper-200 bg-paper-0 p-4 xl:block">
-          <Skeleton className="h-7 w-full" />
+        <div className="hidden w-[328px] shrink-0 space-y-3 bg-surface p-4 xl:block">
+          <Skeleton className="h-8 w-full" />
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-24 w-full" />
         </div>
       </div>
-      <div className="h-16 border-t border-paper-200 bg-paper-0 max-lg:hidden" />
+      <div className="h-16 shrink-0 max-lg:hidden" />
     </div>
   )
 }

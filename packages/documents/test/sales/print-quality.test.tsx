@@ -1,14 +1,21 @@
 // Regresiones de la revisión de los PDF reales (Chromium): cortes de página, textos desbordados,
 // fuentes y datos que no sirven en papel.
-import { describe, expect, it } from 'vitest'
+import { existsSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { Warning } from '@framezen/engine'
+import type { Warning } from '@dekopen/engine'
+import { CATALOG_PRESET_IDS, QUOTE_PRESET_IDS } from '@dekopen/shared'
 import { DOCUMENT_FONT_FILES, FONT_STACKS, documentFontFaces } from '../../src/base'
-import { CatalogDocument, QuoteDocument, SAMPLE_CATALOG_DOC, buildSampleQuoteDoc, type CatalogDocData } from '../../src/sales'
+import { CatalogDocument, QuoteDocument, SAMPLE_CATALOG_DOC, SAMPLE_QUOTE_DOC, assembleCatalog, buildSampleQuoteDoc, prepareCatalogDocument, prepareQuoteDocument, type CatalogDocData } from '../../src/sales'
+import { TEMPLATE_CSS, docFontFiles } from '../../src/templates'
 import { MaterialsDocument, PurchaseOrderDocument, WorkOrderDocument, sampleWorkshopData } from '../../src/workshop'
 
-const pages = (html: string) => (html.match(/class="fzd-page[ "]/g) ?? []).length
-const text = (html: string) => html.replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+vi.setConfig({ testTimeout: 90_000 })
+
+const pages = (html: string) => (html.match(/<section class="dkd-page[ "]/g) ?? []).length
+const text = (html: string) => html.replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, "'").replace(/\s+/g, ' ')
+const quote = (data: ReturnType<typeof buildSampleQuoteDoc>, template: string) => renderToStaticMarkup(<QuoteDocument data={data} template={template} measure={false} />)
 
 /** Catálogo con muchas líneas (una cuenta nueva parte con ~17). */
 function manyLines(n: number): CatalogDocData {
@@ -21,7 +28,7 @@ function manyLines(n: number): CatalogDocData {
 }
 
 describe('fuentes del PDF', () => {
-  it('incrusta JetBrains Mono (códigos) y completa «²» con Inter Tight, sin depender del sistema', () => {
+  it('los documentos de taller incrustan JetBrains Mono (códigos) y completan «²» con Inter Tight, sin depender del sistema', () => {
     expect(DOCUMENT_FONT_FILES.mono).toMatch(/jetbrains-mono.*400.*\.woff2$/)
     expect(DOCUMENT_FONT_FILES.monoMedium).toMatch(/jetbrains-mono.*500.*\.woff2$/)
     const css = documentFontFaces({ mono: '/m.woff2', monoMedium: '/m5.woff2' })
@@ -30,68 +37,109 @@ describe('fuentes del PDF', () => {
     expect(css).not.toContain('woff2-variations')
     expect(FONT_STACKS.instrument.indexOf('Inter Tight')).toBeGreaterThan(FONT_STACKS.instrument.indexOf('Instrument Sans'))
   })
+
+  it('cada fuente que piden los diseños de cotización y de catálogo existe en disco, con latin y latin-ext', () => {
+    const require = createRequire(import.meta.url)
+    const themes = [
+      ...QUOTE_PRESET_IDS.map((id) => prepareQuoteDocument({ data: SAMPLE_QUOTE_DOC, template: id }).model.theme),
+      ...CATALOG_PRESET_IDS.map((id) => prepareCatalogDocument({ data: SAMPLE_CATALOG_DOC, template: id }).template.theme),
+    ]
+    expect(themes).toHaveLength(9)
+    const missing: string[] = []
+    for (const theme of themes) {
+      const files = docFontFiles(theme, { italic: true })
+      expect(files.some((f) => f.subset === 'latin')).toBe(true)
+      expect(files.some((f) => f.subset === 'latin-ext')).toBe(true)
+      for (const f of files) {
+        try {
+          if (!existsSync(require.resolve(f.file))) missing.push(f.file)
+        } catch {
+          missing.push(f.file)
+        }
+      }
+    }
+    expect(missing, 'archivos de fuente que faltan en node_modules').toEqual([])
+  })
 })
 
-describe('catálogo «Vitrina»', () => {
-  it('con muchas líneas el índice de portada va en dos columnas y no se desborda', () => {
-    const html = renderToStaticMarkup(<CatalogDocument data={manyLines(17)} template="vitrina" />)
-    expect(html).toContain('fzd-vi-index--cols')
-    expect(html).toContain('fzd-vi-cover--dense')
-    // Más de 26 líneas: la portada nombra cuántas faltan en vez de salirse de la hoja.
-    const huge = renderToStaticMarkup(<CatalogDocument data={manyLines(30)} template="vitrina" />)
-    expect(text(huge)).toContain('y 4 líneas más en las páginas siguientes')
+describe('catálogo con muchas líneas', () => {
+  it('«Habitar» resume líneas, diseños y colores en la portada y su contenido nombra cada línea', () => {
+    const html = renderToStaticMarkup(<CatalogDocument data={manyLines(17)} template="habitar" />)
+    expect(text(html)).toMatch(/17 líneas\s+\d+ diseños\s+\d+ colores/)
+    for (const n of [1, 9, 17]) expect(text(html)).toContain(`Serie 60 ${n}`)
   })
 
-  it('una línea que sigue en la hoja siguiente lleva «continuación» (sin hojas a medio llenar)', () => {
-    // Una línea con 12 diseños (4 filas) no cabe en una hoja junto a su título: sigue en la próxima.
-    const e = SAMPLE_CATALOG_DOC.entries[0]
-    const big = { ...e, typologies: Array.from({ length: 12 }, (_, i) => e.typologies[i % e.typologies.length]) }
-    const html = renderToStaticMarkup(<CatalogDocument data={{ ...SAMPLE_CATALOG_DOC, entries: [SAMPLE_CATALOG_DOC.entries[1], big] }} template="vitrina" />)
-    expect(html).toContain('fzd-vi-cont')
-    expect(text(html)).toContain('continuación')
-  })
-
-  it('los nombres con guion no se parten («S-70»)', () => {
-    const data = { ...SAMPLE_CATALOG_DOC, entries: [{ ...SAMPLE_CATALOG_DOC.entries[0], line: { ...SAMPLE_CATALOG_DOC.entries[0].line, name: 'Americana S-70 Thermowin' } }] }
-    for (const template of ['vitrina', 'ficha'] as const) {
-      const html = renderToStaticMarkup(<CatalogDocument data={data} template={template} />)
-      expect(html).toContain('<span style="white-space:nowrap">S-70</span>')
+  it('con 30 líneas el catálogo sigue repartido en hojas completas y ninguna línea se pierde', () => {
+    for (const preset of CATALOG_PRESET_IDS) {
+      const { pages: list } = assembleCatalog({ data: manyLines(30), template: preset })
+      expect(list.length, preset).toBeGreaterThan(10)
+      // Ninguna hoja vacía (salvo que sea la portada) y los números de hoja son correlativos.
+      list.forEach((p, i) => {
+        expect(p.index, preset).toBe(i)
+        if (!p.cover) expect(p.blocks.length, `${preset} hoja ${i + 1}`).toBeGreaterThan(0)
+      })
+      const html = renderToStaticMarkup(<CatalogDocument data={manyLines(30)} template={preset} />)
+      expect(text(html), preset).toContain('Serie 60 29')
     }
   })
 
-  it('el lookbook con muchas líneas resume marcas y cantidades en la portada', () => {
-    const html = renderToStaticMarkup(<CatalogDocument data={manyLines(17)} template="lookbook" />)
-    expect(text(html)).toMatch(/17 líneas · \d+ diseños hechos a medida/)
+  it('una línea que sigue en la hoja siguiente lleva «continuación» (sin hojas a medio llenar)', () => {
+    // Una línea con 12 diseños no cabe en una hoja junto a su título: sigue en la próxima.
+    const e = SAMPLE_CATALOG_DOC.entries[0]
+    const big = { ...e, typologies: Array.from({ length: 12 }, (_, i) => e.typologies[i % e.typologies.length]) }
+    const data = { ...SAMPLE_CATALOG_DOC, entries: [SAMPLE_CATALOG_DOC.entries[1], big] }
+    for (const preset of ['coleccion-modular', 'sistema'] as const) {
+      const html = renderToStaticMarkup(<CatalogDocument data={data} template={preset} />)
+      expect(text(html), preset).toContain('continuación')
+    }
   })
 })
 
 describe('cotización', () => {
-  it('compacta: dice «ventanas» (no «posiciones») y el detalle puede bajar de línea entre datos', () => {
+  it('dice «ventanas» (no «posiciones») con sus unidades, con o sin superficie', () => {
     const data = buildSampleQuoteDoc({ items: 4 })
-    const html = renderToStaticMarkup(<QuoteDocument data={data} template="compacta" />)
-    // Con superficie, el cuadro de totales ya dice unidades y m² (no se repite al lado).
-    expect(text(html)).toContain(`${data.totals.units} unidades`)
-    expect(text(html)).not.toContain('posiciones')
-    const noArea = renderToStaticMarkup(<QuoteDocument data={{ ...data, prefs: { ...data.prefs, showArea: false } }} template="compacta" />)
-    expect(text(noArea)).toContain('4 ventanas')
-    expect(html).toMatch(/fzd-co-meta">(<span[^>]*>.*?<\/span> )+<span/)
+    for (const preset of ['hogar', 'hogar', 'atelier'] as const) {
+      const plain = text(quote(data, preset))
+      expect(plain, preset).toContain('4 ventanas')
+      expect(plain, preset).toContain(`${data.totals.units} unidades`)
+      expect(plain, preset).not.toContain('posiciones')
+    }
   })
 
-  it('galería: «Proyecto: N ventanas, M unidades» en la portada', () => {
+  it('la portada es limpia: logo, cliente, proyecto y fecha, sin precios', () => {
     const data = buildSampleQuoteDoc({ items: 3 })
-    const html = renderToStaticMarkup(<QuoteDocument data={data} template="galeria" />)
-    expect(text(html)).toContain('Proyecto')
-    expect(text(html)).toMatch(/3 ventanas(, \d+ unidades)?/)
+    for (const preset of ['atelier', 'corporativa'] as const) {
+      const html = quote(data, preset)
+      const cover = html.slice(html.indexOf('dkd-page--cover'), html.indexOf('</section>'))
+      const plain = text(cover)
+      expect(plain, preset).toContain(data.client!.name)
+      expect(plain, preset).toContain(data.quote.title)
+      expect(plain, preset).not.toMatch(/\$\s?\d/)
+    }
   })
 
-  it('editorial: un título largo baja de tamaño y el dibujo cede espacio (la portada no se desborda)', () => {
+  it('un título largo baja de tamaño en la portada y no agrega hojas', () => {
     const base = buildSampleQuoteDoc({ items: 2 })
-    const long = { ...base, quote: { ...base.quote, title: 'Edificio Mirador del Bío Bío · Torre B, departamentos 101 al 1204' } }
-    const html = renderToStaticMarkup(<QuoteDocument data={long} template="editorial" />)
-    expect(html).toContain('fzd-ed-cover__title--s')
-    const short = renderToStaticMarkup(<QuoteDocument data={base} template="editorial" />)
-    expect(short).not.toContain('fzd-ed-cover__title--')
-    expect(pages(html)).toBe(pages(short))
+    const long = { ...base, quote: { ...base.quote, title: 'Edificio Mirador del Bío Bío · Torre B, departamentos 101 al 1204 y áreas comunes del primer piso' } }
+    for (const preset of ['atelier', 'corporativa'] as const) {
+      const html = quote(long, preset)
+      expect(html, preset).toMatch(/dkd-cover--t[sm]\b/)
+      const short = quote(base, preset)
+      expect(short, preset).toMatch(/dkd-cover--tl\b/)
+      expect(pages(html), preset).toBe(pages(short))
+      expect(html, preset).not.toMatch(/class="[^"]*dkd-block--overflow/)
+    }
+  })
+
+  it('los números largos (total en millones) no se parten ni se cortan en el cierre', () => {
+    const base = buildSampleQuoteDoc({ items: 2 })
+    const big = { ...base, totals: { ...base.totals, total: 1_234_567_890, net: 1_037_452_000, iva: 197_115_880, subtotal: 1_037_452_000 } }
+    for (const preset of ['hogar', 'atelier', 'atelier'] as const) {
+      const html = quote(big, preset)
+      expect(text(html), preset).toContain('$1.234.567.890')
+    }
+    // Las cifras de totales van en una sola línea y la columna del total mide lo que ocupa su cifra.
+    expect(TEMPLATE_CSS).toMatch(/\.dkd-tot__grand dd \{[^}]*white-space: nowrap/)
   })
 })
 

@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { and, asc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import type { AppDeps, AppEnv } from '../context'
@@ -9,6 +9,7 @@ import { hexColor, optionalText } from '../lib/schemas'
 import { formatRut } from '../lib/rut'
 import { requireManager, requireWritable } from '../middleware/auth'
 import { buildMe, toOrg } from '../services/session'
+import { localeSchema, resolveLocale } from '../lib/i18n/locale'
 import { loadAuth } from './auth'
 
 export const MAX_LOGO_BYTES = 1024 * 1024
@@ -68,11 +69,25 @@ export function orgRoutes(deps: AppDeps) {
   return app
 }
 
+/** PATCH /api/me: nombre y/o idioma de la interfaz (null = volver al automático). */
+const mePatchSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Tu nombre no puede quedar vacío.').max(120).optional(),
+    locale: localeSchema.nullable().optional(),
+  })
+  .refine((v) => v.name !== undefined || v.locale !== undefined, { message: 'Indica tu nombre o tu idioma.' })
+
 /** /api/me: sesión actual y cambio de empresa para quien pertenece a varias. */
 export function meRoutes(deps: AppDeps) {
   const app = new Hono<AppEnv>()
 
-  app.get('/', async (c) => c.json(await buildMe(deps, c.get('auth'))))
+  /** Me + idioma efectivo de la interfaz (user.locale ?? Accept-Language ?? org.locale ?? 'es'). */
+  async function meWithLocale(c: Context<AppEnv>, auth: Parameters<typeof buildMe>[1]) {
+    const me = await buildMe(deps, auth)
+    return { ...me, locale: resolveLocale({ user: auth.user.locale, header: c.req.header('accept-language'), org: auth.org.locale }) }
+  }
+
+  app.get('/', async (c) => c.json(await meWithLocale(c, c.get('auth'))))
 
   app.get('/orgs', async (c) => {
     const { user, org } = c.get('auth')
@@ -96,15 +111,18 @@ export function meRoutes(deps: AppDeps) {
     if (!member) throw forbidden('No perteneces a esa empresa.')
     await deps.db.update(sessions).set({ orgId }).where(eq(sessions.id, sessionId))
     await deps.db.update(users).set({ lastOrgId: orgId }).where(eq(users.id, user.id))
-    return c.json(await buildMe(deps, await loadAuth(deps, user.id, orgId)))
+    return c.json(await meWithLocale(c, await loadAuth(deps, user.id, orgId)))
   })
 
   app.patch('/', async (c) => {
-    const body = await readBody(c, z.object({ name: z.string().trim().min(1, 'Tu nombre no puede quedar vacío.').max(120) }))
+    const body = await readBody(c, mePatchSchema)
     const { user, org, role } = c.get('auth')
-    if (!body.name) throw badRequest('Escribe tu nombre.', 'name')
-    const [row] = await deps.db.update(users).set({ name: body.name, updatedAt: deps.now() }).where(eq(users.id, user.id)).returning()
-    return c.json(await buildMe(deps, { user: row!, org, role }))
+    if (body.name !== undefined && !body.name) throw badRequest('Escribe tu nombre.', 'name')
+    const patch: Partial<typeof users.$inferInsert> = { updatedAt: deps.now() }
+    if (body.name !== undefined) patch.name = body.name
+    if (body.locale !== undefined) patch.locale = body.locale
+    const [row] = await deps.db.update(users).set(patch).where(eq(users.id, user.id)).returning()
+    return c.json(await meWithLocale(c, { user: row!, org, role }))
   })
 
   return app

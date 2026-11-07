@@ -1,38 +1,49 @@
 /**
- * Editor de cotización (SPEC §5): tres zonas en escritorio, lista + hojas en el teléfono.
+ * Editor de cotización. En escritorio: cabecera en la barra superior (obra, cliente, estado y la acción
+ * principal de la etapa), lo que pidió el cliente si hay algo pendiente, y debajo un solo campo
+ * hundido con las ventanas y la ventana realista o el documento, el inspector blanco a la derecha y
+ * el resumen comercial a todo el ancho, con el total abajo a la derecha. En el teléfono: lista + hojas.
  */
 import { useEffect } from 'react'
 import { useLocation } from 'react-router'
-import type { TypologyId, WindowDesign } from '@framezen/engine'
+import type { WindowDesign } from '@dekopen/engine'
+import { TopbarPortal } from '../../../app/shell/TopbarSlot'
+import { useT } from '../../../lib/i18n'
 import { usePageTitle } from '../../../lib/usePageTitle'
 import { Sheet, SheetContent } from '../../../ui'
-import { useAssistantPanelState, useAssistantPlace } from '../../assistant/dock'
-import { defaultGlassId, TypologyPicker } from '../../designer'
+import { useAssistantPanelState } from '../../assistant/dock'
+import { defaultGlassId, TypologyPicker, type PickerCreateMeta } from '../../designer'
+import es from '../i18n/es'
+import { DuplicateDialog } from '../DuplicateDialog'
 import { CenterStage } from './CenterStage'
+import { ClientRequestNotice } from './ClientRequestNotice'
+import { DocumentColumn, DocumentSettings } from './DocumentSettings'
 import { useEditor, useEditorShallow, useEditorState, useEditorUi, useMediaQuery } from './context'
+import { EditorHeader } from './EditorHeader'
 import { Inspector, ItemInspector, QuoteInspector } from './Inspector'
 import { ItemsColumn } from './ItemsColumn'
 import { MobileEditor } from './MobileEditor'
 import { PriceDriftNotice } from './PriceDriftNotice'
 import { SendDialog } from './SendDialog'
+import { TemplateGalleryDialog } from './TemplateGallery'
 import { TotalsFooter } from './TotalsFooter'
+import { useQuoteActions } from './useQuoteActions'
 import { useAssistantBridge, useEditorShortcuts, useLeaveGuard } from './useEditorWiring'
 import { InspectorBoundary } from './ZoneBoundary'
 
 export function Editor() {
+  const t = useT(es)
   const desktop = useMediaQuery('(min-width: 1024px)')
   const wide = useMediaQuery('(min-width: 1280px)')
-  // Con Marco abierto en escritorio, su panel (368 px + margen) tiene su propio espacio: nunca
-  // tapa el lienzo ni el inspector. Si no caben las tres columnas, el inspector pasa a hoja.
+  // Con el asistente abierto a la derecha, la hoja entera le cede su lugar (`.fz-sheet-gutter` del
+  // shell): cabecera, cuenta y total quedan a la vista. Si no caben las tres columnas, el inspector
+  // pasa a hoja. Bajo xl el asistente se acopla en la columna de ventanas y no pide espacio.
   const roomy = useMediaQuery('(min-width: 1720px)')
-  const marcoOpen = useAssistantPanelState() === 'open'
-  // Bajo xl Marco se acopla en la columna de ventanas (data-assistant-place="items"): no pide columna propia.
-  const marcoPlace = useAssistantPlace()
-  const marcoReserve = marcoOpen && marcoPlace !== 'items'
-  const inspectorColumn = wide && (!marcoOpen || roomy)
-  // En la vista Documento el inspector (ajustes de la ventana) sobra: su ancho es para la hoja.
+  const botOpen = useAssistantPanelState() === 'open'
+  const inspectorColumn = wide && (!botOpen || roomy)
+  // En la vista Documento el inspector de la ventana se reemplaza por los ajustes del documento.
   const docView = useEditorState((s) => s.view === 'document')
-  const title = useEditorState((s) => (s.doc.title.trim() ? s.doc.title.trim() : `Cotización N° ${s.meta.number}`))
+  const title = useEditorState((s) => (s.doc.title.trim() ? s.doc.title.trim() : t('page.titleNumber', { number: s.meta.number })))
   usePageTitle(title)
   useEditorShortcuts()
   useAssistantBridge()
@@ -40,41 +51,56 @@ export function Editor() {
 
   return (
     <>
+      <h1 className="sr-only">{title}</h1>
       {desktop ? (
-        <div className="flex h-full min-h-0 flex-col">
+        <div className="flex h-full min-h-0 flex-col bg-canvas">
+          <TopbarPortal fallback={<EditorHeader className="shrink-0 px-3" />}>
+            <EditorHeader />
+          </TopbarPortal>
+          <ClientRequestNotice />
           <PriceDriftNotice />
           <div className="flex min-h-0 flex-1">
-            <ItemsColumn className="w-[264px] shrink-0 xl:w-[280px]" />
-            <CenterStage className="min-w-0 flex-1" showInspectorToggle={!inspectorColumn} />
-            {docView ? null : inspectorColumn ? (
-              <InspectorBoundary className="w-[320px] shrink-0 border-l border-paper-200">
-                <Inspector className="w-[320px] shrink-0" />
-              </InspectorBoundary>
-            ) : (
-              <InspectorSheet />
-            )}
-            {marcoReserve ? <div aria-hidden data-assistant-dock="" className="w-[var(--fz-assistant-inset,380px)] shrink-0 border-l border-paper-200 bg-paper-50" /> : null}
+            <div className="flex min-w-0 flex-1 flex-col">
+              <div className="flex min-h-0 flex-1 bg-sunken">
+                <ItemsColumn className="w-[264px] shrink-0 xl:w-[272px]" />
+                <CenterStage className="min-w-0 flex-1" showInspectorToggle={!inspectorColumn} />
+                {inspectorColumn ? (
+                  <InspectorBoundary className="w-[328px] shrink-0">
+                    {docView ? <DocumentColumn className="flex h-full min-h-0 w-[328px] shrink-0 flex-col bg-surface" /> : <Inspector className="h-full w-[328px] shrink-0" />}
+                  </InspectorBoundary>
+                ) : (
+                  <InspectorSheet />
+                )}
+              </div>
+              <TotalsFooter />
+            </div>
           </div>
-          <TotalsFooter />
         </div>
       ) : (
         <MobileEditor />
       )}
       <PickerHost />
+      <DuplicateHost />
       <SendDialog />
+      <TemplateGalleryDialog />
     </>
   )
 }
 
 function InspectorSheet() {
+  const t = useT(es)
   const open = useEditorUi((s) => s.inspectorOpen)
+  const tab = useEditorUi((s) => s.inspectorTab)
   const setUi = useEditorUi((s) => s.set)
   const hasItem = useEditorState((s) => !!s.selectedItemId)
+  const docView = useEditorState((s) => s.view === 'document')
+  const showItem = hasItem && tab === 'item'
+  const title = docView ? t('doc.settings') : showItem ? t('inspector.sheetItem') : t('inspector.sheetQuote')
   return (
     <Sheet open={open} onOpenChange={(o) => setUi({ inspectorOpen: o })}>
-      <SheetContent title={hasItem ? 'Ventana' : 'Cotización'} side="right" width={360} modal={false} className="right-[var(--fz-assistant-inset,0px)]!">
-        <div className="-m-5">
-          <InspectorBoundary>{hasItem ? <ItemInspector /> : <QuoteInspector />}</InspectorBoundary>
+      <SheetContent title={title} side="right" width={360} modal={false} className="right-[var(--fz-assistant-inset,0px)]!">
+        <div className={docView ? undefined : '-m-5'}>
+          <InspectorBoundary>{docView ? <DocumentSettings /> : showItem ? <ItemInspector /> : <QuoteInspector />}</InspectorBoundary>
         </div>
       </SheetContent>
     </Sheet>
@@ -116,11 +142,25 @@ function PickerHost() {
       onOpenChange={(o) => setUi({ pickerOpen: o })}
       catalog={catalog}
       defaults={{ lineId: lineId || undefined, colorId: colorId || undefined, glassId: glassId || undefined, fallbackLineId: fallbackLineId || undefined }}
-      onCreate={(design: WindowDesign, meta: { typologyId: TypologyId; qty: number }) => {
+      onCreate={(design: WindowDesign, meta: PickerCreateMeta) => {
         editor.addItem({ design, qty: meta.qty })
+        editor.setView('design')
+        if (!meta.keepOpen) setUi({ pickerOpen: false })
+      }}
+      onCreateMany={(entries) => {
+        editor.addItems(entries.map(({ design, meta }) => ({ design, qty: meta.qty })))
         editor.setView('design')
         setUi({ pickerOpen: false })
       }}
     />
   )
+}
+
+/** «Duplicar para…» desde el menú de la cotización: espera el autoguardado y abre la copia. */
+function DuplicateHost() {
+  const open = useEditorUi((s) => s.duplicateOpen)
+  const setUi = useEditorUi((s) => s.set)
+  const actions = useQuoteActions()
+  const { id, number, title, clientId } = useEditorShallow((s) => ({ id: s.meta.id, number: s.meta.number, title: s.doc.title, clientId: s.doc.clientId }))
+  return <DuplicateDialog source={open ? { id, number, title, clientId } : null} onClose={() => setUi({ duplicateOpen: false })} run={actions.duplicateQuote} />
 }

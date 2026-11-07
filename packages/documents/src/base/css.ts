@@ -1,4 +1,4 @@
-import { SALES_CSS } from '../sales/styles'
+import { TEMPLATE_CSS } from '../templates/css'
 import { PAGE_MARGIN, PAPER_SIZE, FOOTER_HEIGHT, themeVarsCss, type DocTheme, DEFAULT_THEME } from './theme'
 
 /**
@@ -184,7 +184,7 @@ export const BASE_CSS = /* css */ `
 .fzd-editable { border-radius: 3px; transition: background-color 120ms cubic-bezier(.2,0,0,1), box-shadow 120ms cubic-bezier(.2,0,0,1); }
 .fzd-editable--on { cursor: text; outline: none; }
 .fzd-editable--on:hover { box-shadow: 0 0 0 1px var(--fzd-accent-line); background: var(--fzd-accent-soft); }
-.fzd-editable--on:focus { box-shadow: 0 0 0 2px #fff, 0 0 0 4px #3A5BD6; background: #fff; }
+.fzd-editable--on:focus { box-shadow: 0 0 0 2px #fff, 0 0 0 4px #15161D; background: #fff; }
 .fzd-editable--on:empty::before { content: attr(data-placeholder); color: var(--fzd-faint); }
 .fzd-editable--inline { display: inline; padding: 0 1px; }
 @media (prefers-reduced-motion: reduce) { .fzd-editable { transition: none; } }
@@ -211,7 +211,7 @@ export function documentCss(theme: DocTheme = DEFAULT_THEME, extraCss = ''): str
     `@page { size: ${paper.css}; margin: 0; }`,
     `.fzd { ${themeVarsCss(theme)} }`,
     BASE_CSS,
-    SALES_CSS,
+    TEMPLATE_CSS,
     extraCss,
   ].join('\n')
 }

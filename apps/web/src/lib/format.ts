@@ -1,9 +1,18 @@
 /**
- * Formatos humanos de Framezen (SPEC §1.7): CLP `$1.234.567`, medidas `1.200 × 1.500 mm`.
+ * Formatos humanos de DEKOPEN (SPEC §1.7): CLP `$1.234.567`, medidas `1.200 × 1.500 mm`.
  * Las cifras de dominio salen del motor (misma fuente que documentos y servidor); aquí solo
  * agregamos utilidades propias de la interfaz (fechas, iniciales, búsqueda).
+ *
+ * Idioma (plan v5 §4.B):
+ * - Fechas, tiempo relativo y número de documento siguen al idioma de la interfaz (solo se muestran).
+ * - Dinero, números y medidas de este archivo son **español de Chile deterministas**: muchos campos
+ *   los vuelven a leer con un intérprete que espera coma decimal. Para mostrar en el idioma de la
+ *   persona y con la moneda de la empresa usa `useFormat()` / `getFormatter()` de `lib/i18n`.
  */
-export { formatCLP, formatMM, formatSize, formatArea, formatPct, formatMeters } from '@framezen/engine'
+import { formatDate as formatDateL, formatDocNumber as formatDocNumberL, formatRelative as formatRelativeL } from '@dekopen/shared'
+import { getLocale } from './i18n/runtime'
+
+export { formatCLP, formatMM, formatSize, formatArea, formatPct, formatMeters } from '@dekopen/engine'
 
 const MINUS = '−'
 
@@ -28,9 +37,9 @@ export function formatMMUnit(mm: number): string {
   return `${formatNumber(mm, 1)} mm`
 }
 
-/** «N° 412» para cotizaciones y OT. */
+/** «N° 412» para cotizaciones y OT («No. 412» en inglés, «Nr. 412» en alemán…). */
 export function formatDocNumber(n: number): string {
-  return `N° ${n}`
+  return formatDocNumberL(n, { locale: getLocale() })
 }
 
 /** Letra de revisión: 1 → A, 2 → B… (0 = sin enviar → ''). */
@@ -46,48 +55,22 @@ export function revisionLetter(revision: number): string {
   return out
 }
 
-const TIME_ZONE = 'America/Santiago'
-
-function toDate(input: string | number | Date): Date {
-  return input instanceof Date ? input : new Date(input)
-}
-
-/** Fecha `dd-mm-aaaa` en hora de Chile. */
+/** Fecha corta en hora de Chile, en el idioma de la interfaz: `31-10-2026` (es), `10/31/2026` (en). */
 export function formatDate(input: string | number | Date): string {
-  const date = toDate(input)
-  if (Number.isNaN(date.getTime())) return ''
-  const parts = new Intl.DateTimeFormat('es-CL', {
-    timeZone: TIME_ZONE,
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  }).formatToParts(date)
-  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? ''
-  return `${get('day')}-${get('month')}-${get('year')}`
+  return formatDateL(input, { locale: getLocale() })
 }
 
-/** Fecha larga: «31 de octubre de 2026». */
+/** Fecha larga: «31 de octubre de 2026» / «October 31, 2026» / «31. Oktober 2026». */
 export function formatLongDate(input: string | number | Date): string {
-  const date = toDate(input)
-  if (Number.isNaN(date.getTime())) return ''
-  return new Intl.DateTimeFormat('es-CL', { timeZone: TIME_ZONE, day: 'numeric', month: 'long', year: 'numeric' }).format(date)
+  return formatDateL(input, { locale: getLocale(), style: 'long' })
 }
 
-/** Relativa para listas: «hace un momento», «hace 5 min», «hace 2 h», «ayer», «hace 3 días»; luego la fecha. */
+/**
+ * Relativa para listas: «hace un momento», «hace 5 min», «hace 2 h», «ayer», «hace 3 días»; luego la
+ * fecha. En otros idiomas, con `Intl.RelativeTimeFormat` («5 min. ago», «gestern»).
+ */
 export function formatRelative(input: string | number | Date, now: Date = new Date()): string {
-  const date = toDate(input)
-  if (Number.isNaN(date.getTime())) return ''
-  const diff = now.getTime() - date.getTime()
-  const min = Math.round(diff / 60_000)
-  if (diff < 0) return formatDate(date)
-  if (min < 1) return 'hace un momento'
-  if (min < 60) return `hace ${min} min`
-  const hours = Math.floor(min / 60)
-  if (hours < 24) return `hace ${hours} h`
-  const days = Math.floor(hours / 24)
-  if (days === 1) return 'ayer'
-  if (days < 7) return `hace ${days} días`
-  return formatDate(date)
+  return formatRelativeL(input, { locale: getLocale(), now })
 }
 
 /** Sufijos societarios que no cuentan para las iniciales («Constructora Los Aromos SpA» → «CA»). */
@@ -150,9 +133,20 @@ export function distinctInitials(names: readonly string[]): string[] {
   })
 }
 
-/** Normaliza para búsquedas tolerantes a tildes y mayúsculas. */
+/**
+ * Normaliza para búsquedas tolerantes a tildes y mayúsculas, en cualquier idioma: también pliega la
+ * i sin punto del turco («kapı» → «kapi», «İ» → «i») y las ligaduras («weiß» → «weiss», «œ» → «oe»).
+ */
 export function normalizeSearch(text: string): string {
-  return text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim()
+  return text
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/ı/g, 'i')
+    .replace(/ß/g, 'ss')
+    .replace(/œ/g, 'oe')
+    .replace(/æ/g, 'ae')
+    .trim()
 }
 
 /** Primer nombre para saludos. */

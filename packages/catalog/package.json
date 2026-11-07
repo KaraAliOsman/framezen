@@ -1,8 +1,9 @@
 {
-  "name": "@framezen/catalog",
-  "version": "4.0.0",
+  "name": "@dekopen/catalog",
+  "version": "5.0.0",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
@@ -11,8 +12,8 @@
     "./data/*": "./data/*"
   },
   "dependencies": {
-    "@framezen/engine": "4.0.0",
-    "@framezen/shared": "4.0.0"
+    "@dekopen/engine": "5.0.0",
+    "@dekopen/shared": "5.0.0"
   },
   "scripts": {
     "test": "vitest run",

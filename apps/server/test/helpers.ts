@@ -1,5 +1,5 @@
-import type { Catalog, WindowDesign } from '@framezen/engine'
-import type { Me } from '@framezen/shared'
+import type { Catalog, WindowDesign } from '@dekopen/engine'
+import type { Me } from '@dekopen/shared'
 import { bootstrap, type Bootstrapped } from '../src/bootstrap'
 import { silentLogger } from '../src/lib/logger'
 import type { AppConfig } from '../src/config'

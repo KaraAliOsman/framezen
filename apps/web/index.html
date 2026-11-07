@@ -3,28 +3,76 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#faf8f5" />
+    <meta name="theme-color" content="#f0f0f3" />
     <meta
       name="description"
-      content="Framezen: cotiza ventanas y puertas de PVC en segundos, con precio al instante, documentos que venden y taller con cortes optimizados."
+      content="Para talleres de ventanas y puertas de PVC: dibuja, cotiza con tus precios, envía en PDF o por enlace y pasa a taller con cortes, vidrios y materiales listos."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Framezen · Ventanas de PVC, cotizadas y fabricadas sin fricción</title>
+    <link rel="mask-icon" href="/mask-icon.svg" color="#15161d" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="DEKOPEN" />
+    <meta property="og:title" content="DEKOPEN · Software para talleres de ventanas de PVC" />
+    <meta property="og:description" content="Para talleres de ventanas y puertas de PVC: dibuja, cotiza con tus precios, envía en PDF o por enlace y pasa a taller con cortes, vidrios y materiales listos." />
+    <meta property="og:image" content="/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <title>DEKOPEN · Software para talleres de ventanas de PVC</title>
     <script>
-      // Aplica el tema guardado antes de pintar para evitar el destello.
+      // Aplica el tema guardado antes de pintar para evitar el destello (colores = THEME_META_COLOR de brand/tokens.ts).
       ;(function () {
         try {
-          var pref = localStorage.getItem('fz-theme') || 'light'
-          var dark = pref === 'dark' || (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
-          document.documentElement.dataset.theme = dark ? 'dark' : 'light'
-          if (dark) document.querySelector('meta[name="theme-color"]').setAttribute('content', '#151311')
+          var pref = localStorage.getItem('fz-theme')
+          if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'original'
+          // La landing y el portal se ven siempre como fueron diseñados (ver isPublicPath en lib/theme.tsx).
+          var path = location.pathname
+          if (pref === 'original' && (path === '/' || path.indexOf('/c/') === 0)) pref = 'light'
+          var theme = pref === 'system' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : pref
+          document.documentElement.dataset.theme = theme
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', { original: '#1b1d28', light: '#f0f0f3', dark: '#0d0e12' }[theme])
+        } catch (e) {}
+      })()
+      // Idioma antes de pintar (mismo criterio que lib/i18n/runtime.ts): guardado, si no el del navegador, si no español.
+      ;(function () {
+        try {
+          var tags = { es: 'es-CL', en: 'en-US', pt: 'pt-BR', fr: 'fr-FR', de: 'de-DE', it: 'it-IT', tr: 'tr-TR' }
+          var locale = localStorage.getItem('fz-locale')
+          if (!Object.prototype.hasOwnProperty.call(tags, locale)) {
+            locale = 'es'
+            var langs = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || '']
+            for (var i = 0; i < langs.length; i++) {
+              var primary = String(langs[i]).toLowerCase().split(/[-_;]/)[0]
+              if (Object.prototype.hasOwnProperty.call(tags, primary)) {
+                locale = primary
+                break
+              }
+            }
+          }
+          document.documentElement.lang = tags[locale]
         } catch (e) {}
       })()
     </script>
   </head>
   <body>
     <div id="root"></div>
-    <noscript>Framezen necesita JavaScript para funcionar.</noscript>
+    <script>
+      // El portal se abre en un teléfono y a veces con mala señal: la forma de la página aparece antes que el código.
+      ;(function () {
+        if (!/^\/c\//.test(location.pathname)) return
+        document.documentElement.dataset.theme = 'light'
+        var bar = function (w, h, m) {
+          return '<div style="width:' + w + ';height:' + h + 'px;margin-top:' + m + 'px;border-radius:8px;background:#f2f2f5"></div>'
+        }
+        document.getElementById('root').innerHTML =
+          '<div style="min-height:100dvh;background:#fff"><div style="max-width:640px;margin:0 auto;padding:20px 16px">' +
+          bar('120px', 40, 0) + bar('55%', 14, 44) + bar('80%', 34, 12) + bar('60%', 14, 12) + bar('100%', 320, 56) + bar('40%', 18, 16) + bar('100%', 60, 12) +
+          '</div></div>'
+      })()
+    </script>
+    <noscript>DEKOPEN necesita JavaScript para funcionar.</noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -74,12 +74,15 @@ export function resolvePricing(base: Partial<PricingSettings> | undefined, overr
   return sanitizePricing(merged)
 }
 
-/** Completa y sanea ajustes de corte (valores negativos → 0, barra inválida → 5.800). */
+/**
+ * Completa y sanea ajustes de corte (valores negativos → 0). El largo de barra no se inventa: sin un
+ * dato válido queda en 0 («sin dato»), y quien lo necesita avisa (`bar_length_unknown`).
+ */
 export function sanitizeCut(cut?: Partial<CutSettings> | null): CutSettings {
   const c = cut ?? {}
-  const barLength = finiteOr(c.barLength, DEFAULT_CUT.barLength)
+  const barLength = finiteOr(c.barLength, 0)
   return {
-    barLength: barLength > 0 ? barLength : DEFAULT_CUT.barLength,
+    barLength: barLength > 0 ? barLength : 0,
     kerf: Math.max(0, finiteOr(c.kerf, DEFAULT_CUT.kerf)),
     trimStart: Math.max(0, finiteOr(c.trimStart, DEFAULT_CUT.trimStart)),
     trimEnd: Math.max(0, finiteOr(c.trimEnd, DEFAULT_CUT.trimEnd)),

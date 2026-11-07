@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { SAMPLE_CATALOG } from '@framezen/catalog'
-import { DEFAULT_PRICING, defaultBrandSettings } from '@framezen/engine'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
+import { DEFAULT_PRICING, defaultBrandSettings } from '@dekopen/engine'
 import { barExample, brandExample, exampleGlassId, exampleTypology, pickExampleLine } from './brandExample'
 import { factoryOf, pautaExample, pautaPayload, pautaValue, samePauta, setPautaValue } from './pauta'
 import { mergePautaPatch, patchLineInCatalog } from '../api'

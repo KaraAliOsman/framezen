@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { Paged, Quote, QuoteSummary } from '@framezen/shared'
+import type { Paged, Quote, QuoteSummary } from '@dekopen/shared'
 import { queueDraftRepricing, repriceDrafts } from '../src/services/quotes'
 import { item, sampleDesign, signup, startServer, type TestServer } from './helpers'
 
@@ -13,6 +13,57 @@ afterAll(async () => {
 })
 
 describe('cotizaciones', () => {
+  it('guarda opcionales, alternativas, descuento de línea, partidas y dirección de obra; solo cuenta lo elegido', async () => {
+    const { agent } = await signup(server)
+    const design = await sampleDesign(agent)
+    const body = {
+      siteAddress: 'Camino Real 123',
+      items: [
+        { ...item(design), ref: 'V1', discountPct: 10, floor: 'Piso 1', rough: { width: 1020, height: 1020 } },
+        { ...item(design), ref: 'V2', role: 'optional' },
+        { ...item(design), ref: 'V3', role: 'alternative', altGroup: 'Sala', included: true },
+        { ...item(design), ref: 'V4', role: 'alternative', altGroup: 'Sala' },
+      ],
+      extras: [{ label: 'Andamio', amount: 100000, line: true, description: 'Armado y retiro' }],
+    }
+    const { body: q } = await agent.post<Quote>('/api/quotes', body)
+    expect(q.siteAddress).toBe('Camino Real 123')
+    expect(q.items.map((i) => [i.role, i.altGroup, i.included, i.discountPct, i.floor])).toEqual([
+      [undefined, undefined, undefined, 10, 'Piso 1'],
+      ['optional', undefined, undefined, undefined, undefined],
+      ['alternative', 'Sala', true, undefined, undefined],
+      ['alternative', 'Sala', undefined, undefined, undefined],
+    ])
+    expect(q.extras[0]).toMatchObject({ line: true, description: 'Armado y retiro' })
+    expect(q.totals?.units).toBe(2)
+    // Un PUT que no toca la dirección no la borra.
+    const saved = await agent.put<Quote>(`/api/quotes/${q.id}`, { version: q.version, discountPct: 5 })
+    expect(saved.body.siteAddress).toBe('Camino Real 123')
+  })
+
+  it('una cuenta nueva no trae compromisos y la vigencia sin definir no vence nada', async () => {
+    const { agent } = await signup(server)
+    const settings = await agent.get<{ documents: Record<string, unknown> }>('/api/settings')
+    expect(settings.body.documents).toMatchObject({ intro: '', conditions: '', paymentTerms: '', warranty: '', leadTimeText: '', validityDays: 0 })
+    const { body: q } = await agent.post<Quote>('/api/quotes', { items: [item(await sampleDesign(agent))] })
+    expect((await agent.post(`/api/quotes/${q.id}/send`, { channel: 'link' })).status).toBe(200)
+    const after = await agent.get<Quote>(`/api/quotes/${q.id}`)
+    expect(after.body.revision).toBe(1)
+    expect(after.body.validUntil).toBeUndefined()
+  })
+
+  it('logos de marca y ajustes del taller: se guardan por capas y `null` los quita', async () => {
+    const { agent } = await signup(server)
+    const id = '0123456789abcdef0123456789abcdef'
+    const on = await agent.patch<{ documents: Record<string, unknown> }>('/api/settings', { documents: { brandLogos: { marca: id }, settings: { brandHardware: false, lineDetail: 'full' } } })
+    expect(on.status).toBe(200)
+    expect(on.body.documents).toMatchObject({ brandLogos: { marca: id }, settings: { brandHardware: false, lineDetail: 'full' } })
+    const off = await agent.patch<{ documents: { brandLogos?: object; settings?: object } }>('/api/settings', { documents: { brandLogos: { marca: null }, settings: { lineDetail: null } } })
+    expect(off.body.documents.brandLogos).toEqual({})
+    expect(off.body.documents.settings).toEqual({ brandHardware: false })
+    expect((await agent.patch('/api/settings', { documents: { settings: { termsPlacement: 'arriba' } } })).status).toBe(400)
+  })
+
   it('crea borradores numerados correlativamente con título por defecto', async () => {
     const { agent } = await signup(server)
     const first = await agent.post<Quote>('/api/quotes', {})
@@ -101,6 +152,27 @@ describe('cotizaciones', () => {
     expect((await agent.get('/api/quotes?q=andes')).body.items[0].clientName).toBe('Constructora Andes')
     expect((await agent.get(`/api/quotes?q=N° ${b.body.number}`)).body.items[0].id).toBe(b.body.id)
     expect((await agent.get(`/api/quotes?clientId=${client.body.id}`)).body.total).toBe(1)
+  })
+
+  it('duplica para otro cliente con el título que digas y nunca para un cliente ajeno', async () => {
+    const { agent } = await signup(server)
+    const design = await sampleDesign(agent)
+    const client = await agent.post<{ id: string }>('/api/clients', { name: 'Carolina Reyes' })
+    const other = await signup(server)
+    const foreign = await other.agent.post<{ id: string }>('/api/clients', { name: 'De otra empresa' })
+    const original = await agent.post<Quote>('/api/quotes', { title: 'Casa tipo (copia)', items: [item(design)] })
+
+    const copy = await agent.post<Quote>(`/api/quotes/${original.body.id}/duplicate`, { clientId: client.body.id, title: 'Casa tipo' })
+    expect(copy.status).toBe(201)
+    expect(copy.body.title).toBe('Casa tipo')
+    expect(copy.body.clientId).toBe(client.body.id)
+    expect(copy.body.status).toBe('draft')
+
+    const without = await agent.post<Quote>(`/api/quotes/${copy.body.id}/duplicate`, { clientId: null, title: '' })
+    expect(without.body.clientId ?? null).toBeNull()
+    expect(without.body.title).toBe('')
+
+    expect((await agent.post(`/api/quotes/${original.body.id}/duplicate`, { clientId: foreign.body.id })).status).toBe(400)
   })
 
   it('duplica con número nuevo y la elimina a la papelera (recuperable)', async () => {

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import type { Me, Quote } from '@framezen/shared'
+import type { Me, Quote } from '@dekopen/shared'
 import { aiUsage, subscriptions } from '../src/db/schema'
 import { newId } from '../src/lib/crypto'
 import { setPdfRenderer } from '../src/services/pdf'

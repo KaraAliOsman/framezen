@@ -75,6 +75,14 @@ describe('perfiles', () => {
 
   it('un poste inversor o batiente es la unión de doble hoja, no un travesaño fijo', () => {
     expect(profileFamily('Palillo', 'Poste inversor / traslapo falso 604')).toBe('french_mullion')
+    // Nombres que quedaban como complementarios y dejaban la línea sin el perfil.
+    expect(profileFamily('Complementario', 'Traslape Hoja Corredera 66-42')).toBe('interlock')
+    expect(profileFamily('Complementario', 'Remate Central para Hoja 1')).toBe('interlock')
+    expect(profileFamily('Complementario', 'Perfil de batiente 1')).toBe('french_mullion')
+    expect(profileFamily('Complementario', '65207 perfil inversor')).toBe('french_mullion')
+    expect(profileFamily('Palillo', 'Poster inversor')).toBe('french_mullion')
+    expect(profileFamily('Complementario', 'Traslapo falso')).toBe('french_mullion')
+    expect(profileFamily('Complementario', 'Perfil inversor 4ta hoja')).toBe('other')
     expect(profileFamily('Palillo', 'Poste batiente o inversor S60 X 3')).toBe('french_mullion')
     expect(profileFamily('Palillo', 'Poste inversor o batiente - (718CZ00011)')).toBe('french_mullion')
     expect(profileFamily('Palillo', 'Inversora Batiente')).toBe('french_mullion')

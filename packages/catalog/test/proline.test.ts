@@ -22,7 +22,7 @@ describe('datos de Proline en el catálogo base', () => {
     const serie60 = SAMPLE_CATALOG.lines.find((line) => line.id === 'serie-60')!
     for (const source of sources) {
       expect(source).not.toMatch(/\bOT\b|N° ?\d+/)
-      expect(source).toMatch(/^Pauta de la distribuidora, verificada por Framezen/)
+      expect(source).toMatch(/^Pauta de la distribuidora, verificada por DEKOPEN/)
       const catalog = { ...SAMPLE_CATALOG, lines: SAMPLE_CATALOG.lines.map((line) => (line.id === serie60.id ? { ...line, source } : line)) }
       expect(lineReadiness(catalog, catalog.lines.find((line) => line.id === serie60.id)!)).toMatchObject({ evidence: true, level: 'verified' })
     }

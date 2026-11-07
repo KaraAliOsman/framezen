@@ -14,7 +14,7 @@ import {
   type QuoteEvaluation,
   type Warning,
   type WindowDesign,
-} from '@framezen/engine'
+} from '@dekopen/engine'
 import type { QuoteDoc } from './doc'
 
 export interface EvaluationSettings {

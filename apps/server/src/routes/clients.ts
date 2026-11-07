@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { and, asc, count, desc, eq, isNull, or, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
-import type { Client, Paged } from '@framezen/shared'
+import type { Client, Paged } from '@dekopen/shared'
 import type { AppDeps, AppEnv } from '../context'
 import { clients, quotes } from '../db/schema'
 import { newId } from '../lib/crypto'

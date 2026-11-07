@@ -1,4 +1,4 @@
-import { computeBom, DEFAULT_PRICING, priceItem, type Catalog, type WindowDesign } from '@framezen/engine'
+import { computeBom, DEFAULT_PRICING, priceItem, type Catalog, type WindowDesign } from '@dekopen/engine'
 
 /**
  * Precio unitario neto de ejemplo, calculado por el motor (el mismo de la app)

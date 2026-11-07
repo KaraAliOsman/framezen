@@ -9,8 +9,8 @@ const groups: CommandGroup[] = [
 ]
 
 describe('CommandPalette sin coincidencias', () => {
-  it('con Marco: una línea compacta «Sin coincidencias…» y la sugerencia justo debajo', () => {
-    render(<CommandPalette open onOpenChange={() => {}} groups={groups} onAsk={vi.fn()} />)
+  it('con asistente: una línea compacta «Sin coincidencias…» y la sugerencia justo debajo, con su nombre', () => {
+    render(<CommandPalette open onOpenChange={() => {}} groups={groups} onAsk={vi.fn()} askName="Marco" />)
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'nogal' } })
     const empty = screen.getByText('Sin coincidencias para «nogal».')
     expect(empty.className).not.toMatch(/py-8/)
@@ -18,7 +18,13 @@ describe('CommandPalette sin coincidencias', () => {
     expect(screen.queryByText('Catálogo')).toBeNull()
   })
 
-  it('sin Marco: explica que no hay nada y sugiere otra palabra', () => {
+  it('con asistente sin nombre conocido: la sugerencia dice «el asistente»', () => {
+    render(<CommandPalette open onOpenChange={() => {}} groups={groups} onAsk={vi.fn()} />)
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'nogal' } })
+    expect(screen.getByText(/Preguntarle al asistente/)).toBeTruthy()
+  })
+
+  it('sin asistente: explica que no hay nada y sugiere otra palabra', () => {
     render(<CommandPalette open onOpenChange={() => {}} groups={groups} />)
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'nogal' } })
     expect(screen.getByText('Nada por aquí. Prueba con otra palabra.')).toBeTruthy()
@@ -26,10 +32,10 @@ describe('CommandPalette sin coincidencias', () => {
 })
 
 describe('StatusPill', () => {
-  it('el sufijo de versión no baja la opacidad (contraste AA): solo cambia el peso', () => {
+  it('el sufijo de versión no baja la opacidad (contraste AA): se distingue por el tono', () => {
     render(<StatusPill status="sent" suffix="versión A" />)
     const suffix = screen.getByText(/versión A/)
     expect(suffix.className).not.toMatch(/opacity/)
-    expect(suffix.className).toContain('font-normal')
+    expect(suffix.className).toContain('text-fg-muted')
   })
 })

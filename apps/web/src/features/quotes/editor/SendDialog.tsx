@@ -1,94 +1,169 @@
 /**
- * «Enviar al cliente»: sin campos obligatorios. Crea (o reutiliza) el enlace del portal y ofrece
- * copiarlo, abrir WhatsApp o el correo con un mensaje listo. Si la cotización cambió desde el
- * último envío, enviar crea la versión siguiente (B, C…) y el cliente ve siempre la última.
+ * «Enviar al cliente». Primero se elige cómo sale (PDF por defecto, enlace web o ambos) y por dónde,
+ * con el mensaje a la vista; nada se marca como enviado hasta preparar el envío. El saludo vive
+ * aquí y nunca entra al documento, y el mensaje no lleva el total.
  *
- * Crear la versión siguiente de algo ya enviado se confirma (con la diferencia a la vista) cuando
- * no es evidente: si solo pediste copiar el enlace, si el cliente ya la aceptó (tendría que volver
- * a aceptar) o si lo único que cambió son tus precios. Si tus últimos cambios no llegaron al
+ * Si la cotización cambió desde el último envío, preparar crea la versión siguiente (B, C…) y el
+ * cliente ve siempre la última. Cuando eso no es evidente (el cliente ya aceptó, o solo cambiaron tus
+ * precios) la diferencia queda a la vista antes de confirmar. Si tus últimos cambios no llegaron al
  * servidor, no se envía nada: el cliente recibiría la versión anterior.
  */
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, Download, Mail, MessageCircle, RotateCw, Send, TriangleAlert } from 'lucide-react'
-import { formatCLP } from '@framezen/engine'
-import type { SendQuoteResponse } from '@framezen/shared'
-import { request } from '../../../lib/api'
+import { Copy, Download, Languages, Mail, MessageCircle, RotateCw, Send } from 'lucide-react'
+import {
+  DEFAULT_SENDING,
+  LOCALE_META,
+  sendFormatIncludesLink,
+  type QuoteSharedBody,
+  type QuoteSharedResponse,
+  type SendChannel,
+  type SendFormat,
+  type SendQuoteResponse,
+  type SendTemplates,
+} from '@dekopen/shared'
+import { humanError, request } from '../../../lib/api'
 import { useSession } from '../../../lib/auth'
 import { revisionLetter } from '../../../lib/format'
-import { Button, Dialog, DialogContent, Spinner, Textarea } from '../../../ui'
-import { toast } from './toasts'
-import { docChangedSinceSent, editedSinceSent, mailtoUrl, portalUrl, sentPriceDrift, shareMessage, whatsappPhone, whatsappUrl } from '../lib/share'
+import { useSettings, useUpdateSettings } from '../../../lib/hooks'
+import { useFormat, useGlossary, useT } from '../../../lib/i18n'
+import { Button, Dialog, DialogContent, Field, Input, Notice, SegmentedControl, Spinner, Textarea } from '../../../ui'
+import es from '../i18n/es'
+import { applyLink, docChangedSinceSent, editedSinceSent, portalUrl, renderSendTemplate, sendTemplate, sendVariables, sentPriceDrift, unknownSendVariables, whatsappPhone } from '../lib/share'
 import { useEditor, useEditorShallow, useEditorUi, useEditorUiApi } from './context'
+import { useTaxLabel } from './names'
+import { SendDepositDialog } from './SendDeposit'
+import { SendReady, type ReadyState } from './SendReady'
+import { SendTemplateEditor } from './SendTemplateEditor'
+import { toast } from './toasts'
 import { actionError, useQuoteActions } from './useQuoteActions'
+import { useMessageLocale } from './useQuoteStage'
 
-type Phase =
-  | { kind: 'idle' }
-  | { kind: 'sending' }
-  /** Enviar crearía la versión siguiente de algo ya enviado: se confirma con la diferencia a la vista. */
-  | {
-      kind: 'confirm'
-      /** Versión que ve hoy el cliente y la que se crearía. */
-      current: string
-      next: string
-      /** Enlace vigente (versión actual). */
-      url: string
-      /** Total de la versión nueva (IVA incluido). */
-      total: number
-      /** Total que ve hoy el cliente, si se sabe con certeza. */
-      seen: number | null
-      /** La cotización está aceptada: enviar otra versión pide aceptarla de nuevo. */
-      accepted: boolean
-      acceptedBy?: string
-      docChanged: boolean
-    }
-  /** `total` = el de la versión que ve el cliente (el que calculó el servidor). */
-  | { kind: 'ready'; url: string; letter: string; fresh: boolean; total: number }
-  | { kind: 'error'; message: string }
+type Phase = { kind: 'compose' } | { kind: 'sending' } | ({ kind: 'ready' } & ReadyState) | { kind: 'error'; message: string }
 
 export function SendDialog() {
   const open = useEditorUi((s) => s.sendOpen)
   const setUi = useEditorUi((s) => s.set)
   const close = () => setUi({ sendOpen: false, sendIntent: null })
   return (
-    <Dialog open={open} onOpenChange={(o) => (o ? setUi({ sendOpen: true }) : close())}>
-      {open ? <SendContent onClose={close} /> : null}
-    </Dialog>
+    <>
+      <Dialog open={open} onOpenChange={(o) => (o ? setUi({ sendOpen: true }) : close())}>
+        {open ? <SendContent onClose={close} /> : null}
+      </Dialog>
+      <SendDepositDialog />
+    </>
   )
 }
 
+const linkField =
+  'h-9 w-full min-w-0 rounded-sm border border-divider bg-sunken px-3 text-meta tabular text-fg outline-none focus:border-focus focus:shadow-[0_0_0_3px_var(--dk-focus-ring)]'
+
 function SendContent({ onClose }: { onClose: () => void }) {
+  const t = useT(es)
+  const g = useGlossary()
+  const fmt = useFormat()
+  const tax = useTaxLabel()
   const editor = useEditor()
   const session = useSession()
+  const locale = useMessageLocale()
   const queryClient = useQueryClient()
   const actions = useQuoteActions()
-  const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
-  const [copied, setCopied] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
-  const started = useRef(false)
   const uiApi = useEditorUiApi()
+  const settings = useSettings()
+  const update = useUpdateSettings()
   const intent = useRef(uiApi.getState().sendIntent)
-  const { client, number, title } = useEditorShallow((s) => ({
-    client: s.doc.clientId ? s.clients[s.doc.clientId] : undefined,
-    number: s.meta.number,
-    title: s.doc.title,
-  }))
+  const started = useRef(false)
+  const [phase, setPhase] = useState<Phase>({ kind: 'compose' })
 
-  /** Deja el enlace listo y, si lo pidieron («Copiar enlace»), lo copia de una vez. */
-  const ready = (next: Extract<Phase, { kind: 'ready' }>) => {
-    setPhase(next)
-    if (intent.current !== 'copy') return
-    intent.current = null
-    navigator.clipboard?.writeText(next.url).then(
-      () => {
-        setCopied(true)
-        setTimeout(() => setCopied(false), 1800)
+  const stage = useEditorShallow((s) => {
+    const live = s.evaluation.totals.total
+    const dirty = s.save.dirty || s.save.status === 'saving'
+    const unchanged = !editedSinceSent(s.meta, dirty, live) && !!s.meta.shareToken && s.meta.status !== 'draft'
+    const drift = sentPriceDrift(s.meta, live)
+    return {
+      client: s.doc.clientId ? s.clients[s.doc.clientId] : undefined,
+      number: s.meta.number,
+      title: s.doc.title,
+      revision: s.meta.revision,
+      unchanged,
+      resend: s.meta.revision >= 1 && !!s.meta.sentAt && !!s.meta.shareToken,
+      docChanged: docChangedSinceSent(s.meta, dirty),
+      accepted: s.meta.status === 'accepted',
+      acceptedBy: s.meta.acceptedBy?.name,
+      token: s.meta.shareToken,
+      live,
+      seen: drift?.exact ? drift.sent : null,
+      storedSending: s.settings.sending,
+      texts: s.doc.documentOverrides?.texts,
+      validityDays: s.doc.documentOverrides?.validityDays,
+      validUntil: s.doc.validUntil,
+    }
+  })
+  const { client } = stage
+  // El documento omite lo que no existe: aquí se avisa, para que no salga sin saberlo.
+  const documents = settings.data?.documents
+  const gaps = documents
+    ? [
+        !(stage.texts?.leadTimeText ?? documents.leadTimeText)?.trim() ? t('send.gapLeadTime') : '',
+        !(stage.texts?.paymentTerms ?? documents.paymentTerms)?.trim() ? t('send.gapPayment') : '',
+        !stage.validUntil && !(stage.validityDays ?? documents.validityDays) ? t('send.gapValidity') : '',
+      ].filter(Boolean)
+    : []
+  const sending = settings.data?.sending ?? stage.storedSending ?? DEFAULT_SENDING
+  const [format, setFormat] = useState<SendFormat>(intent.current === 'copy' ? 'link' : sending.format)
+  const [channel, setChannel] = useState<SendChannel>(() => (client?.email && !whatsappPhone(client.phone) ? 'email' : 'whatsapp'))
+  const [drafts, setDrafts] = useState<Partial<Record<SendChannel, string>>>({})
+  const [templates, setTemplates] = useState<SendTemplates>(sending.templates ?? {})
+  const [editing, setEditing] = useState(false)
+  const [to, setTo] = useState(client?.email ?? '')
+  const [ownMail, setOwnMail] = useState(false)
+  const mailProvider = settings.data?.mailProvider ?? false
+  // Sale desde el servidor solo si hay proveedor y a quién: si no, se abre el correo de quien envía.
+  const serverMail = channel === 'email' && mailProvider && !ownMail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to.trim())
+
+  const current = revisionLetter(stage.revision)
+  const next = revisionLetter(stage.revision + 1)
+  const letter = stage.unchanged ? current : next
+  const needsConfirm = stage.resend && !stage.unchanged && (intent.current === 'copy' || stage.accepted || !stage.docChanged)
+
+  const message = (which: SendChannel, withLink: boolean): string => {
+    const vars = sendVariables(
+      { number: stage.number, title: stage.title, orgName: session.org.name, sellerName: session.user.name, clientName: client?.name, clientRut: client?.rut, revisionLetter: letter, locale },
+      withLink ? '{enlace}' : '',
+    )
+    return renderSendTemplate(sendTemplate(templates, which, locale), vars)
+  }
+  const needsLink = sendFormatIncludesLink(format)
+  const text = drafts[channel] ?? message(channel, needsLink)
+
+  const chooseFormat = (value: SendFormat) => {
+    setFormat(value)
+    // El texto que ya escribiste se conserva: solo entra o sale la línea del enlace.
+    setDrafts((all) => Object.fromEntries(Object.entries(all).map(([k, v]) => [k, applyLink(v, sendFormatIncludesLink(value))])))
+  }
+
+  const saveDefault = () => {
+    update.mutate(
+      { sending: { ...sending, format } },
+      {
+        onSuccess: () => toast.success(t('send.defaultSaved')),
+        onError: (error) => toast.error(humanError(error)),
       },
-      () => undefined, // Sin permiso para copiar: queda el botón «Copiar».
     )
   }
 
-  const send = async (confirmed = false) => {
+  const prepare = async () => {
+    const final = (url: string) => applyLink(text, needsLink).replaceAll('{enlace}', url)
+    const mail = serverMail ? { to: to.trim(), message: applyLink(text, needsLink) } : {}
+    const ready = (state: Omit<ReadyState, 'message' | 'format' | 'channel' | 'to'>) => {
+      setPhase({ kind: 'ready', ...state, format, channel, message: final(state.url), ...(serverMail ? { to: to.trim() } : {}) })
+      if (intent.current !== 'copy') return
+      intent.current = null
+      navigator.clipboard?.writeText(state.url).then(
+        () => toast.success(t('send.copied')),
+        () => undefined, // Sin permiso para copiar: queda el botón «Copiar».
+      )
+    }
     setPhase({ kind: 'sending' })
     try {
       // Si tus últimos cambios no llegaron al servidor, se corta aquí: /send enviaría la versión anterior.
@@ -96,41 +171,29 @@ function SendContent({ onClose }: { onClose: () => void }) {
       const state = editor.get()
       const { meta } = state
       const live = state.evaluation.totals.total
-      // Sin cambios en el documento ni en los precios desde el último envío: el enlace ya muestra esto.
+      // Sin cambios: la versión es la misma; solo queda registrado por dónde salió esta vez.
       if (!editedSinceSent(meta, false, live) && meta.shareToken && meta.status !== 'draft') {
-        ready({ kind: 'ready', url: portalUrl(meta.shareToken), letter: revisionLetter(meta.revision), fresh: false, total: meta.totals?.total ?? live })
-        return
-      }
-      const resend = meta.revision >= 1 && !!meta.sentAt && !!meta.shareToken
-      const docChanged = docChangedSinceSent(meta, false)
-      const accepted = meta.status === 'accepted'
-      if (resend && !confirmed && (intent.current === 'copy' || accepted || !docChanged)) {
-        const drift = sentPriceDrift(meta, live)
-        setPhase({
-          kind: 'confirm',
-          current: revisionLetter(meta.revision),
-          next: revisionLetter(meta.revision + 1),
-          url: portalUrl(meta.shareToken),
-          total: live,
-          seen: drift?.exact ? drift.sent : null,
-          accepted,
-          acceptedBy: accepted ? meta.acceptedBy?.name : undefined,
-          docChanged,
+        const body: QuoteSharedBody = { format, ...mail }
+        const shared = await request<QuoteSharedResponse>(`/quotes/${encodeURIComponent(meta.id)}/shared`, { method: 'POST', body }).catch((error) => {
+          // El registro de la vía no detiene nada; un correo que no salió sí se dice.
+          if (serverMail) throw error
+          return undefined
         })
+        ready({ url: portalUrl(meta.shareToken), letter: revisionLetter(meta.revision), fresh: false, emailed: shared?.emailed, attached: shared?.attached })
         return
       }
       const result = await editor.serverOp(
-        () => request<SendQuoteResponse>(`/quotes/${encodeURIComponent(meta.id)}/send`, { method: 'POST', body: { channel: 'link' } }),
+        () => request<SendQuoteResponse>(`/quotes/${encodeURIComponent(meta.id)}/send`, { method: 'POST', body: { channel, format, ...mail } }),
         (r) => r.quote,
       )
       void queryClient.invalidateQueries({ queryKey: ['quotes'] })
       ready({
-        kind: 'ready',
         url: result.url || portalUrl(result.quote.shareToken),
         letter: result.revisionLabel || revisionLetter(result.revision),
         fresh: true,
-        // El total del mensaje es el de la versión que se acaba de enviar (lo calculó el servidor).
-        total: result.quote.totals?.total ?? live,
+        followUpAt: result.followUpAt,
+        emailed: result.emailed,
+        attached: result.attached,
       })
     } catch (error) {
       setPhase({ kind: 'error', message: actionError(error) })
@@ -138,169 +201,232 @@ function SendContent({ onClose }: { onClose: () => void }) {
   }
 
   /** Copia el enlace que ya tiene el cliente (sin crear versión nueva). */
-  const copyCurrent = async (url: string, letter: string) => {
+  const copyCurrent = async (url: string) => {
     try {
       await navigator.clipboard.writeText(url)
-      toast.success(`Copiamos el enlace de la versión ${letter}.`)
+      toast.success(t('send.copiedVersion', { letter: current }))
       onClose()
     } catch {
-      toast('Selecciona el enlace y cópialo con Ctrl+C.')
+      toast(t('send.copyManual'))
     }
   }
 
+  // «Copiar enlace»: si no hay nada que confirmar, el enlace sale de una vez.
   useEffect(() => {
     if (started.current) return
     started.current = true
-    void send()
+    if (intent.current === 'copy' && !needsConfirm) void prepare()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const done = phase.kind === 'ready' ? phase : null
-  const confirm = phase.kind === 'confirm' ? phase : null
-  const text =
-    message ??
-    (done
-      ? shareMessage({ number, title, total: done.total, url: done.url, orgName: session.org.name, clientName: client?.name, clientRut: client?.rut, revisionLetter: done.letter })
-      : '')
+  const unknown = unknownSendVariables(text)
+  const contact = channel === 'whatsapp' ? client?.phone : client?.email
+  const amount = <span className="font-medium tabular text-fg-strong" />
+  const ready = phase.kind === 'ready' ? phase : null
 
-  const copy = async () => {
-    if (!done) return
-    try {
-      await navigator.clipboard.writeText(done.url)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1800)
-    } catch {
-      toast('Selecciona el enlace y cópialo con Ctrl+C.')
-    }
-  }
+  const description = ready
+    ? ready.fresh
+      ? ready.letter && ready.letter !== 'A'
+        ? t('send.freshVersion', { letter: ready.letter })
+        : t('send.freshReady')
+      : t('send.same', { letter: ready.letter || 'A' })
+    : stage.unchanged
+      ? t('send.same', { letter: current })
+      : stage.resend
+        ? t('send.confirm', { letter: next })
+        : t('send.composeDescription')
 
-  const phone = whatsappPhone(client?.phone)
-  const description = done
-    ? done.fresh
-      ? done.letter && done.letter !== 'A'
-        ? `Lista la versión ${done.letter}. Tu cliente verá siempre la última que envíes.`
-        : 'Listo el enlace. Tu cliente puede revisar cada ventana y aceptarla en línea.'
-      : `Es la versión ${done.letter || 'A'} que ya enviaste; no hay cambios desde entonces.`
-    : confirm
-      ? `¿Enviar la versión ${confirm.next}?`
-      : 'Preparamos el enlace para tu cliente.'
+  const primaryLabel = serverMail ? t('send.sendMail') : stage.resend && !stage.unchanged ? t('send.sendVersion', { letter: next }) : t(`send.prepare.${format}`)
 
   return (
     <DialogContent
-      title="Enviar al cliente"
+      title={t('send.title')}
       description={description}
       size="md"
       footer={
-        <>
-          <Button variant="ghost" icon={Download} onClick={() => void actions.downloadPdf()} loading={actions.busy === 'pdf'}>
-            Descargar PDF
-          </Button>
+        ready ? (
           <Button variant="secondary" onClick={onClose}>
-            Listo
+            {t('send.done')}
           </Button>
-        </>
+        ) : phase.kind === 'compose' && !editing ? (
+          <>
+            <Button variant="ghost" icon={Download} onClick={() => void actions.downloadPdf()} loading={actions.busy === 'pdf'}>
+              {t('send.pdf')}
+            </Button>
+            <Button variant="primary" icon={Send} onClick={() => void prepare()}>
+              {primaryLabel}
+            </Button>
+          </>
+        ) : undefined
       }
     >
-      {phase.kind === 'sending' || phase.kind === 'idle' ? (
-        <div className="flex items-center gap-3 py-6 text-paper-600">
-          <Spinner size={16} /> Preparando el enlace…
+      {phase.kind === 'sending' ? (
+        <div className="flex items-center gap-3 py-6 text-fg-muted">
+          <Spinner size={16} /> {t('send.preparing')}
         </div>
       ) : phase.kind === 'error' ? (
-        <div role="alert" className="rounded-md border border-bad-600/20 bg-bad-50 px-4 py-3 text-[13px] text-bad-800">
-          <p>{phase.message}</p>
-          <Button size="sm" icon={RotateCw} className="mt-2" onClick={() => void send()}>
-            Reintentar
-          </Button>
-        </div>
-      ) : confirm ? (
-        <div className="space-y-4">
-          {confirm.accepted ? (
-            <div className="flex gap-2 rounded-md border border-warn-600/25 bg-warn-50 px-3 py-2.5 text-[13px] leading-[18px] text-paper-900">
-              <TriangleAlert aria-hidden strokeWidth={1.75} className="mt-px size-4 shrink-0 text-warn-600" />
-              <p>
-                {confirm.acceptedBy ?? 'Tu cliente'} aceptó la versión {confirm.current}. Si envías la versión {confirm.next}, la cotización vuelve a «Enviada» y
-                tendrá que aceptarla de nuevo.
+        <Notice
+          tone="danger"
+          action={
+            <Button size="sm" icon={RotateCw} onClick={() => void prepare()}>
+              {t('send.retry')}
+            </Button>
+          }
+        >
+          {phase.message}
+        </Notice>
+      ) : ready ? (
+        <SendReady
+          state={ready}
+          client={client}
+          number={stage.number}
+          title={stage.title}
+          locale={locale}
+          onEdit={() => setPhase({ kind: 'compose' })}
+        />
+      ) : editing ? (
+        <SendTemplateEditor
+          channel={channel}
+          locale={locale}
+          languageName={inlineLanguageName(locale, t.locale)}
+          templates={templates}
+          onClose={() => setEditing(false)}
+          onSaved={(saved) => {
+            setTemplates(saved)
+            // Lo que estaba escrito en este envío deja paso a la plantilla nueva.
+            setDrafts((all) => ({ ...all, [channel]: undefined }))
+            setEditing(false)
+          }}
+        />
+      ) : (
+        <div className="space-y-5">
+          {gaps.length ? (
+            <Notice tone="neutral" size="compact">
+              {t('send.gaps', { list: fmt.list(gaps) })}
+            </Notice>
+          ) : null}
+          {needsConfirm ? (
+            <div className="space-y-3">
+              {stage.accepted ? (
+                <Notice tone="warning" size="compact">
+                  {t('send.acceptedWarning', { name: stage.acceptedBy ?? t('send.yourClient'), current, next, status: g.quoteStatus('sent') })}
+                </Notice>
+              ) : null}
+              <p className="text-table text-fg">
+                {stage.seen !== null
+                  ? t.rich(stage.docChanged ? 'send.seenChanges' : 'send.seenPrices', { b: amount, current, next, seen: fmt.money(stage.seen), total: fmt.money(stage.live), tax })
+                  : t.rich(stage.docChanged ? 'send.unseenChanges' : 'send.unseenPrices', { b: amount, current, next, total: fmt.money(stage.live), tax })}
               </p>
+              {stage.token ? (
+                <div>
+                  <div className="mb-1.5 text-table font-medium text-fg-strong">{t('send.currentLink', { letter: current })}</div>
+                  <div className="flex items-stretch gap-2">
+                    <input readOnly value={portalUrl(stage.token)} aria-label={t('send.currentLinkAria')} onFocus={(e) => e.currentTarget.select()} className={`${linkField} flex-1`} />
+                    <Button icon={Copy} onClick={() => void copyCurrent(portalUrl(stage.token))} aria-label={t('send.copyVersion', { letter: current })}>
+                      {t('send.copy')}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
-          <p className="text-[13px] leading-[18px] text-paper-900">
-            {confirm.seen !== null ? (
-              <>
-                Tu cliente ve la versión {confirm.current} por <span className="font-medium tabular">{formatCLP(confirm.seen)}</span>. La versión {confirm.next}{' '}
-                sumaría <span className="font-medium tabular">{formatCLP(confirm.total)}</span> IVA incluido
-                {confirm.docChanged ? ', con tus cambios' : ', con tus precios de hoy'}.
-              </>
-            ) : (
-              <>
-                Tu cliente ve la versión {confirm.current}. La versión {confirm.next} {confirm.docChanged ? 'incluye tus cambios y ' : ''}sumaría{' '}
-                <span className="font-medium tabular">{formatCLP(confirm.total)}</span> IVA incluido.
-              </>
-            )}
-          </p>
+
           <div>
-            <div className="mb-1.5 text-[13px] font-medium text-paper-900">Enlace actual (versión {confirm.current})</div>
-            <input
-              readOnly
-              value={confirm.url}
-              aria-label="Enlace actual del cliente"
-              onFocus={(e) => e.currentTarget.select()}
-              className="h-9 w-full min-w-0 rounded-sm border border-paper-200 bg-paper-50 px-3 font-mono text-[12px] text-paper-900 outline-none focus:border-ink-500"
+            <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3 text-table font-medium text-fg-strong">
+              <span id="send-format">{t('send.formatLabel')}</span>
+              {format !== sending.format ? (
+                <button type="button" onClick={saveDefault} disabled={update.isPending} className="text-meta font-normal text-accent-ink hover:underline">
+                  {t('send.saveDefault', { format: t(`send.format.${format}`) })}
+                </button>
+              ) : null}
+            </div>
+            <SegmentedControl<SendFormat>
+              aria-label={t('send.formatLabel')}
+              block
+              value={format}
+              onValueChange={chooseFormat}
+              options={(['pdf', 'link', 'both'] as const).map((value) => ({ value, label: t(`send.format.${value}`) }))}
             />
+            <p className="mt-1.5 text-table text-fg-muted">{t(`send.formatHint.${format}`)}</p>
           </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <Button variant="primary" icon={Send} onClick={() => void send(true)}>
-              Enviar versión {confirm.next}
-            </Button>
-            <Button icon={Copy} onClick={() => void copyCurrent(confirm.url, confirm.current)}>
-              Copiar enlace de la versión {confirm.current}
-            </Button>
+
+          <div>
+            <div className="mb-1.5 text-table font-medium text-fg-strong">{t('send.channelLabel')}</div>
+            <SegmentedControl<SendChannel>
+              aria-label={t('send.channelLabel')}
+              block
+              value={channel}
+              onValueChange={setChannel}
+              options={[
+                { value: 'whatsapp', label: t('send.whatsapp'), icon: MessageCircle },
+                { value: 'email', label: t('send.mail'), icon: Mail },
+              ]}
+            />
+            {channel === 'email' && mailProvider && !ownMail ? (
+              <Field className="mt-3" label={t('send.mailTo')} hint={t(`send.mailHint.${format}`)} aside={<OwnMailButton label={t('send.ownMail')} onClick={() => setOwnMail(true)} />}>
+                <Input type="email" inputMode="email" autoComplete="off" value={to} onChange={(e) => setTo(e.target.value)} />
+              </Field>
+            ) : channel === 'email' && mailProvider ? (
+              <p className="mt-1.5 flex flex-wrap items-baseline justify-between gap-x-3 text-table text-fg-muted">
+                <span>{t('send.ownMailHint')}</span>
+                <OwnMailButton label={t('send.serverMail')} onClick={() => setOwnMail(false)} />
+              </p>
+            ) : channel === 'email' ? (
+              <Notice tone="neutral" size="compact" className="mt-2">
+                {t('send.noProvider')}
+              </Notice>
+            ) : (
+              <p className="mt-1.5 text-table text-fg-muted">
+                {!client ? t('send.noClient') : contact ? t('send.to', { name: client.name, contact }) : t('send.noContact', { name: client.name })}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3">
+              <span className="text-table font-medium text-fg-strong">{t('send.message')}</span>
+              <span className="inline-flex items-center gap-1 text-meta text-fg-muted">
+                <Languages aria-hidden strokeWidth={1.75} className="size-3.5" />
+                {t('send.messageLanguage', { language: inlineLanguageName(locale, t.locale) })}
+              </span>
+            </div>
+            <Textarea
+              rows={7}
+              value={text}
+              onChange={(e) => {
+                const value = e.target.value
+                setDrafts((all) => ({ ...all, [channel]: value }))
+              }}
+              aria-label={t('send.messageAria')}
+              className="text-table"
+            />
+            <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-meta text-fg-muted">
+              <span>{needsLink ? t('send.linkHint', { token: '{enlace}' }) : t('send.messageHint')}</span>
+              <button type="button" onClick={() => setEditing(true)} className="text-accent-ink hover:underline">
+                {t('send.editTemplate')}
+              </button>
+            </div>
+            {unknown.length ? <p className="mt-1 text-meta text-warning">{t('send.unknownVariables', { names: unknown.join(', ') })}</p> : null}
           </div>
         </div>
-      ) : done ? (
-        <div className="space-y-4">
-          <div>
-            <div className="mb-1.5 text-[13px] font-medium text-paper-900">Enlace del cliente</div>
-            <div className="flex items-stretch gap-2">
-              <input
-                readOnly
-                value={done.url}
-                aria-label="Enlace del cliente"
-                onFocus={(e) => e.currentTarget.select()}
-                className="h-9 min-w-0 flex-1 rounded-sm border border-paper-200 bg-paper-50 px-3 font-mono text-[12px] text-paper-900 outline-none focus:border-ink-500"
-              />
-              <Button icon={copied ? Check : Copy} onClick={() => void copy()} className="w-28">
-                {copied ? 'Copiado' : 'Copiar'}
-              </Button>
-            </div>
-          </div>
-          <div>
-            <div className="mb-1.5 flex items-baseline justify-between">
-              <span className="text-[13px] font-medium text-paper-900">Mensaje</span>
-              <span className="text-meta text-paper-600">Puedes cambiarlo antes de enviar</span>
-            </div>
-            <Textarea rows={5} value={text} onChange={(e) => setMessage(e.target.value)} aria-label="Mensaje para el cliente" className="text-[13px]" />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Button asChild variant="primary" size="lg">
-              <a href={whatsappUrl(text, client?.phone)} target="_blank" rel="noreferrer">
-                <MessageCircle aria-hidden strokeWidth={1.75} />
-                WhatsApp
-              </a>
-            </Button>
-            <Button asChild size="lg">
-              <a href={mailtoUrl({ to: client?.email, subject: `Cotización N° ${number}${title ? ` · ${title}` : ''}`, body: text })}>
-                <Mail aria-hidden strokeWidth={1.75} />
-                Correo
-              </a>
-            </Button>
-          </div>
-          {!client ? (
-            <p className="text-meta text-paper-600">Sin cliente asignado: elige a quién enviarlo en WhatsApp o en tu correo.</p>
-          ) : !phone && !client.email ? (
-            <p className="text-meta text-paper-600">Agrega el teléfono o el correo de {client.name} en Clientes para abrir su chat directo la próxima vez.</p>
-          ) : null}
-        </div>
-      ) : null}
+      )}
     </DialogContent>
   )
+}
+
+function OwnMailButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="text-meta font-normal text-accent-ink hover:underline">
+      {label}
+    </button>
+  )
+}
+
+/** Nombre del idioma dentro de una frase de la interfaz, con su mayúscula natural («en inglés», «auf Englisch»). */
+function inlineLanguageName(target: keyof typeof LOCALE_META, ui: keyof typeof LOCALE_META): string {
+  try {
+    return new Intl.DisplayNames([LOCALE_META[ui].intl], { type: 'language' }).of(LOCALE_META[target].intl.split('-')[0] ?? target) ?? LOCALE_META[target].label
+  } catch {
+    return LOCALE_META[target].label
+  }
 }

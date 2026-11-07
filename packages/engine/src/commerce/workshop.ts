@@ -11,6 +11,7 @@ import type {
   WorkshopData,
   WorkshopWindow,
 } from '../types'
+import { includedLineIds } from './choices'
 import { sanitizeCut } from './defaults'
 import {
   evaluateQuoteWithBoms,
@@ -132,7 +133,7 @@ export function materialListFrom(
     let exact = 0
     let mm = 0
     for (const bar of group.bars) {
-      if (!bar.fromOffcut) exact += barNet * (bar.barLength / standard)
+      if (!bar.fromOffcut && positive(standard)) exact += barNet * (bar.barLength / standard)
       for (const c of bar.cuts) mm += c.length
     }
     const line: MaterialLineDetail = {
@@ -184,7 +185,7 @@ export function materialListFrom(
     const unit = item?.unit ?? acc.sample.unit ?? 'u'
     let qty: number
     if (pack > 1) qty = Math.ceil(acc.units / pack - 1e-9)
-    else if (unit === 'm') qty = Math.ceil(acc.units * 100 - 1e-6) / 100
+    else if (unit === 'm' || unit === 'm2') qty = Math.ceil(acc.units * 100 - 1e-6) / 100
     else qty = Math.ceil(acc.units - 1e-9)
     const brandId = item?.brandId ?? acc.fallbackBrand
     const unitNet = net(item?.price, familyDiscount(lk.brandSettings(brandId), family))
@@ -197,7 +198,7 @@ export function materialListFrom(
       unitCost: round2(unitNet),
       total: roundHalfUp(qty * unitNet),
       consumption: round3(acc.units),
-      consumptionUnit: pack > 1 ? (unit === 'm' ? 'm' : 'u') : unit,
+      consumptionUnit: pack > 1 ? (unit === 'm' || unit === 'm2' ? unit : 'u') : unit,
     }
     out.push(withNames(line, lk, undefined, brandId))
   }
@@ -273,10 +274,12 @@ export function buildWorkshopDataWith(
   opts: WorkshopOptions = {},
 ): WorkshopDataDetail {
   const cutSettings = sanitizeCut(cut)
-  const items = quote?.items ?? []
+  // A producción va lo que cuenta en el total: un opcional sin marcar no se fabrica.
+  const counted = includedLineIds([...(quote?.items ?? []), ...(quote?.extras ?? [])], quote?.selection)
+  const items = (quote?.items ?? []).filter((item) => counted.has(item.id))
   const lk = catalogLookup(catalog)
   const boms = items.map((item) => safeBom(core, item.design, catalog))
-  const evaluation = evaluateQuoteWithBoms(quote, boms, catalog, pricing, { cut: cutSettings })
+  const evaluation = evaluateQuoteWithBoms({ ...quote, items }, boms, catalog, pricing, { cut: cutSettings })
 
   const windows: WorkshopWindow[] = items.map((item, i) => {
     const w: WorkshopWindow = {

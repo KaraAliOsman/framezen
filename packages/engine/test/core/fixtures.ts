@@ -182,7 +182,7 @@ export function manufacturerCatalog(): Catalog {
     name: 'PRO6004 (plantilla fabricante)',
     // Con soldadura 2,5 la plantilla nombra aceros 892 y 788 (= cota − 108 y nominal − 140): con
     // la regla «corte − descuento» del contrato, el descuento de esa plantilla es 113 / 145.
-    pauta: { ...PRO6004.pauta, weld: 2.5, reinforcement: { frame: 113, sash: 145, mullion: 20 } },
+    pauta: { ...PRO6004.pauta, weld: 2.5 },
   }
   return prolineCatalog({ lines: [line] })
 }

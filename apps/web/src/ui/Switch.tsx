@@ -17,8 +17,10 @@ export function Switch({ label, description, size = 'md', className, id, ...prop
     <RadixSwitch.Root
       id={switchId}
       className={cn(
-        'peer relative inline-flex shrink-0 items-center rounded-full border border-transparent bg-paper-350/60',
-        'transition-colors duration-160 ease-out data-[state=checked]:bg-ink-600 disabled:opacity-50',
+        'peer relative inline-flex shrink-0 items-center rounded-full bg-track',
+        'transition-colors duration-140 ease-out data-[state=checked]:bg-accent',
+        'disabled:cursor-not-allowed disabled:opacity-45',
+        "after:absolute after:-inset-2 after:content-['']",
         size === 'sm' ? 'h-4 w-7' : 'h-5 w-9',
         !label && className,
       )}
@@ -26,11 +28,11 @@ export function Switch({ label, description, size = 'md', className, id, ...prop
     >
       <RadixSwitch.Thumb
         className={cn(
-          'block rounded-full bg-paper-0 shadow-[0_1px_2px_rgb(31_28_24/0.2)] transition-transform duration-160 ease-out',
-          'dark:bg-paper-900 dark:data-[state=checked]:bg-paper-0',
+          'block rounded-full bg-white shadow-[0_1px_2px_rgb(21_22_29/0.25)] transition-transform duration-140 ease-out',
+          'dark:bg-fg dark:data-[state=checked]:bg-fg-on-accent',
           size === 'sm'
-            ? 'size-3 translate-x-0.5 data-[state=checked]:translate-x-[13px]'
-            : 'size-4 translate-x-0.5 data-[state=checked]:translate-x-[17px]',
+            ? 'size-3 translate-x-0.5 data-[state=checked]:translate-x-[14px]'
+            : 'size-4 translate-x-0.5 data-[state=checked]:translate-x-[18px]',
         )}
       />
     </RadixSwitch.Root>
@@ -39,9 +41,9 @@ export function Switch({ label, description, size = 'md', className, id, ...prop
   return (
     <div className={cn('flex items-start gap-3', className)}>
       <div className="pt-0.5">{control}</div>
-      <label htmlFor={switchId} className="min-w-0 cursor-pointer select-none">
-        <span className="block text-base text-paper-900">{label}</span>
-        {description ? <span className="block text-[13px] leading-[18px] text-paper-600">{description}</span> : null}
+      <label htmlFor={switchId} className="min-w-0 cursor-pointer select-none peer-disabled:cursor-not-allowed peer-disabled:opacity-60">
+        <span className="block text-base text-fg">{label}</span>
+        {description ? <span className="block text-table text-fg-muted">{description}</span> : null}
       </label>
     </div>
   )

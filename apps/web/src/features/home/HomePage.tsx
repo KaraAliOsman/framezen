@@ -1,31 +1,40 @@
 /**
- * Inicio (SPEC §4): saludo, acciones rápidas, embudo con montos, vendido del mes frente al
- * anterior, seguimientos sugeridos, recientes con miniatura y actividad. Cuenta nueva: bienvenida
- * con la primera cotización a un clic. Sin gráficos de relleno.
+ * Inicio: contesta «¿qué hago ahora?». Arriba la primera tarea con su mensaje entero y su acción como
+ * primaria de la pantalla; debajo el resto de la cola y lo reciente; al lado, las cifras del mes.
+ * Sin gráficos de relleno ni cifras inventadas: todo sale de la API. Cuenta nueva: la primera
+ * cotización a un clic.
  */
 import { useMemo } from 'react'
-import { useNavigate } from 'react-router'
+import { Link, useNavigate } from 'react-router'
+import { FilePlus2, UserPlus } from 'lucide-react'
 import { humanError } from '../../lib/api'
 import { useSession } from '../../lib/auth'
 import { firstName } from '../../lib/format'
 import { useCatalog, useCreateQuote, useQuotes } from '../../lib/hooks'
+import { useLocale, useT } from '../../lib/i18n'
 import { usePageTitle } from '../../lib/usePageTitle'
 import { useShortcut } from '../../lib/useShortcut'
-import { Button, EmptyState, Page, Skeleton, toast } from '../../ui'
-import { usePendingActivity, useQuoteStats, useRecentActivity, useWonQuotes } from './api'
-import { FollowUps } from './FollowUps'
+import { Button, buttonClass, EmptyState, Page, Skeleton, SkeletonRows, toast } from '../../ui'
+import { useQuoteStats } from './api'
+import { FollowUps, NowBlock } from './FollowUps'
 import { HomeEmpty } from './HomeEmpty'
-import { buildFunnel, greeting, isEmptyAccount, monthSales, todayLabel } from './homeModel'
-import { ActivityFeed, Funnel, QuickActions, RecentQuotes, SoldThisMonth } from './sections'
+import es from './i18n/es'
+import { buildQueue, greetingKey, isEmptyAccount, todayLabel, type QuoteStats } from './homeModel'
+import { CatalogNotice, RecentQuotes, SummaryStrip } from './sections'
 
 export default function HomePage() {
-  usePageTitle('Inicio')
+  const t = useT(es)
+  const { locale } = useLocale()
+  usePageTitle(t('title'))
   const me = useSession()
   const navigate = useNavigate()
   const createQuote = useCreateQuote()
   const stats = useQuoteStats()
   const empty = isEmptyAccount(stats.data)
   const now = useMemo(() => new Date(), [])
+  const queue = useMemo(() => buildQueue(stats.data?.followUps ?? []), [stats.data?.followUps])
+  // Una sola primaria por vista: si hay una tarea, su acción manda y «Nueva cotización» baja a secundaria.
+  const hasTask = queue.length > 0
 
   const newQuote = () => {
     if (createQuote.isPending) return
@@ -39,89 +48,106 @@ export default function HomePage() {
   }
   useShortcut('c', newQuote)
 
-  const funnel = buildFunnel(stats.data)
-  const openOrders = stats.data?.byStatus.workshop.count ?? 0
+  const greetingText = t('greeting.withName', { greeting: t(`greeting.${greetingKey(now)}`), name: firstName(me.user.name) })
+  const dayLine = `${todayLabel(now, undefined, locale)} · ${me.org.name}`
 
   return (
-    <Page width="wide">
-      <header className="flex flex-col gap-5 pb-6">
-        <div>
-          <p className="text-[13px] text-paper-600 first-letter:uppercase">
-            {todayLabel(now)} · {me.org.name}
-          </p>
-          <h1 className="mt-1 text-h2 font-semibold tracking-[-0.015em] text-paper-900 sm:text-h1">
-            {greeting(now)}, {firstName(me.user.name)}
-          </h1>
+    <Page width="default" className="@container">
+      <header className="flex items-center justify-between gap-3 pb-8">
+        <p className="min-w-0 truncate text-table text-fg-muted">
+          <span className="font-medium text-fg">{greetingText}</span>
+          <span className="max-sm:hidden"> · {dayLine}</span>
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          <Link to="/clientes?nuevo=1" className={buttonClass('ghost', 'md', empty ? undefined : 'max-sm:hidden')}>
+            <UserPlus aria-hidden strokeWidth={1.75} />
+            {t('actions.newClient')}
+          </Link>
+          {empty ? null : (
+            <Button variant={hasTask ? 'secondary' : 'primary'} icon={FilePlus2} shortcut="c" onClick={newQuote} loading={createQuote.isPending}>
+              {t('actions.newQuote')}
+            </Button>
+          )}
         </div>
-        <QuickActions onNewQuote={newQuote} creating={createQuote.isPending} openOrders={openOrders} />
       </header>
 
       {stats.isPending ? (
         <HomeSkeleton />
       ) : stats.isError && !stats.data ? (
         // Sin datos no mostramos ceros ni «Todo al día»: decimos qué pasó y ofrecemos reintentar.
-        <div className="rounded-lg border border-paper-200 bg-paper-0">
-          <EmptyState
-            sketch="fixed"
-            size="compact"
-            title="No pudimos cargar tu resumen"
-            description={humanError(stats.error)}
-            action={<Button onClick={() => void stats.refetch()}>Reintentar</Button>}
-          />
-        </div>
+        <EmptyState
+          size="compact"
+          title={t('error.title')}
+          description={humanError(stats.error)}
+          action={<Button onClick={() => void stats.refetch()}>{t('error.retry')}</Button>}
+        />
       ) : empty ? (
         <HomeEmpty onNewQuote={newQuote} creating={createQuote.isPending} />
       ) : (
-        <Dashboard funnel={funnel} stats={stats.data} statsLoading={stats.isPending} now={now} />
+        <Dashboard stats={stats.data} queue={queue} now={now} />
       )}
     </Page>
   )
 }
 
-function Dashboard({
-  funnel,
-  stats,
-  statsLoading,
-  now,
-}: {
-  funnel: ReturnType<typeof buildFunnel>
-  stats: ReturnType<typeof useQuoteStats>['data']
-  statsLoading: boolean
-  now: Date
-}) {
-  const won = useWonQuotes()
+function Dashboard({ stats, queue, now }: { stats: QuoteStats; queue: QuoteStats['followUps']; now: Date }) {
+  const t = useT(es)
   const recent = useQuotes({})
   const catalog = useCatalog()
-  const pending = usePendingActivity()
-  const activity = useRecentActivity()
-  const sales = monthSales(won.data ?? [], now, stats?.soldThisMonth)
-
+  const [first, ...rest] = queue
+  const quotes = recent.data ?? []
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-5">
-      <div className="min-w-0 lg:col-span-8">
-        <Funnel stages={funnel} loading={statsLoading} />
+    // En el teléfono el orden es tarea, cifras y el resto; en escritorio las cifras van al lado, fijas.
+    <div className="grid grid-cols-1 gap-x-16 gap-y-10 @4xl:grid-cols-[minmax(0,1fr)_216px] @4xl:grid-rows-[auto_1fr] @4xl:gap-y-0">
+      <div className="min-w-0">
+        {first ? (
+          <NowBlock quote={first} catalog={catalog.data} />
+        ) : (
+          <section aria-labelledby="home-now">
+            <h1 id="home-now" className="text-h2 font-medium text-fg-strong sm:text-h1">
+              {t('now.clear')}
+            </h1>
+            <p className="mt-1 max-w-xl text-fg-muted">{t('now.clearText')}</p>
+          </section>
+        )}
+        <CatalogNotice catalog={catalog.data} quotes={quotes} />
       </div>
-      <div className="min-w-0 lg:col-span-4">
-        <SoldThisMonth sales={sales} loading={won.isPending && !stats} />
+      <div className="@4xl:col-start-2 @4xl:row-span-2 @4xl:row-start-1">
+        <SummaryStrip stats={stats} count={queue.length} now={now} />
       </div>
-      <div className="flex min-w-0 flex-col gap-4 lg:col-span-8 lg:gap-5">
-        <RecentQuotes quotes={(recent.data ?? []).slice(0, 6)} catalog={catalog.data} loading={recent.isPending} />
-      </div>
-      <div className="flex min-w-0 flex-col gap-4 lg:col-span-4 lg:gap-5">
-        <FollowUps followUps={stats?.followUps ?? []} pending={pending.data ?? []} loading={pending.isPending} />
-        <ActivityFeed events={(activity.data ?? []).slice(0, 6)} loading={activity.isPending} />
+      <div className="min-w-0 @4xl:mt-10">
+        <FollowUps queue={rest} catalog={catalog.data} />
+        <RecentQuotes quotes={quotes.slice(0, 6)} catalog={catalog.data} loading={recent.isPending} />
       </div>
     </div>
   )
 }
 
 function HomeSkeleton() {
+  const t = useT(es)
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:gap-5" aria-busy="true" aria-label="Cargando">
-      <Skeleton className="h-[132px] lg:col-span-8" />
-      <Skeleton className="h-[132px] lg:col-span-4" />
-      <Skeleton className="h-72 lg:col-span-8" />
-      <Skeleton className="h-72 lg:col-span-4" />
+    <div className="grid grid-cols-1 gap-x-16 gap-y-10 @4xl:grid-cols-[minmax(0,1fr)_216px]" aria-busy="true" aria-label={t('loading')}>
+      <div className="min-w-0">
+        <div className="flex gap-5">
+          <Skeleton className="size-24 max-sm:hidden" />
+          <div className="flex-1 space-y-3">
+            <Skeleton className="h-8 w-2/3" />
+            <Skeleton className="h-4 w-1/2" />
+            <Skeleton className="h-9 w-64" />
+          </div>
+        </div>
+        <div className="mt-10">
+          <SkeletonRows rows={4} columns={3} />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-6 @lg:grid-cols-4 @4xl:grid-cols-1">
+        {Array.from({ length: 4 }, (_, i) => (
+          <div key={i} className="space-y-2">
+            <Skeleton className="h-8 w-32" />
+            <Skeleton className="h-4 w-24" />
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

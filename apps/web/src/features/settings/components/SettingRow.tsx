@@ -2,8 +2,8 @@ import type { ReactNode } from 'react'
 import { cn } from '../../../lib/cn'
 
 /**
- * Fila de ajuste: qué es y por qué importa (en lenguaje de taller) a la izquierda, el control a la
- * derecha. En el teléfono se apila.
+ * Fila de ajuste: qué es y por qué importa a la izquierda, el valor a la derecha, alineado con los
+ * demás. Si no cabe, el valor pasa debajo. Va dentro de un contenedor `@container`.
  */
 export function SettingRow({
   title,
@@ -22,24 +22,18 @@ export function SettingRow({
   wide?: boolean
 }) {
   return (
-    <div
-      className={cn(
-        'grid gap-x-8 gap-y-3 border-b border-paper-200 py-5 first:pt-0 last:border-b-0 last:pb-0',
-        wide ? '@2xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]' : '@2xl:grid-cols-[minmax(0,1fr)_minmax(0,300px)]',
-        className,
-      )}
-    >
+    <div className={cn('grid gap-x-10 gap-y-2 py-3 first:pt-0 last:pb-0', wide ? '@xl:grid-cols-[minmax(0,1fr)_minmax(0,300px)]' : '@xl:grid-cols-[minmax(0,1fr)_minmax(0,220px)]', className)}>
       <div className="min-w-0">
         {htmlFor ? (
-          <label htmlFor={htmlFor} className="font-medium text-paper-900">
+          <label htmlFor={htmlFor} className="text-fg-strong">
             {title}
           </label>
         ) : (
-          <p className="font-medium text-paper-900">{title}</p>
+          <p className="text-fg-strong">{title}</p>
         )}
-        {description ? <div className="mt-1 text-[13px] leading-[19px] text-paper-600">{description}</div> : null}
+        {description ? <div className="mt-0.5 text-table text-fg-muted">{description}</div> : null}
       </div>
-      <div className="min-w-0 max-w-[440px] @2xl:max-w-none @2xl:pt-0.5">{children}</div>
+      <div className="max-w-110 min-w-0 has-[>[role=switch]]:flex has-[>[role=switch]]:justify-end @xl:max-w-none">{children}</div>
     </div>
   )
 }

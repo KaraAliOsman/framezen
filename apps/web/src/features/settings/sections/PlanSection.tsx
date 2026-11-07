@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { CalendarClock, Check, CircleAlert, CreditCard, Receipt, UserPlus } from 'lucide-react'
-import { PLAN_ORDER, PLANS, TRIAL_DAYS, type BillingDetailFields, type BillingState } from '@framezen/shared'
+import { CalendarClock, Check, CircleAlert, UserPlus } from 'lucide-react'
+import { PLAN_ORDER, PLANS, QUOTE_PRESET_IDS, TRIAL_DAYS, planLimits, type BillingDetailFields, type BillingState } from '@dekopen/shared'
 import { ApiRequestError, humanError } from '../../../lib/api'
 import { useSession } from '../../../lib/auth'
 import { cn } from '../../../lib/cn'
-import { formatCLP, formatDate, formatLongDate, formatNumber } from '../../../lib/format'
+import { formatLongDate } from '../../../lib/format'
+import { getFormatter, useFormat, useGlossary, useT, type MessageKey, type MessageParams } from '../../../lib/i18n'
 import { describePlan } from '../../../lib/plan'
 import { qk } from '../../../lib/queryClient'
-import { Badge, Button, SegmentedControl, Skeleton, toast, toastUndo } from '../../../ui'
+import { Button, Meter, SegmentedControl, Skeleton, toast, toastUndo } from '../../../ui'
 import { SectionHeader } from '../components/SectionHeader'
+import es from '../i18n/es'
 import {
   billingKey,
   useBilling,
@@ -22,8 +24,10 @@ import {
   type PaidPlan,
   type Period,
 } from '../lib/accountApi'
+import { useAssistantStatus } from '../lib/assistantsApi'
 
 type Billing = BillingState & Partial<BillingDetailFields>
+type Translate = (key: MessageKey<typeof es>, params?: MessageParams) => string
 
 /** Ahorro anual en % frente a pagar mes a mes. */
 export function yearlySavingPct(code: PaidPlan): number {
@@ -33,55 +37,81 @@ export function yearlySavingPct(code: PaidPlan): number {
 
 const MAX_SAVING = Math.max(...PLAN_ORDER.map(yearlySavingPct))
 
-const PERIOD_LABEL: Record<Period, string> = { monthly: 'mensual', yearly: 'anual' }
-
-/** «30 de noviembre» (con el año solo si no es el actual). */
+/** «30 de noviembre» (con el año solo si no es el actual), en el idioma de la interfaz. */
 export function dayLabel(iso: string, now: Date = new Date()): string {
-  const long = formatLongDate(iso)
-  return new Date(iso).getFullYear() === now.getFullYear() ? long.replace(/ de \d{4}$/, '') : long
+  const fmt = getFormatter()
+  return new Date(iso).getFullYear() === now.getFullYear() ? fmt.date(iso, 'dayMonth') : fmt.date(iso, 'long')
 }
 
 function isCanceled(billing: Billing): boolean {
   return Boolean(billing.cancelAtPeriodEnd) || billing.status === 'canceled'
 }
 
-function statusLine(billing: Billing, info: ReturnType<typeof describePlan>): { text: string; tone: 'ink' | 'ok' | 'warn' | 'bad' } {
-  if (info.readOnly)
-    return {
-      text:
-        info.readOnlyMessage ??
-        (info.isTrial
-          ? 'Tu prueba terminó: puedes ver y exportar todo; elige un plan para seguir cotizando.'
-          : 'Tu plan terminó: puedes ver y exportar todo; elige un plan para seguir cotizando.'),
-      tone: 'bad',
-    }
-  if (info.isTrial)
-    return {
-      text:
-        info.trialDaysLeft === 1
-          ? 'Te queda 1 día de prueba con todo lo de Pro.'
-          : `Te quedan ${info.trialDaysLeft ?? TRIAL_DAYS} días de prueba con todo lo de Pro. Sin tarjeta.`,
-      tone: 'ink',
-    }
-  if (info.pastDue) return { text: 'No pudimos cobrar el último pago. Todo sigue funcionando; actualiza tu medio de pago cuando puedas.', tone: 'warn' }
-  if (isCanceled(billing) && billing.currentPeriodEnd) return { text: `Activo hasta el ${formatLongDate(billing.currentPeriodEnd)}.`, tone: 'warn' }
-  if (billing.pendingChange && billing.currentPeriodEnd) return { text: `Activo hasta el ${formatLongDate(billing.currentPeriodEnd)}.`, tone: 'ok' }
-  return {
-    text: billing.currentPeriodEnd ? `Activo. Se renueva el ${formatLongDate(billing.currentPeriodEnd)}.` : 'Activo.',
-    tone: 'ok',
+/** Lo que incluye cada plan, armado con los datos de `PLANS` (cifras siempre al día). */
+export function planHighlights(code: PaidPlan, t: Translate, planName: (code: string) => string, number: (n: number) => string): string[] {
+  const plan = PLANS[code]
+  const limits = planLimits(code)
+  const seats = (n: number | null) => (n === null ? t('plan.features.seatsUnlimited') : t('plan.features.seats', { count: n }))
+  const credits = t('plan.features.aiCredits', { credits: number(plan.aiCredits) })
+  const assistants = t('plan.features.assistants', { count: limits.assistants })
+  switch (code) {
+    case 'taller':
+      return [
+        t('plan.features.quotesUnlimited'),
+        t('plan.features.designer'),
+        t('plan.features.documents', { count: QUOTE_PRESET_IDS.length }),
+        t('plan.features.portal'),
+        t('plan.features.workshop'),
+        t('plan.features.localAssistant'),
+      ]
+    case 'pro':
+      return [t('plan.features.everythingIn', { plan: planName('taller') }), seats(plan.seats), credits, assistants, t('plan.features.ownDesign'), t('plan.features.client3d'), t('plan.features.purchasing')]
+    case 'empresa':
+      return [t('plan.features.everythingIn', { plan: planName('pro') }), seats(plan.seats), credits, assistants, t('plan.features.stations')]
+    case 'empresa2x':
+      return [t('plan.features.everythingIn', { plan: planName('empresa') }), credits, assistants]
   }
 }
 
-/** Lo que dice la pantalla al volver de Flow (/ajustes/plan?pago=…). */
-const PAYMENT_RETURN: Record<string, { text: string; tone: 'ok' | 'info' | 'bad' }> = {
-  ok: { text: 'Pago recibido: tu plan quedó activo.', tone: 'ok' },
-  pendiente: { text: 'Flow está confirmando tu pago. Puedes seguir trabajando; el plan se activa solo apenas quede listo.', tone: 'info' },
-  rechazado: { text: 'Flow no pudo hacer el cobro y no se cargó nada. Puedes intentarlo de nuevo cuando quieras.', tone: 'bad' },
-  desconocido: { text: 'Aún no pudimos confirmar el pago. Si se cobró, tu plan se activa solo en unos minutos.', tone: 'info' },
+/** Filas de la comparación: cifras donde hay cifra y un visto donde la función está incluida. */
+export function compareRows(t: Translate, number: (n: number) => string): { id: string; label: string; value: (code: PaidPlan) => string | boolean }[] {
+  const from = (min: PaidPlan) => (code: PaidPlan) => PLAN_ORDER.indexOf(code) >= PLAN_ORDER.indexOf(min)
+  return [
+    { id: 'seats', label: t('plan.people.title'), value: (code) => (PLANS[code].seats === null ? t('plan.table.unlimited') : number(PLANS[code].seats ?? 1)) },
+    { id: 'credits', label: t('plan.credits.title'), value: (code) => (PLANS[code].aiCredits ? number(PLANS[code].aiCredits) : t('plan.table.dash')) },
+    { id: 'assistants', label: t('plan.assistants.title'), value: (code) => number(planLimits(code).assistants) },
+    { id: 'quotes', label: t('plan.features.quotesUnlimited'), value: from('taller') },
+    { id: 'designer', label: t('plan.features.designer'), value: from('taller') },
+    { id: 'documents', label: t('plan.features.documents', { count: QUOTE_PRESET_IDS.length }), value: from('taller') },
+    { id: 'portal', label: t('plan.features.portal'), value: from('taller') },
+    { id: 'workshop', label: t('plan.features.workshop'), value: from('taller') },
+    { id: 'ownDesign', label: t('plan.features.ownDesign'), value: from('pro') },
+    { id: 'client3d', label: t('plan.features.client3d'), value: from('pro') },
+    { id: 'purchasing', label: t('plan.features.purchasing'), value: from('pro') },
+    { id: 'stations', label: t('plan.features.stations'), value: from('empresa') },
+  ]
 }
 
-/** Plan y facturación: plan actual, prueba, créditos de Marco, cambio de plan, cancelación e historial. */
+function statusLine(billing: Billing, info: ReturnType<typeof describePlan>, t: Translate): { text: string; tone: 'ink' | 'ok' | 'warn' | 'bad' } {
+  if (info.readOnly)
+    return { text: info.readOnlyMessage ?? (info.isTrial ? t('plan.status.readOnlyTrial') : t('plan.status.readOnlyPlan')), tone: 'bad' }
+  if (info.isTrial) return { text: t('plan.status.trial', { days: info.trialDaysLeft ?? TRIAL_DAYS }), tone: 'ink' }
+  if (info.pastDue) return { text: t('plan.status.pastDue'), tone: 'warn' }
+  if (isCanceled(billing) && billing.currentPeriodEnd) return { text: t('plan.status.activeUntil', { date: formatLongDate(billing.currentPeriodEnd) }), tone: 'warn' }
+  if (billing.pendingChange && billing.currentPeriodEnd) return { text: t('plan.status.activeUntil', { date: formatLongDate(billing.currentPeriodEnd) }), tone: 'ok' }
+  return { text: billing.currentPeriodEnd ? t('plan.status.renews', { date: formatLongDate(billing.currentPeriodEnd) }) : t('plan.status.active'), tone: 'ok' }
+}
+
+/** Lo que dice la pantalla al volver de Flow (/ajustes/plan?pago=…). */
+const PAYMENT_RETURN: Record<string, 'ok' | 'info' | 'bad'> = { ok: 'ok', pendiente: 'info', rechazado: 'bad', desconocido: 'info' }
+
+/** Plan y facturación: plan actual, prueba, créditos de IA, cambio de plan, cancelación e historial. */
 export function PlanSection() {
+  const t = useT(es)
+  const g = useGlossary()
+  const fmt = useFormat()
+  // Los planes se cobran en pesos chilenos, sea cual sea la moneda de tus cotizaciones.
+  const clp = useFormat({ currency: 'CLP' })
   const me = useSession()
   const client = useQueryClient()
   const billingQuery = useBilling()
@@ -91,15 +121,15 @@ export function PlanSection() {
   const cancel = useCancelPlan()
   const resume = useResumePlan()
   const history = useBillingHistory(me.org.createdAt)
+  const assistantStatus = useAssistantStatus()
   const [period, setPeriod] = useState<Period>(billing.period ?? 'yearly')
   const [busy, setBusy] = useState<PaidPlan | 'keep' | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [params, setParams] = useSearchParams()
   const isOwner = me.role === 'owner'
-  const status = statusLine(billing, info)
+  const status = statusLine(billing, info, t)
   const used = billing.aiCredits.used
   const included = billing.aiCredits.included + billing.aiCredits.extra
-  const usedPct = included > 0 ? Math.min(100, (used / included) * 100) : 0
   const canInvite = me.solo && (billing.seats === null || billing.seats > 1)
   const pending = !info.readOnly ? billing.pendingChange : undefined
   const canceled = !info.readOnly && !info.isTrial && isCanceled(billing)
@@ -107,16 +137,21 @@ export function PlanSection() {
   const canCancel = isOwner && paidActive && !canceled
   const currentPlan = billing.plan !== 'trial' ? billing.plan : null
   const entries = useMemo(() => withPendingChange(history.data ?? [], pending), [history.data, pending])
+  const assistantLimit = assistantStatus.data?.assistants?.limit ?? planLimits(billing.plan).assistants
+  const assistantsUsed = assistantStatus.data?.assistants?.used
+  const periodWord = (p: Period) => t(`plan.periodWord.${p}`)
 
   // Vuelta desde Flow: un aviso y el estado fresco. El id evita el aviso doble.
   const paymentResult = params.get('pago')
   useEffect(() => {
     if (!paymentResult) return
-    const copy = PAYMENT_RETURN[paymentResult] ?? PAYMENT_RETURN.desconocido!
+    const kind = PAYMENT_RETURN[paymentResult] ? paymentResult : 'desconocido'
+    const tone = PAYMENT_RETURN[kind]
+    const text = t(`plan.paymentReturn.${kind as 'ok' | 'pendiente' | 'rechazado' | 'desconocido'}`)
     const options = { id: 'billing-return' }
-    if (copy.tone === 'ok') toast.success(copy.text, options)
-    else if (copy.tone === 'bad') toast.error(copy.text, options)
-    else toast(copy.text, options)
+    if (tone === 'ok') toast.success(text, options)
+    else if (tone === 'bad') toast.error(text, options)
+    else toast(text, options)
     void client.invalidateQueries({ queryKey: billingKey })
     void client.invalidateQueries({ queryKey: qk.me })
     setParams(
@@ -127,7 +162,7 @@ export function PlanSection() {
       },
       { replace: true },
     )
-  }, [paymentResult, client, setParams])
+  }, [paymentResult, client, setParams, t])
 
   const choose = (code: PaidPlan, chosenPeriod: Period = period, key: PaidPlan | 'keep' = code) => {
     setNotice(null)
@@ -141,15 +176,12 @@ export function PlanSection() {
             return
           }
           setBusy(null)
-          toast.success(result?.message ?? `Listo: ya estás en ${PLANS[code].name}`)
+          toast.success(result?.message ?? t('plan.done', { plan: g.plan(code) }))
         },
         onError: (error) => {
           setBusy(null)
-          if (error instanceof ApiRequestError && (error.status === 404 || error.status === 405)) {
-            setNotice('Todavía no podemos cobrar en línea desde aquí. Tu cuenta sigue funcionando igual; vuelve a intentarlo en un rato.')
-          } else {
-            toast.error(humanError(error))
-          }
+          if (error instanceof ApiRequestError && (error.status === 404 || error.status === 405)) setNotice(t('plan.noOnlinePayment'))
+          else toast.error(humanError(error))
         },
       },
     )
@@ -181,257 +213,257 @@ export function PlanSection() {
 
   return (
     <div>
-      <SectionHeader title="Plan y facturación" description="Precios en pesos chilenos más IVA. Cambias o cancelas cuando quieras." />
+      <SectionHeader title={t('plan.title')} description={t('plan.description')} />
 
-      <section aria-label="Tu plan" className="overflow-hidden rounded-lg border border-paper-200 bg-paper-0">
-        <div className="grid grid-cols-1 gap-px bg-paper-200 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)]">
-          <div className="bg-paper-0 p-5">
-            <p className="text-[13px] text-paper-600">Tu plan</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <span className="text-h2 font-semibold tracking-[-0.01em] text-paper-900">{info.name}</span>
-              {billing.period ? <Badge tone="neutral">{billing.period === 'yearly' ? 'Anual' : 'Mensual'}</Badge> : null}
-              {canceled ? <Badge tone="warn">No se renueva</Badge> : pending ? <Badge tone="ink">Cambio programado</Badge> : null}
-            </div>
-            <p className={cn('mt-2 text-[13px] leading-[18px]', status.tone === 'bad' ? 'text-bad-800' : status.tone === 'warn' ? 'text-warn-800' : 'text-paper-600')}>
-              {status.text}
+      <section aria-label={t('plan.yourPlan')}>
+        <div className="grid grid-cols-1 gap-x-10 gap-y-6 sm:grid-cols-3">
+          <div className="min-w-0 sm:col-span-3">
+            <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="figure text-h3 font-medium text-fg-strong">{g.plan(billing.plan)}</span>
+              {billing.period ? <span className="text-table text-fg-muted">{billing.period === 'yearly' ? t('plan.periodBadge.yearly') : t('plan.periodBadge.monthly')}</span> : null}
+              {canceled ? <span className="text-table text-warning">{t('plan.notRenewing')}</span> : pending ? <span className="text-table text-fg">{t('plan.changeScheduled')}</span> : null}
             </p>
-            {info.isTrial && info.trialDaysLeft !== null ? (
-              <div className="mt-3 h-1 overflow-hidden rounded-full bg-paper-200" aria-hidden>
-                <div className="h-full rounded-full bg-ink-600" style={{ width: `${Math.round(info.trialProgress * 100)}%` }} />
-              </div>
-            ) : null}
+            <p className={cn('mt-1', status.tone === 'bad' ? 'text-danger' : status.tone === 'warn' ? 'text-warning' : 'text-fg-muted')}>{status.text}</p>
+            {info.isTrial && info.trialDaysLeft !== null ? <Meter className="mt-3 max-w-60" value={Math.round(info.trialProgress * 100)} max={100} tone="auto" aria-label={t('plan.trialProgress')} /> : null}
           </div>
-          <div className="bg-paper-0 p-5">
-            <p className="text-[13px] text-paper-600">Créditos de Marco</p>
+          <div className="min-w-0">
             {included > 0 ? (
               <>
-                <p className="mt-1 text-h3 font-semibold text-paper-900 tabular">
-                  {formatNumber(used)} <span className="text-base font-normal text-paper-600">de {formatNumber(included)}</span>
+                <p className="figure text-h3 font-medium text-fg-strong">
+                  {t.rich('plan.credits.of', { used: fmt.number(used), included: fmt.number(included), muted: <span className="text-base font-normal text-fg-muted" /> })}
                 </p>
-                <div
-                  className="mt-3 h-1 overflow-hidden rounded-full bg-paper-200"
-                  role="meter"
-                  aria-label="Créditos de Marco usados"
-                  aria-valuemin={0}
-                  aria-valuemax={included}
-                  aria-valuenow={used}
-                >
-                  <div className={cn('h-full rounded-full', usedPct > 85 ? 'bg-warn-600' : 'bg-ink-600')} style={{ width: `${usedPct}%` }} />
-                </div>
-                <p className="mt-2 text-meta text-paper-600">{info.isTrial ? 'Durante la prueba' : 'Se renuevan cada mes'}</p>
+                <p className="text-fg">{t('plan.credits.title')}</p>
+                <Meter className="mt-2" value={used} max={included} tone="auto" aria-label={t('plan.credits.aria')} />
+                <p className="mt-1.5 text-meta text-fg-muted">
+                  {info.isTrial
+                    ? t('plan.credits.duringTrial')
+                    : billing.aiCredits.resetsAt
+                      ? t('plan.credits.resets', { date: dayLabel(billing.aiCredits.resetsAt) })
+                      : t('plan.credits.monthly')}
+                </p>
               </>
             ) : (
-              <p className="mt-1 text-[13px] leading-[18px] text-paper-600">
-                Tu plan usa Marco en modo local (sin IA): entiende frases como «agrega una corredera de 1500 x 1200».
-              </p>
+              <>
+                <p className="text-fg">{t('plan.credits.title')}</p>
+                <p className="mt-1 text-table text-fg-muted">{t('plan.credits.localOnly')}</p>
+              </>
             )}
           </div>
-          <div className="bg-paper-0 p-5">
-            <p className="text-[13px] text-paper-600">Personas</p>
-            <p className="mt-1 text-h3 font-semibold text-paper-900 tabular">
-              {billing.seatsUsed} <span className="text-base font-normal text-paper-600">{billing.seats === null ? 'sin límite' : `de ${billing.seats}`}</span>
+          <div className="min-w-0">
+            <p className="figure text-h3 font-medium text-fg-strong">
+              {fmt.number(billing.seatsUsed)}{' '}
+              <span className="text-base font-normal text-fg-muted">{billing.seats === null ? t('plan.people.unlimited') : t('plan.people.of', { seats: fmt.number(billing.seats) })}</span>
             </p>
+            <p className="text-fg">{t('plan.people.title')}</p>
+            {billing.seats !== null ? <Meter className="mt-2" value={billing.seatsUsed} max={billing.seats} tone="auto" aria-label={t('plan.people.title')} /> : null}
             {canInvite && isOwner ? (
-              <Link to="/ajustes/equipo" className="mt-2 inline-flex items-center gap-1.5 text-[13px] font-medium text-ink-600 hover:text-ink-700">
+              <Link to="/ajustes/equipo" className="mt-1.5 inline-flex items-center gap-1.5 text-table font-medium text-accent-ink hover:underline">
                 <UserPlus aria-hidden className="size-3.5" strokeWidth={1.75} />
-                Invitar a alguien
+                {t('plan.people.invite')}
               </Link>
             ) : null}
+          </div>
+          <div className="min-w-0">
+            <p className="figure text-h3 font-medium text-fg-strong">
+              {assistantsUsed !== undefined ? (
+                <>
+                  {fmt.number(assistantsUsed)} <span className="text-base font-normal text-fg-muted">{t('plan.people.of', { seats: fmt.number(assistantLimit) })}</span>
+                </>
+              ) : (
+                <span className="text-base font-normal text-fg-muted">{t('plan.assistants.upTo', { count: assistantLimit })}</span>
+              )}
+            </p>
+            <p className="text-fg">{t('plan.assistants.title')}</p>
+            {assistantsUsed !== undefined ? <Meter className="mt-2" value={assistantsUsed} max={Math.max(1, assistantLimit)} tone="auto" aria-label={t('plan.assistants.title')} /> : null}
+            <Link to="/ajustes/asistentes" className="mt-1.5 inline-flex items-center gap-1.5 text-table font-medium text-accent-ink hover:underline">
+              {t('plan.assistants.manage')}
+            </Link>
           </div>
         </div>
 
         {pending && currentPlan ? (
-          <div role="status" className="flex flex-wrap items-center gap-x-4 gap-y-2.5 border-t border-ink-100 bg-ink-50 px-5 py-3">
-            <CalendarClock aria-hidden strokeWidth={1.75} className="size-4 shrink-0 text-ink-700" />
-            <p className="min-w-0 flex-1 basis-64 text-[13px] leading-[18px] text-paper-900">
-              <span className="font-medium">
-                Desde el {dayLabel(pending.at)} pasas a {PLANS[pending.plan].name} {PERIOD_LABEL[pending.period]}.
-              </span>{' '}
-              Hasta entonces sigues con {PLANS[currentPlan].name} y todo lo que incluye, sin cobros extra.
+          <div role="status" className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2.5 rounded-sm bg-sunken px-3.5 py-2.5">
+            <CalendarClock aria-hidden strokeWidth={1.75} className="size-4 shrink-0 text-fg-muted" />
+            <p className="min-w-0 flex-1 basis-64 text-table text-fg">
+              {t.rich('plan.pendingBanner', {
+                date: dayLabel(pending.at),
+                plan: g.plan(pending.plan),
+                period: periodWord(pending.period),
+                current: g.plan(currentPlan),
+                b: <span className="font-medium" />,
+              })}
             </p>
             {isOwner ? (
               <Button size="sm" variant="secondary" onClick={keepCurrent} loading={busy === 'keep'} disabled={checkout.isPending && busy !== 'keep'}>
-                Mantener {PLANS[currentPlan].name}
-                {pending.plan === currentPlan && billing.period ? ` ${PERIOD_LABEL[billing.period]}` : ''}
+                {pending.plan === currentPlan && billing.period
+                  ? t('plan.keepPeriod', { plan: g.plan(currentPlan), period: periodWord(billing.period) })
+                  : t('plan.keep', { plan: g.plan(currentPlan) })}
               </Button>
             ) : null}
           </div>
         ) : null}
 
         {canceled && billing.currentPeriodEnd ? (
-          <div role="status" className="flex flex-wrap items-center gap-x-4 gap-y-2.5 border-t border-warn-600/25 bg-warn-50 px-5 py-3">
-            <CircleAlert aria-hidden strokeWidth={1.75} className="size-4 shrink-0 text-warn-600" />
-            <p className="min-w-0 flex-1 basis-64 text-[13px] leading-[18px] text-paper-900">
-              <span className="font-medium">Cancelaste la renovación.</span> Tu plan sigue activo hasta el {dayLabel(billing.currentPeriodEnd)}; después la
-              cuenta queda en modo lectura, con todo disponible para descargar.
-            </p>
+          <div role="status" className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2.5 rounded-sm bg-warning-bg px-3.5 py-2.5">
+            <CircleAlert aria-hidden strokeWidth={1.75} className="size-4 shrink-0 text-warning" />
+            <p className="min-w-0 flex-1 basis-64 text-table text-fg">{t.rich('plan.canceledBanner', { date: dayLabel(billing.currentPeriodEnd), b: <span className="font-medium" /> })}</p>
             {isOwner ? (
               <Button size="sm" variant="secondary" onClick={() => reactivate()} loading={resume.isPending}>
-                Reactivar plan
+                {t('plan.reactivate')}
               </Button>
             ) : null}
           </div>
         ) : null}
 
         {paidActive ? (
-          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-paper-200 px-5 py-3 text-[13px] leading-[18px]">
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 text-table">
             <dl className="flex min-w-0 flex-wrap items-center gap-x-6 gap-y-1.5">
               <div className="flex min-w-0 items-center gap-2">
-                <dt className="flex items-center gap-2 text-paper-600">
-                  <CreditCard aria-hidden strokeWidth={1.75} className="size-4 shrink-0" />
-                  Medio de pago
-                </dt>
-                <dd className="text-paper-900">
+                <dt className="text-fg-muted">{t('plan.payment.method')}</dt>
+                <dd className="text-fg">
                   {billing.card
-                    ? `${billing.card.brand ?? 'Tarjeta'} terminada en ${billing.card.last4}`
+                    ? t('plan.payment.card', { brand: billing.card.brand ?? t('plan.payment.cardFallback'), last4: billing.card.last4 })
                     : billing.provider === 'dev'
-                      ? 'Modo de prueba, sin cobros'
-                      : 'Lo registras en Flow al pagar'}
+                      ? t('plan.payment.dev')
+                      : t('plan.payment.flow')}
                 </dd>
               </div>
               {(billing.creditBalance ?? 0) > 0 ? (
                 <div className="flex items-center gap-2">
-                  <dt className="text-paper-600">Saldo a favor</dt>
-                  <dd className="font-medium text-paper-900 tabular">{formatCLP(billing.creditBalance ?? 0)}</dd>
-                  <dd className="text-paper-600 max-sm:hidden">se descuenta de tu próximo cambio</dd>
+                  <dt className="text-fg-muted">{t('plan.payment.balance')}</dt>
+                  <dd className="font-medium text-fg-strong tabular">{clp.money(billing.creditBalance ?? 0)}</dd>
+                  <dd className="text-fg-muted max-sm:hidden">{t('plan.payment.balanceHint')}</dd>
                 </div>
               ) : null}
             </dl>
             {canCancel ? (
-              <Button size="sm" variant="ghost" className="-mr-2 text-paper-600 hover:text-paper-900" onClick={cancelPlan} loading={cancel.isPending}>
-                Cancelar suscripción
+              <Button size="sm" variant="ghost" className="-mr-2 text-fg-muted hover:text-fg" onClick={cancelPlan} loading={cancel.isPending}>
+                {t('plan.cancel')}
               </Button>
             ) : null}
           </div>
         ) : null}
       </section>
 
-      <div className="mt-10 flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0 max-w-2xl">
-          <h3 className="font-semibold text-paper-900">{info.isTrial || info.readOnly ? 'Elige tu plan' : 'Cambiar de plan'}</h3>
-          <p className="mt-0.5 text-[13px] leading-[18px] text-paper-600">
-            {info.isTrial || info.readOnly
-              ? 'El plan parte hoy. Todo lo que hiciste hasta ahora sigue aquí.'
-              : 'Si subes, rige hoy y descontamos los días que no usaste. Si bajas, rige desde tu próxima renovación. Nada de lo que tienes se pierde.'}
-          </p>
+      <div className="mt-12 flex flex-wrap items-end justify-between gap-3">
+        <div className="max-w-2xl min-w-0">
+          <h3 className="text-h4 font-medium text-fg-strong">{info.isTrial || info.readOnly ? t('plan.chooseTitle') : t('plan.changeTitle')}</h3>
+          <p className="mt-0.5 text-table text-fg-muted">{info.isTrial || info.readOnly ? t('plan.chooseHint') : t('plan.changeHint')}</p>
         </div>
         <SegmentedControl
-          aria-label="Forma de pago"
+          aria-label={t('plan.periodAria')}
           value={period}
           onValueChange={setPeriod}
           options={[
-            { value: 'monthly', label: 'Mensual' },
-            { value: 'yearly', label: `Anual · ahorra hasta ${MAX_SAVING} %` },
+            { value: 'monthly', label: t('plan.periodBadge.monthly') },
+            { value: 'yearly', label: t('plan.yearlySave', { pct: fmt.pct(MAX_SAVING) }) },
           ]}
         />
       </div>
 
       {notice ? (
-        <p role="status" className="mt-4 rounded-md border border-warn-600/25 bg-warn-50 px-3 py-2 text-[13px] text-warn-800">
+        <p role="status" className="mt-4 rounded-sm bg-warning-bg px-3 py-2 text-table text-warning">
           {notice}
         </p>
       ) : null}
 
-      <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {PLAN_ORDER.map((code) => {
-          const plan = PLANS[code]
-          const current = billing.plan === code && !info.readOnly && (billing.period ?? period) === period
-          const samePlan = billing.plan === code
-          const scheduled = Boolean(pending && pending.plan === code && pending.period === period)
-          const price = period === 'yearly' ? plan.yearlyMonthly : plan.monthly
-          return (
-            <article
-              key={code}
-              className={cn(
-                'relative flex flex-col rounded-lg border bg-paper-0 p-5',
-                samePlan ? 'border-ink-600 shadow-[inset_0_0_0_1px_var(--ink-600)]' : scheduled ? 'border-ink-100' : 'border-paper-200',
-              )}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <h4 className="font-semibold text-paper-900">{plan.name}</h4>
-                {scheduled ? (
-                  <Badge tone="ink">Programado</Badge>
-                ) : samePlan ? (
-                  <Badge tone="ink">Tu plan</Badge>
-                ) : info.isTrial && code === 'pro' ? (
-                  <Badge tone="ink">Lo estás probando</Badge>
-                ) : plan.recommended ? (
-                  <Badge tone="outline">Recomendado</Badge>
-                ) : null}
-              </div>
-              <p className="mt-1 min-h-9 text-[13px] leading-[18px] text-paper-600">{plan.tagline}</p>
-              <p className="mt-4 text-h2 font-semibold tracking-[-0.01em] text-paper-900 tabular">{formatCLP(price)}</p>
-              <p className="text-meta text-paper-600 tabular">
-                al mes + IVA
-                <span className="block">
-                  {period === 'yearly' ? `${formatCLP(plan.yearlyMonthly * 12)} al año · ahorras ${yearlySavingPct(code)} %` : 'Mes a mes, sin permanencia'}
-                </span>
-              </p>
-              <ul className="mt-4 flex flex-1 flex-col gap-2 text-[13px] leading-[18px] text-paper-900">
-                {plan.highlights.map((h) => (
-                  <li key={h} className="flex gap-2">
-                    <Check aria-hidden strokeWidth={2} className="mt-0.5 size-3.5 shrink-0 text-ok-600" />
-                    <span>{h}</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-5">
-                {scheduled && pending ? (
-                  <p className="flex min-h-9 items-center justify-center rounded-sm bg-ink-50 px-2 text-center text-[13px] font-medium text-ink-700">
-                    Desde el {dayLabel(pending.at)}
-                  </p>
-                ) : current ? (
-                  <p className="flex h-9 items-center justify-center rounded-sm bg-paper-100 text-[13px] font-medium text-paper-600">Tu plan actual</p>
-                ) : (
-                  <Button
-                    variant={plan.recommended || samePlan ? 'primary' : 'secondary'}
-                    className="w-full"
-                    disabled={!isOwner || (checkout.isPending && busy !== code)}
-                    loading={busy === code}
-                    onClick={() => choose(code)}
-                  >
-                    {samePlan ? `Pasar a ${period === 'yearly' ? 'anual' : 'mensual'}` : info.isTrial || info.readOnly ? `Elegir ${plan.name}` : `Cambiar a ${plan.name}`}
-                  </Button>
-                )}
-              </div>
-            </article>
-          )
-        })}
+      <div className="scrollbar-quiet -mx-4 mt-5 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+        <table className="w-full min-w-3xl border-collapse text-table">
+          <caption className="sr-only">{t('plan.chooseTitle')}</caption>
+          <thead>
+            <tr className="align-top">
+              <td className="sticky left-0 z-1 bg-canvas" />
+              {PLAN_ORDER.map((code) => {
+                const plan = PLANS[code]
+                const name = g.plan(code)
+                const current = billing.plan === code && !info.readOnly && (billing.period ?? period) === period
+                const samePlan = billing.plan === code
+                const scheduled = Boolean(pending && pending.plan === code && pending.period === period)
+                const price = period === 'yearly' ? plan.yearlyMonthly : plan.monthly
+                const recommended = plan.recommended && !samePlan
+                return (
+                  <th key={code} scope="col" data-plan={code} className="w-1/5 px-3 pb-4 text-left font-normal">
+                    <div className="flex items-baseline gap-2">
+                      <h4 className="text-h4 font-medium text-fg-strong">{name}</h4>
+                      {scheduled ? (
+                        <span className="text-meta text-fg-muted">{t('plan.card.scheduled')}</span>
+                      ) : samePlan ? (
+                        <span className="text-meta text-fg-muted">{t('plan.card.yours')}</span>
+                      ) : info.isTrial && code === 'pro' ? (
+                        <span className="text-meta text-fg-muted">{t('plan.card.trying')}</span>
+                      ) : recommended ? (
+                        <span className="text-meta text-fg-muted">{t('plan.card.recommended')}</span>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 figure text-h3 font-medium text-fg-strong">{clp.money(price)}</p>
+                    <p className="text-meta text-fg-muted tabular">
+                      {t('plan.card.perMonth')}
+                      <span className="block">
+                        {period === 'yearly' ? t('plan.card.yearlyTotal', { total: clp.money(plan.yearlyMonthly * 12), pct: fmt.pct(yearlySavingPct(code)).replace(/\s/, '\u00a0') }) : t('plan.card.monthlyNoLock')}
+                      </span>
+                    </p>
+                    <div className="mt-3">
+                      {scheduled && pending ? (
+                        <p className="flex min-h-9 items-center text-table text-fg-muted">{t('plan.card.from', { date: dayLabel(pending.at) })}</p>
+                      ) : current ? (
+                        <p className="flex min-h-9 items-center text-table text-fg-muted">{t('plan.card.current')}</p>
+                      ) : (
+                        <Button
+                          variant={recommended ? 'primary' : 'secondary'}
+                          className="w-full"
+                          disabled={!isOwner || (checkout.isPending && busy !== code)}
+                          loading={busy === code}
+                          onClick={() => choose(code)}
+                        >
+                          {samePlan ? t('plan.card.toPeriod', { period: periodWord(period) }) : info.isTrial || info.readOnly ? t('plan.card.choose', { plan: name }) : t('plan.card.change', { plan: name })}
+                        </Button>
+                      )}
+                    </div>
+                  </th>
+                )
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {compareRows(t, (n) => fmt.number(n)).map((row) => (
+              <tr key={row.id} className="border-t border-divider">
+                <th scope="row" className="sticky left-0 z-1 bg-canvas py-2.5 pr-3 text-left font-normal text-fg">
+                  {row.label}
+                </th>
+                {PLAN_ORDER.map((code) => {
+                  const value = row.value(code)
+                  return (
+                    <td key={code} className="px-3 py-2.5 text-fg tabular">
+                      {value === true ? <Check aria-label={t('plan.table.included')} strokeWidth={2} className="size-4 text-fg-strong" /> : value === false ? <span aria-label={t('plan.table.notIncluded')} className="text-fg-faint">{t('plan.table.dash')}</span> : value}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      {!isOwner ? <p className="mt-3 text-[13px] text-paper-600">Solo el dueño de la cuenta puede cambiar o cancelar el plan.</p> : null}
-      <p className="mt-3 text-meta text-paper-600">
-        {billing.provider === 'flow' ? 'Pagas con tarjeta o transferencia a través de Flow.' : 'Modo de prueba: el cambio de plan se activa al instante, sin cobro.'}
-      </p>
+      {!isOwner ? <p className="mt-3 text-table text-fg-muted">{t('plan.ownerOnly')}</p> : null}
+      <p className="mt-3 text-meta text-fg-muted">{billing.provider === 'flow' ? t('plan.providerFlow') : t('plan.providerDev')}</p>
 
-      <section aria-labelledby="billing-history" className="mt-10">
-        <h3 id="billing-history" className="mb-2 font-semibold text-paper-900">
-          Historial
+      <section aria-labelledby="billing-history" className="mt-12">
+        <h3 id="billing-history" className="mb-2 text-h4 font-medium text-fg-strong">
+          {t('plan.history.title')}
         </h3>
         {history.isPending ? (
           <Skeleton className="h-24" />
         ) : entries.length ? (
-          <ul className="divide-y divide-paper-200 overflow-hidden rounded-md border border-paper-200 bg-paper-0">
-            {entries.map((entry) => {
-              const Icon = entry.status === 'scheduled' ? CalendarClock : Receipt
-              return (
-                <li key={entry.id} className="flex items-center gap-3 px-4 py-3 text-[13px]">
-                  <Icon
-                    aria-hidden
-                    strokeWidth={1.75}
-                    className={cn(
-                      'size-4 shrink-0',
-                      entry.status === 'failed' ? 'text-bad-600' : entry.status === 'paid' ? 'text-ok-600' : entry.status === 'scheduled' ? 'text-ink-600' : 'text-paper-600',
-                    )}
-                  />
-                  <span className="min-w-0 flex-1 text-paper-900">{entry.text}</span>
-                  {typeof entry.amount === 'number' ? <span className="tabular text-paper-900">{formatCLP(entry.amount)}</span> : null}
-                  <span className="shrink-0 text-paper-600 tabular">{formatDate(entry.at)}</span>
-                </li>
-              )
-            })}
+          <ul className="divide-y divide-divider">
+            {entries.map((entry) => (
+              <li key={entry.id} className="flex items-center gap-3 py-2.5 text-table">
+                <span className={cn('min-w-0 flex-1', entry.status === 'failed' ? 'text-danger' : 'text-fg')}>{entry.text}</span>
+                {typeof entry.amount === 'number' ? <span className="text-fg-strong tabular">{clp.money(entry.amount)}</span> : null}
+                <span className="shrink-0 text-fg-muted tabular">{fmt.date(entry.at)}</span>
+              </li>
+            ))}
           </ul>
         ) : (
-          <p className="rounded-md border border-paper-200 bg-paper-0 px-4 py-5 text-[13px] text-paper-600">Aquí verás tus pagos y cambios de plan.</p>
+          <p className="text-table text-fg-muted">{t('plan.history.empty')}</p>
         )}
       </section>
     </div>

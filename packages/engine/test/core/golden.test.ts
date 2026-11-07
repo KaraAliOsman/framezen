@@ -142,9 +142,9 @@ describe('OT 385 · dos fijos 2385 × 900 (Antracita)', () => {
     expect(itemQty(bom, 'A-CT')).toBe(2)
   })
 
-  it('PRO03 no tiene precio en Antracita: avisa que se cotiza en $0', () => {
+  it('PRO03 no tiene precio en Antracita: avisa que queda fuera del total', () => {
     expect(bom.warnings.find((w) => w.code === 'price_missing_profile')?.message).toBe(
-      'El perfil PRO03 no tiene precio en Antracita: se cotiza en $0.',
+      'El perfil PRO03 no tiene precio en Antracita: queda fuera del total.',
     )
   })
 })

@@ -1,4 +1,5 @@
-import type { Catalog, MaterialCost, WorkshopData } from '@framezen/engine'
+import type { Catalog, MaterialCost, WorkshopData } from '@dekopen/engine'
+import type { DocLocale } from '@dekopen/shared'
 
 /** Papel de impresión: Carta por defecto, A4 opcional. */
 export type WorkshopPaper = 'letter' | 'a4'
@@ -41,6 +42,8 @@ export interface WorkshopDocumentData extends WorkshopData {
     dueDate?: string
     /** Notas generales de la OT (opcional). */
     notes?: string
+    /** Sin OT todavía: los documentos se rotulan con la cotización y `number` es el de la cotización. */
+    fromQuote?: boolean
   }
   /** Catálogo para nombres y colores de dibujo (opcional: sin él se muestran los ids). */
   catalog?: Catalog
@@ -50,10 +53,22 @@ export interface WorkshopDocumentData extends WorkshopData {
   ivaPct?: number
   /** Venta y costo prorrateado de la cotización (Costos internos). Sin él, se estima con perWindow. */
   sale?: WorkshopSale
+  /** Idioma de los documentos (el del taller o de quien imprime). Sin él, español. */
+  locale?: DocLocale
+  /** Moneda de los montos internos (por defecto CLP). */
+  currency?: string
+  /** Rótulo del impuesto de la organización (IVA, VAT…). Sin él, el del idioma. */
+  taxLabel?: string
 }
 
 /** Props comunes a todos los documentos de taller. */
 export interface WorkshopDocumentProps {
   data: WorkshopDocumentData
   paper?: WorkshopPaper
+  /** Idioma del documento (manda sobre `data.locale`). */
+  locale?: DocLocale
+  /** Moneda (manda sobre `data.currency`). */
+  currency?: string
+  /** Rótulo del impuesto (manda sobre `data.taxLabel`). */
+  taxLabel?: string
 }

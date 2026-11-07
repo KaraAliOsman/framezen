@@ -3,7 +3,7 @@
  * devuelven uno nuevo (o el mismo si nada cambia), con las referencias que cambiaron y las que
  * no pudieron (la línea no fabrica ese color). Nunca lanzan.
  */
-import { setColor, setGlass, type Catalog, type WindowDesign } from '@framezen/engine'
+import { setColor, setGlass, type Catalog, type WindowDesign } from '@dekopen/engine'
 import type { QuoteDoc } from './doc'
 
 export interface BulkResult {

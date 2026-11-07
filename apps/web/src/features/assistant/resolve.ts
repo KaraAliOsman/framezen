@@ -2,9 +2,11 @@
  * Resolución de lo que dice Marco (o la persona) contra el catálogo y la cotización reales:
  * «nogal» → color del catálogo, «termopanel» → un DVH con precio, «V2» → ítem. Funciones puras.
  */
-import { getTypology, type Catalog, type Color, type Glass, type Id, type Line, type LineKind, type TypologyId } from '@framezen/engine'
-import { TYPOLOGY_IDS, detectTypology, foldSpanish, type ItemTarget, type Quote, type QuoteItem } from '@framezen/shared'
+import { getTypology, type Catalog, type Color, type Glass, type Id, type Line, type LineKind, type TypologyId } from '@dekopen/engine'
+import { TYPOLOGY_IDS, detectTypology, foldSpanish, type ItemTarget, type Quote, type QuoteItem } from '@dekopen/shared'
+import { translate } from '../../lib/i18n'
 import { preferredGlass } from '../designer/lib/catalog'
+import es from './i18n/es'
 
 const fold = (s: string | undefined | null) => foldSpanish(s ?? '').replace(/\s+/g, ' ').trim()
 
@@ -224,8 +226,9 @@ export function resolveItems(quote: Quote, target: ItemTarget, fallback: { lastT
 
 /** «V1», «V1 y V3», «V1, V2 y V4», «todas las ventanas». */
 export function refsLabel(items: readonly QuoteItem[], total: number): string {
-  if (items.length > 1 && items.length === total) return total === 2 ? 'las dos ventanas' : `las ${total} ventanas`
-  const refs = items.map((i) => i.ref || 'la ventana')
-  if (refs.length <= 1) return refs[0] ?? 'la ventana'
-  return `${refs.slice(0, -1).join(', ')} y ${refs[refs.length - 1]}`
+  if (items.length > 1 && items.length === total) return total === 2 ? translate(es, 'executor.bothWindows') : translate(es, 'executor.allWindows', { count: total })
+  const fallback = translate(es, 'executor.theWindow')
+  const refs = items.map((i) => i.ref || fallback)
+  if (refs.length <= 1) return refs[0] ?? fallback
+  return translate(es, 'executor.and', { list: refs.slice(0, -1).join(', '), last: refs[refs.length - 1] })
 }

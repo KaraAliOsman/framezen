@@ -7,16 +7,16 @@
  * de la marca (cremonas con rango en el nombre, brazos por pulgadas, bisagras…) y
  * completa lo que falte con los genéricos.
  */
-import type { AccessoryRule, Brand, HardwareRule, Item, LineKind, OpeningKind } from '@framezen/engine'
+import type { AccessoryRule, Brand, HardwareRule, Item, LineKind, OpeningKind, SlidingSystem } from '@dekopen/engine'
 import { parseBackset, parseInches, parseRange } from './classify'
 import { normalizeKey, round1 } from './text'
 
-export const SAMPLE_SOURCE = 'Catálogo de ejemplo Framezen'
-export const GENERIC_BRAND_ID = 'framezen-genericos'
+export const SAMPLE_SOURCE = 'Catálogo de ejemplo DEKOPEN'
+export const GENERIC_BRAND_ID = 'dekopen-genericos'
 
 export const GENERIC_BRAND: Brand = {
   id: GENERIC_BRAND_ID,
-  name: 'Genéricos Framezen',
+  name: 'Genéricos DEKOPEN',
   kind: 'hardware',
   country: 'Chile',
   monogram: 'GF',
@@ -42,7 +42,19 @@ const TILT_TURN_RANGES: [number, number, number][] = [
   [450, 800, 24900],
   [800, 1200, 28900],
   [1200, 1600, 32900],
+  // Puertas balconeras oscilobatientes (hoja de puerta hasta 2.400 mm, research 25 L5).
+  [1600, 2400, 38900],
 ]
+/** Kits de osciloparalela (PSK) y corredera paralela (PS) por ANCHO de hoja (research 25 L11/L12). */
+const PSK_RANGES: [number, number, number][] = [
+  [670, 1200, 289000],
+  [1200, 2000, 389000],
+]
+const PS_RANGES: [number, number, number][] = [
+  [670, 1200, 239000],
+  [1200, 2000, 329000],
+]
+const fmtRange = (min: number, max: number) => `${min.toLocaleString('es-CL')}–${max.toLocaleString('es-CL')} mm`
 /** Brazos de proyección: pulgadas, alto máximo de hoja que cubren, precio por unidad. */
 const ARM_SIZES: [number, number, number][] = [
   [10, 450, 6500],
@@ -65,6 +77,19 @@ export const GENERIC_ITEMS: Item[] = [
   item('cilindro', 'Cilindro de seguridad 40/40', 'hardware', 12900),
   item('manilla-puerta', 'Manilla doble de puerta', 'hardware', 13900, 'kit'),
   item('kit-corredera', 'Kit de corredera (2 carros, cierre y topes)', 'hardware', 9900, 'kit'),
+  // v5: secuencias, hojas pasivas, pivotantes, osciloparalelas, paralelas, plegables y elevadoras.
+  item('kit-tbt', 'Kit oscila primero (caja de cambio y manilla con llave)', 'hardware', 16900, 'kit'),
+  item('pasador-pasiva', 'Juego de pasadores de hoja pasiva de ventana', 'hardware', 9900, 'kit'),
+  item('pasador-puerta-pasiva', 'Juego de pasadores de hoja pasiva de puerta', 'hardware', 17900, 'kit'),
+  item('kit-pivot-v', 'Kit pivotante vertical (pivotes, freno y cierre central)', 'hardware', 64900, 'kit'),
+  item('kit-pivot-h', 'Kit pivotante horizontal (pivotes, freno y cierre central)', 'hardware', 58900, 'kit'),
+  ...PSK_RANGES.map(([min, max, price]) => item(`kit-psk-${min}-${max}`, `Kit osciloparalela ${fmtRange(min, max)} de ancho (carros, compases, rieles y manilla)`, 'hardware', price, 'kit')),
+  ...PS_RANGES.map(([min, max, price]) => item(`kit-paralela-${min}-${max}`, `Kit corredera paralela ${fmtRange(min, max)} de ancho (carros, rieles y manilla)`, 'hardware', price, 'kit')),
+  item('kit-hoja-plegable', 'Juego de hoja plegable (bisagras intermedias y carro)', 'hardware', 54900, 'kit'),
+  item('cierre-plegable', 'Cierre de hoja activa de plegable (manilla y cremona)', 'hardware', 32900, 'kit'),
+  item('pasador-plegable', 'Pasadores de hoja pasiva de plegable', 'hardware', 11900, 'kit'),
+  item('kit-elevadora', 'Kit corredera elevadora (carros elevadores, caja de cambio, manilla y cierres)', 'hardware', 469000, 'kit'),
+  item('fijacion-elevadora', 'Fijación de paño fijo de elevadora', 'hardware', 14900, 'kit'),
   item('tornillo-refuerzo', 'Tornillo para refuerzo 3,9 × 19 (caja de 1.000)', 'consumable', 16900, 'caja', 1000),
   item('tornillo-instalacion', 'Tornillo de instalación con tarugo (caja de 100)', 'consumable', 18900, 'caja', 100),
   item('calzo', 'Calzo de acristalar', 'accessory', 60),
@@ -72,9 +97,32 @@ export const GENERIC_ITEMS: Item[] = [
   item('felpa', 'Felpa 5 × 7 (rollo de 250 m)', 'accessory', 29900, 'm', 250),
   item('silicona', 'Silicona neutra (cartucho 300 ml)', 'consumable', 3900, 'cartucho'),
   item('tapa-desague', 'Tapa de desagüe', 'accessory', 150),
+  // v5: persianas, mosquiteros, alféizar y umbral (extras de la ventana).
+  item('persiana-cortina', 'Cortina de persiana de aluminio (lamas y riel final)', 'accessory', 34900, 'm2'),
+  item('persiana-cajon-monoblock', 'Cajón de persiana monoblock', 'accessory', 21900, 'm'),
+  item('persiana-cajon-exterior', 'Cajón de persiana exterior', 'accessory', 18900, 'm'),
+  item('persiana-cajon-integrado', 'Cajón de persiana integrado en el dintel', 'accessory', 16900, 'm'),
+  item('persiana-guia', 'Guía de persiana de aluminio', 'accessory', 4900, 'm'),
+  item('persiana-cinta', 'Recogedor y cinta de persiana', 'accessory', 8900),
+  item('persiana-manivela', 'Torno y manivela de persiana', 'accessory', 21900, 'kit'),
+  item('persiana-motor', 'Motor tubular de persiana con control', 'accessory', 94900, 'kit'),
+  item('mosquitero-fijo', 'Mosquitero fijo (marco y malla)', 'accessory', 19900, 'm2'),
+  item('mosquitero-abatible', 'Mosquitero abatible (marco, malla, bisagras y cierre)', 'accessory', 42900),
+  item('mosquitero-corredero', 'Mosquitero corredero (marco, malla, carros y felpa)', 'accessory', 36900),
+  item('mosquitero-enrollable', 'Mosquitero enrollable (cajón, guías y malla)', 'accessory', 62900),
+  item('mosquitero-plisado', 'Mosquitero plisado (marco, malla plisada y guías)', 'accessory', 58900, 'm2'),
+  item('alfeizar', 'Alféizar de aluminio', 'accessory', 13900, 'm'),
+  item('tapa-umbral', 'Tapas y sellos de umbral', 'accessory', 6900, 'kit'),
+  // v5: panel ciego (relleno opaco en vez de vidrio, p. ej. en puertas), cotizado por m² de panel.
+  item('panel-ciego', 'Panel ciego de PVC tipo sándwich 24 mm', 'accessory', 38900, 'm2'),
 ]
 
-const CASEMENT_HANDLE_OPENINGS: OpeningKind[] = ['casement', 'tilt_turn', 'tilt', 'awning']
+const CASEMENT_HANDLE_OPENINGS: OpeningKind[] = ['casement', 'tilt_turn', 'tilt', 'awning', 'pivot_v', 'pivot_h']
+/** Hojas que pueden ser pasivas en una doble hoja francesa (llevan pasadores en vez de manilla). */
+const PASSIVE_WINDOW_OPENINGS: OpeningKind[] = ['casement', 'tilt_turn']
+
+/** Solo hoja activa (manilla, cremona, cerradura): la pasiva de una francesa lleva pasadores. */
+const active = (rule: HardwareRule): HardwareRule => ({ ...rule, leaf: 'active' })
 
 /**
  * Reglas por rangos contiguos, sin solaparse ni dejar huecos: cada tramo empieza 0,1 mm después
@@ -165,7 +213,7 @@ export const GENERIC_HARDWARE_RULES: HardwareRule[] = [
     'fz.r.cremona',
     ['casement'],
     CREMONA_RANGES.map(([min, max]) => ({ itemId: `fz.cremona-${min}-${max}`, min, max })),
-  ),
+  ).map(active),
   ...rangedRules(
     'fz.r.ob',
     ['tilt_turn'],
@@ -179,14 +227,66 @@ export const GENERIC_HARDWARE_RULES: HardwareRule[] = [
   ),
   ...hingeRules('fz.r.bisagra', 'fz.bisagra-ventana'),
   ...strikeRules('fz.r.cerradero', 'fz.cerradero'),
-  { id: 'fz.r.manilla', openings: CASEMENT_HANDLE_OPENINGS, itemId: 'fz.manilla-ventana', qty: 1 },
+  { id: 'fz.r.manilla', openings: CASEMENT_HANDLE_OPENINGS, itemId: 'fz.manilla-ventana', qty: 1, leaf: 'active' },
   ...doorHingeRules('fz.r.bisagra-puerta', 'fz.bisagra-puerta'),
-  { id: 'fz.r.cerradura', openings: ['door'], itemId: 'fz.cerradura-puerta', qty: 1 },
-  { id: 'fz.r.cilindro', openings: ['door'], itemId: 'fz.cilindro', qty: 1 },
-  { id: 'fz.r.manilla-puerta', openings: ['door'], itemId: 'fz.manilla-puerta', qty: 1 },
+  { id: 'fz.r.cerradura', openings: ['door'], itemId: 'fz.cerradura-puerta', qty: 1, leaf: 'active' },
+  { id: 'fz.r.cilindro', openings: ['door'], itemId: 'fz.cilindro', qty: 1, leaf: 'active' },
+  { id: 'fz.r.manilla-puerta', openings: ['door'], itemId: 'fz.manilla-puerta', qty: 1, leaf: 'active' },
+  ...v5HardwareRules(),
 ]
 
-/** Accesorios e insumos comunes a toda ventana. */
+/**
+ * Reglas genéricas de las aperturas de v5 (ids con prefijo propio para que `buildLineRules` las
+ * tome como respaldo): oscila primero, hoja pasiva francesa, pivotantes, osciloparalela, corredera
+ * paralela y plegables. Cantidades por hoja; los kits por ancho siguen research 25 L11/L12.
+ */
+function v5HardwareRules(): HardwareRule[] {
+  return [
+    { id: 'fz.r.tbt', openings: ['tilt_turn'], itemId: 'fz.kit-tbt', qty: 1, sequence: 'tilt_first' },
+    { id: 'fz.r.pasiva', openings: PASSIVE_WINDOW_OPENINGS, itemId: 'fz.pasador-pasiva', qty: 1, leaf: 'passive' },
+    { id: 'fz.r.pasiva-puerta', openings: ['door'], itemId: 'fz.pasador-puerta-pasiva', qty: 1, leaf: 'passive' },
+    { id: 'fz.r.pivot-v', openings: ['pivot_v'], itemId: 'fz.kit-pivot-v', qty: 1 },
+    { id: 'fz.r.pivot-h', openings: ['pivot_h'], itemId: 'fz.kit-pivot-h', qty: 1 },
+    ...rangedRules('fz.r.psk', ['tilt_slide'], PSK_RANGES.map(([min, max]) => ({ itemId: `fz.kit-psk-${min}-${max}`, min, max })), 'width'),
+    ...rangedRules('fz.r.paralela', ['parallel_slide'], PS_RANGES.map(([min, max]) => ({ itemId: `fz.kit-paralela-${min}-${max}`, min, max })), 'width'),
+    { id: 'fz.r.plegable', openings: ['folding'], itemId: 'fz.kit-hoja-plegable', qty: 1 },
+    { id: 'fz.r.plegable-cierre', openings: ['folding'], itemId: 'fz.cierre-plegable', qty: 1, leaf: 'active' },
+    { id: 'fz.r.plegable-pasador', openings: ['folding'], itemId: 'fz.pasador-plegable', qty: 1, leaf: 'passive' },
+  ]
+}
+
+/**
+ * Extras de la ventana (solo cuando el diseño los pide, `AccessoryRule.extra`): persiana (cortina
+ * por m², cajón por metro de ancho según tipo, 2 guías por metro de alto, accionamiento por
+ * ventana), mosquitero según tipo, alféizar por metro de ancho y tapas de umbral.
+ */
+export const GENERIC_EXTRA_ACCESSORY_RULES: AccessoryRule[] = [
+  { id: 'fz.x.persiana-cortina', itemId: 'fz.persiana-cortina', per: 'area_m2', qty: 1, extra: 'rollerShutter' },
+  { id: 'fz.x.persiana-cajon-monoblock', itemId: 'fz.persiana-cajon-monoblock', per: 'width_m', qty: 1, extra: 'rollerShutter', variants: ['monoblock'] },
+  { id: 'fz.x.persiana-cajon-exterior', itemId: 'fz.persiana-cajon-exterior', per: 'width_m', qty: 1, extra: 'rollerShutter', variants: ['exterior'] },
+  { id: 'fz.x.persiana-cajon-integrado', itemId: 'fz.persiana-cajon-integrado', per: 'width_m', qty: 1, extra: 'rollerShutter', variants: ['integrated'] },
+  { id: 'fz.x.persiana-guia', itemId: 'fz.persiana-guia', per: 'height_m', qty: 2, extra: 'rollerShutter' },
+  { id: 'fz.x.persiana-cinta', itemId: 'fz.persiana-cinta', per: 'window', qty: 1, extra: 'rollerShutter', variants: ['strap'] },
+  { id: 'fz.x.persiana-manivela', itemId: 'fz.persiana-manivela', per: 'window', qty: 1, extra: 'rollerShutter', variants: ['crank'] },
+  { id: 'fz.x.persiana-motor', itemId: 'fz.persiana-motor', per: 'window', qty: 1, extra: 'rollerShutter', variants: ['motor'] },
+  { id: 'fz.x.mosquitero-fijo', itemId: 'fz.mosquitero-fijo', per: 'area_m2', qty: 1, extra: 'insectScreen', variants: ['fixed'] },
+  { id: 'fz.x.mosquitero-abatible', itemId: 'fz.mosquitero-abatible', per: 'sash', qty: 1, extra: 'insectScreen', variants: ['hinged'] },
+  { id: 'fz.x.mosquitero-corredero', itemId: 'fz.mosquitero-corredero', per: 'sash', qty: 1, extra: 'insectScreen', variants: ['sliding'] },
+  { id: 'fz.x.mosquitero-enrollable', itemId: 'fz.mosquitero-enrollable', per: 'window', qty: 1, extra: 'insectScreen', variants: ['roller'] },
+  { id: 'fz.x.mosquitero-plisado', itemId: 'fz.mosquitero-plisado', per: 'area_m2', qty: 1, extra: 'insectScreen', variants: ['pleated'] },
+  { id: 'fz.x.alfeizar', itemId: 'fz.alfeizar', per: 'width_m', qty: 1, extra: 'sill' },
+  { id: 'fz.x.tapa-umbral', itemId: 'fz.tapa-umbral', per: 'window', qty: 1, extra: 'threshold' },
+]
+
+/**
+ * Paneles ciegos (`fill: 'panel'`): el panel se cotiza por m² de relleno (`scope: 'panels'`), sea cual
+ * sea la ventana que lo lleve. Sin paneles en el diseño la regla vale cero: no cambia ningún precio.
+ */
+export const GENERIC_PANEL_ACCESSORY_RULES: AccessoryRule[] = [
+  { id: 'fz.p.panel-ciego', itemId: 'fz.panel-ciego', per: 'area_m2', qty: 1, scope: 'panels' },
+]
+
+/** Accesorios e insumos comunes a toda ventana (más los extras, que solo aplican si se piden). */
 export const GENERIC_ACCESSORY_RULES: AccessoryRule[] = [
   { id: 'fz.a.tornillo-refuerzo', itemId: 'fz.tornillo-refuerzo', per: 'reinforcement_m', qty: 4 },
   { id: 'fz.a.tornillo-instalacion', itemId: 'fz.tornillo-instalacion', per: 'perimeter_m', qty: 2 },
@@ -194,6 +294,8 @@ export const GENERIC_ACCESSORY_RULES: AccessoryRule[] = [
   { id: 'fz.a.burlete', itemId: 'fz.burlete', per: 'glass_m', qty: 2 },
   { id: 'fz.a.silicona', itemId: 'fz.silicona', per: 'perimeter_m', qty: 0.2 },
   { id: 'fz.a.tapa-desague', itemId: 'fz.tapa-desague', per: 'window', qty: 2 },
+  ...GENERIC_EXTRA_ACCESSORY_RULES,
+  ...GENERIC_PANEL_ACCESSORY_RULES,
 ]
 
 /**
@@ -203,12 +305,28 @@ export const GENERIC_ACCESSORY_RULES: AccessoryRule[] = [
  */
 export const GENERIC_SLIDING_HARDWARE_RULES: HardwareRule[] = [{ id: 'fz.r.kit-corredera', openings: [], itemId: 'fz.kit-corredera', qty: 1 }]
 export const GENERIC_SLIDING_ACCESSORY_RULES: AccessoryRule[] = [{ id: 'fz.a.felpa', itemId: 'fz.felpa', per: 'perimeter_m', qty: 3.5 }]
+/**
+ * Corredera elevadora (HST): kit por hoja móvil y fijación del paño fijo, solo para paneles de
+ * elevadora (`systems`); nunca se mezclan con las reglas de la corredera estándar.
+ */
+const LIFT_SLIDE: SlidingSystem[] = ['lift_slide']
+export const GENERIC_LIFT_SLIDE_HARDWARE_RULES: HardwareRule[] = [
+  { id: 'fz.r.kit-elevadora', openings: [], itemId: 'fz.kit-elevadora', qty: 1, systems: LIFT_SLIDE },
+  { id: 'fz.r.fijacion-elevadora', openings: ['fixed'], itemId: 'fz.fijacion-elevadora', qty: 1, systems: LIFT_SLIDE },
+]
 
-/** Reglas genéricas completas para un tipo de línea. */
-export function genericRulesFor(kind: LineKind): { hardwareRules: HardwareRule[]; accessoryRules: AccessoryRule[] } {
-  return kind === 'sliding'
-    ? { hardwareRules: [...GENERIC_SLIDING_HARDWARE_RULES], accessoryRules: [...GENERIC_SLIDING_ACCESSORY_RULES, ...GENERIC_ACCESSORY_RULES] }
-    : { hardwareRules: [...GENERIC_HARDWARE_RULES], accessoryRules: [...GENERIC_ACCESSORY_RULES] }
+/**
+ * Reglas genéricas completas para un tipo de línea. `liftSlide` = línea de corredera elevadora
+ * (sus hojas toman el kit de elevadora en vez del de corredera).
+ */
+export function genericRulesFor(kind: LineKind, options: { liftSlide?: boolean } = {}): { hardwareRules: HardwareRule[]; accessoryRules: AccessoryRule[] } {
+  if (kind === 'sliding') {
+    return {
+      hardwareRules: options.liftSlide ? [...GENERIC_LIFT_SLIDE_HARDWARE_RULES] : [...GENERIC_SLIDING_HARDWARE_RULES],
+      accessoryRules: [...GENERIC_SLIDING_ACCESSORY_RULES, ...GENERIC_ACCESSORY_RULES],
+    }
+  }
+  return { hardwareRules: [...GENERIC_HARDWARE_RULES], accessoryRules: [...GENERIC_ACCESSORY_RULES] }
 }
 
 // ── Resolución con artículos reales de la marca ──────────────────────────────
@@ -439,6 +557,8 @@ export interface LineRuleOptions {
    * (`byColor`): manilla y bisagra marrones en winchester, tapas negras en antracita…
    */
   colorIds?: string[]
+  /** Línea de corredera elevadora (HST): kit de elevadora genérico en vez de carros de corredera. */
+  liftSlide?: boolean
 }
 
 // ── Variantes por color ─────────────────────────────────────────────────────────
@@ -561,7 +681,7 @@ export function buildLineRules(kind: LineKind, pools: Item[][], idPrefix: string
   }
   const hardwareRules: HardwareRule[] = []
   const accessoryRules: AccessoryRule[] = []
-  const generic = genericRulesFor(kind)
+  const generic = genericRulesFor(kind, { liftSlide: options.liftSlide })
   const useGeneric = (label: string, predicate: (rule: { id: string }) => boolean) => {
     fromGeneric.push(label)
     hardwareRules.push(...generic.hardwareRules.filter(predicate))
@@ -630,6 +750,16 @@ export function buildLineRules(kind: LineKind, pools: Item[][], idPrefix: string
     // Extensiones de la cremona balconera: 2 por puerta (OT 385 V1).
     const extension = origin('extensiones de puerta', SLOT.doorExtension)
     if (extension) hardwareRules.push({ id: `${idPrefix}.r.extension-puerta`, openings: ['door'], itemId: extension.id, qty: 2 })
+    // Aperturas de v5 sin artículos de marca reconocibles: respaldo genérico de DEKOPEN.
+    useGeneric('kit oscila primero', (rule) => rule.id === 'fz.r.tbt')
+    useGeneric('pasadores de hoja pasiva', (rule) => rule.id === 'fz.r.pasiva' || rule.id === 'fz.r.pasiva-puerta')
+    useGeneric('kits de pivotante', (rule) => rule.id.startsWith('fz.r.pivot-'))
+    useGeneric('kits de osciloparalela', (rule) => /^fz\.r\.psk-\d+$/.test(rule.id))
+    useGeneric('kits de corredera paralela', (rule) => /^fz\.r\.paralela-\d+$/.test(rule.id))
+    useGeneric('herrajes de plegable', (rule) => rule.id.startsWith('fz.r.plegable'))
+  } else if (options.liftSlide) {
+    useGeneric('kit de corredera elevadora', (rule) => rule.id.startsWith('fz.r.') && (rule.id.includes('elevadora')))
+    accessory(origin('felpa', SLOT.brush, BRUSH_BIAS), [['perimeter_m', 3.5]], 'fz.a.felpa', 'felpa')
   } else {
     // Hojas móviles de corredera: reglas con `openings` vacío (convención del motor); los paños
     // fijos toman solo las que incluyen 'fixed'.
@@ -681,6 +811,13 @@ export function buildLineRules(kind: LineKind, pools: Item[][], idPrefix: string
   accessory(origin('silicona', SLOT.silicone), [['perimeter_m', 0.2]], 'fz.a.silicona', 'silicona')
   accessory(origin('tapas de desagüe', SLOT.drainCap), [sliding ? ['sash', 2] : ['window', 2]], 'fz.a.tapa-desague', 'tapas de desagüe')
   accessory(origin('burlete', SLOT.gasket), [['glass_m', 2]])
+  // Persianas, mosquiteros, alféizar y umbral: solo se cotizan si el diseño los pide.
+  useGeneric('persianas, mosquiteros y alféizar', (rule) => rule.id.startsWith('fz.x.'))
+  // Paneles ciegos: se cotizan por m² de panel solo si el diseño tiene alguno.
+  useGeneric('paneles ciegos', (rule) => rule.id.startsWith('fz.p.'))
+  // Manilla, cremona y cerradura de marca solo en la hoja activa: la pasiva lleva pasadores.
+  const activeOnly = new RegExp(`^${escapeRegExp(idPrefix)}\\.r\\.(cremona-\\d+|manilla|cerradura|cilindro|manilla-puerta|extension-puerta)$`)
+  for (const [index, rule] of hardwareRules.entries()) if (!rule.leaf && activeOnly.test(rule.id)) hardwareRules[index] = { ...rule, leaf: 'active' }
 
   const genericItemIds = [
     ...new Set([...hardwareRules, ...accessoryRules].map((rule) => rule.itemId).filter((id) => id.startsWith('fz.'))),

@@ -1,22 +1,31 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { RotateCcw, SlidersHorizontal, TriangleAlert, X } from 'lucide-react'
-import type { Catalog, CutSettings } from '@framezen/engine'
-import { CutOptimizationDocument, type WorkshopDocData, type WorkshopPaper } from '@framezen/documents'
-import { cn } from '../../../lib/cn'
-import { formatNumber } from '../../../lib/format'
+import { useSearchParams } from 'react-router'
+import { Maximize2, RotateCcw, SlidersHorizontal, X } from 'lucide-react'
+import type { Catalog, CutSettings } from '@dekopen/engine'
 import {
-  Button,
-  NumberField,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-  SegmentedControl,
-  Select,
-} from '../../../ui'
+  auditCutPlan,
+  availableCutParts,
+  barPieceIds,
+  CutOptimizationDocument,
+  CutOrderDocument,
+  cutIssueText,
+  filterCutParts,
+  parseCutParts,
+  unbackedLines,
+  workshopI18n,
+  type CutPartKind,
+  type WorkshopDocData,
+  type WorkshopPaper,
+} from '@dekopen/documents'
+import { cn } from '../../../lib/cn'
+import { T, useFormat, useGlossary, useT } from '../../../lib/i18n'
+import { Button, KPI, Notice, NumberField, Popover, PopoverContent, PopoverTrigger, SegmentedControl, Select, StatStrip, Switch } from '../../../ui'
+import es from '../i18n/es'
 import { barKey, planSignature } from '../model/cutLayout'
 import { BROWSER_PRINT_LIMITS, PREVIEW_LIMITS, browserPrintNotice, previewFooter } from '../model/preview'
 import { CutGroup, type WindowMeta } from './CutBars'
 import { DocumentPreview, DocumentToolbar } from './DocumentPreview'
+import { SawMode, sawSteps } from './SawMode'
 import type { useDocumentActions } from './useDocumentActions'
 
 export type CutField = 'barLength' | 'kerf' | 'trimStart' | 'trimEnd' | 'minReusable'
@@ -33,17 +42,18 @@ export interface CutSimulation {
   saving?: boolean
 }
 
-type Mode = 'barras' | 'hoja'
+type Mode = 'barras' | 'hoja' | 'orden'
 
 export function CutsTab({
   orderId,
-  data,
+  data: allData,
   paper,
   catalog,
   windows,
   simulation,
   actions,
 }: {
+  /** Dónde se recuerdan las barras marcadas: la OT, o la cotización si aún no tiene. */
   orderId: string
   data: WorkshopDocData
   paper: WorkshopPaper
@@ -52,94 +62,147 @@ export function CutsTab({
   simulation: CutSimulation
   actions: ReturnType<typeof useDocumentActions>
 }) {
+  const t = useT(es)
+  const fmt = useFormat()
+  const g = useGlossary()
   const [mode, setMode] = useState<Mode>('barras')
+  const [large, setLarge] = useLargeBars()
   const [groupKey, setGroupKey] = useState<string>('all')
   const [focusRef, setFocusRef] = useState<string | null>(null)
+  const [params, setParams] = useSearchParams()
+  const available = useMemo(() => availableCutParts(allData), [allData])
+  const partsParam = params.get('parts')
+  const parts = useMemo(() => parseCutParts(partsParam).filter((part) => available.includes(part)), [partsParam, available])
+  const setParts = (next: readonly CutPartKind[]) => {
+    const p = new URLSearchParams(params)
+    if (next.length === 0 || next.length === available.length) p.delete('parts')
+    else p.set('parts', next.join(','))
+    setParams(p, { replace: true })
+  }
+  const data = useMemo(() => filterCutParts(allData, parts), [allData, parts])
   const opt = data.optimization
-  const marks = useCutMarks(orderId, planSignature(opt.groups))
-  const totalBars = opt.groups.reduce((s, g) => s + g.bars.length, 0)
-  const cutBars = opt.groups.reduce((s, g) => s + g.bars.filter((b, i) => marks.has(barKey(g, i, b))).length, 0)
-  const groups = groupKey === 'all' ? opt.groups : opt.groups.filter((g) => g.key === groupKey)
+  // La firma es la del plan completo: filtrar no borra las marcas de lo ya cortado.
+  const marks = useCutMarks(orderId, planSignature(allData.optimization.groups))
+  const totalBars = opt.groups.reduce((s, gr) => s + gr.bars.length, 0)
+  const cutBars = opt.groups.reduce((s, gr) => s + gr.bars.filter((b, i) => marks.has(barKey(gr, i, b))).length, 0)
+  const groups = groupKey === 'all' ? opt.groups : opt.groups.filter((gr) => gr.key === groupKey)
   const offcutTotal = opt.offcuts.reduce((s, o) => s + o.length, 0)
   const simulated = Object.keys(simulation.values).length > 0
-  const element = useMemo(() => <CutOptimizationDocument data={data} paper={paper} />, [data, paper])
+  const [sawOpen, setSawOpen] = useState(false)
+  const ids = useMemo(() => barPieceIds(data), [data])
+  const steps = useMemo(() => sawSteps(opt.groups, ids, barKey), [opt.groups, ids])
+  // La auditoría de sierra: lo que no se puede cortar se dice antes de llegar a la máquina.
+  const issues = useMemo(() => auditCutPlan(allData).filter((i) => i.code !== 'special_bar'), [allData])
+  const unbacked = useMemo(() => unbackedLines(data.catalog, data.windows), [data])
+  const docI18n = workshopI18n({ locale: t.locale })
+  const orderElement = useMemo(() => <CutOrderDocument data={allData} paper={paper} parts={parts} />, [allData, paper, parts])
+  const orderPreview = useMemo(() => <CutOrderDocument data={allData} paper={paper} parts={parts} maxSteps={PREVIEW_LIMITS.cutBars} />, [allData, paper, parts])
+  const element = useMemo(() => <CutOptimizationDocument data={allData} paper={paper} parts={parts} />, [allData, paper, parts])
   // Con cientos de unidades son miles de barras: la vista previa dibuja las primeras (el resumen va completo).
-  const previewElement = useMemo(
-    () => <CutOptimizationDocument data={data} paper={paper} maxBars={PREVIEW_LIMITS.cutBars} />,
-    [data, paper],
-  )
-  const request = { kind: 'cuts' as const, element, serverOnly: browserPrintNotice(totalBars, BROWSER_PRINT_LIMITS.cutBars, 'barras') }
+  const previewElement = useMemo(() => <CutOptimizationDocument data={allData} paper={paper} parts={parts} maxBars={PREVIEW_LIMITS.cutBars} />, [allData, paper, parts])
+  // Vista, impresión y PDF del servidor salen con el mismo filtro.
+  const filtered = parts.length ? { params: { parts: parts.join(',') }, fileSuffix: parts.map((part) => t(`cuts.parts.${part}`)).join('-') } : {}
+  const orderRequest = { kind: 'cut-order' as const, element: orderElement, serverOnly: browserPrintNotice(opt.totalPieces, BROWSER_PRINT_LIMITS.cutBars, 'bars', t.locale), ...filtered }
+  const request = { kind: 'cuts' as const, element, serverOnly: browserPrintNotice(totalBars, BROWSER_PRINT_LIMITS.cutBars, 'bars', t.locale), ...filtered }
+  const toolbar = mode === 'orden' ? { title: t('cuts.orderTitle'), description: t('cuts.orderHint'), request: orderRequest } : mode === 'hoja' ? { title: t('cuts.sheetTitle'), description: t('cuts.sheetHint'), request } : { title: t('cuts.barsTitle'), request }
 
   useEffect(() => {
-    if (groupKey !== 'all' && !opt.groups.some((g) => g.key === groupKey)) setGroupKey('all')
+    if (groupKey !== 'all' && !opt.groups.some((gr) => gr.key === groupKey)) setGroupKey('all')
   }, [opt.groups, groupKey])
 
-  const colorName = (id?: string) => (id ? (catalog?.colors.find((c) => c.id === id)?.name ?? id) : 'sin color')
+  const colorName = (id?: string) => (id ? (catalog?.colors.find((c) => c.id === id)?.name ?? id) : t('cuts.noColor'))
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-2 sm:flex sm:flex-wrap sm:items-end">
-          <Stat label="Barras a sacar" value={formatNumber(opt.totalBars)} />
-          <Stat label="Piezas" value={formatNumber(opt.totalPieces)} />
-          <Stat label="Aprovechamiento" value={`${formatNumber(opt.yieldPct, 1)} %`} />
-          <Stat
-            label="Retazos para guardar"
-            value={formatNumber(opt.offcuts.length)}
-            hint={opt.offcuts.length ? `${formatNumber(offcutTotal)} mm` : undefined}
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-4">
+        <div className="-mb-4">
+          <DocumentToolbar
+            title={toolbar.title}
+            description={toolbar.description}
+            options={
+              <>
+                <CutSettingsPopover simulation={simulation} />
+                <Button icon={Maximize2} onClick={() => setSawOpen(true)} disabled={steps.length === 0}>
+                  {t('cuts.sawMode')}
+                </Button>
+              </>
+            }
+            onPrint={() => actions.print(toolbar.request)}
+            onDownload={() => void actions.download(toolbar.request)}
+            downloading={actions.busy === toolbar.request.kind}
           />
-        </dl>
-        <div className="flex flex-wrap items-center gap-2">
+        </div>
+        {/* En el teléfono el taller viene a ver las barras: estas cifras ya están en cada perfil. */}
+        <StatStrip className="gap-x-10 max-sm:hidden">
+          <KPI variant="plain" label={t('cuts.bars')} value={fmt.number(opt.totalBars)} />
+          <KPI variant="plain" label={t('cuts.pieces')} value={fmt.number(opt.totalPieces)} />
+          <KPI variant="plain" label={t('cuts.yield')} value={fmt.pct(opt.yieldPct, 1)} />
+          <KPI variant="plain" label={t('cuts.offcuts')} value={fmt.number(opt.offcuts.length)} hint={opt.offcuts.length ? fmt.mm(offcutTotal, { unit: true }) : undefined} />
+        </StatStrip>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <SegmentedControl<Mode>
-            aria-label="Cómo ver los cortes"
+            aria-label={t('cuts.mode')}
             value={mode}
             onValueChange={setMode}
             options={[
-              { value: 'barras', label: 'Barras' },
-              { value: 'hoja', label: 'Hoja para imprimir' },
+              { value: 'barras', label: t('cuts.modeBars') },
+              { value: 'hoja', label: t('cuts.modeSheet') },
+              { value: 'orden', label: t('cuts.modeOrder') },
             ]}
           />
-          <CutSettingsPopover simulation={simulation} />
+          {available.length > 1 ? <PartFilter available={available} parts={parts} onChange={setParts} /> : null}
         </div>
       </div>
 
       {simulated ? <SimulationNotice simulation={simulation} /> : null}
 
       {opt.warnings.length > 0 ? (
-        <div role="note" className="flex gap-2.5 rounded-md border border-warn-600/25 bg-warn-50 px-3.5 py-2.5 text-[13px] text-warn-800">
-          <TriangleAlert aria-hidden strokeWidth={1.75} className="mt-0.5 size-4 shrink-0" />
+        <Notice tone="warning" size="compact">
           <ul className="space-y-0.5">
             {opt.warnings.map((w, i) => (
-              <li key={`${w.code}-${i}`}>{w.message}</li>
+              <li key={`${w.code}-${i}`}>{g.warning(w)}</li>
             ))}
           </ul>
-        </div>
+        </Notice>
       ) : null}
 
-      {mode === 'hoja' ? (
-        <div>
-          <DocumentToolbar
-            title="Optimización de cortes"
-            description="Barras a escala con cada pieza y su ventana, para la sierra. Se lee a un metro."
-            onPrint={() => actions.print(request)}
-            onDownload={() => void actions.download(request)}
-            downloading={actions.busy === 'cuts'}
-          />
-          <DocumentPreview
-            element={previewElement}
-            paper={paper}
-            label="Vista previa de la optimización de cortes"
-            footer={previewFooter(Math.min(totalBars, PREVIEW_LIMITS.cutBars), totalBars, 'barras')}
-          />
-        </div>
+      {issues.length > 0 ? (
+        <Notice tone="danger" size="compact" title={t('cuts.reviewTitle')}>
+          <ul className="space-y-0.5">
+            {issues.slice(0, 8).map((issue, i) => (
+              <li key={`${issue.code}-${i}`}>{cutIssueText(issue, docI18n)}</li>
+            ))}
+          </ul>
+        </Notice>
+      ) : null}
+
+      {unbacked.length > 0 ? (
+        <Notice tone="warning" size="compact" title={t('cuts.unbackedTitle')}>
+          <ul className="space-y-0.5">
+            {unbacked.map((line) => (
+              <li key={line.name}>
+                <strong className="font-medium text-fg-strong">{line.name}</strong>: {t(`cuts.origin.${line.origin}`)}
+              </li>
+            ))}
+          </ul>
+        </Notice>
+      ) : null}
+
+      {mode === 'orden' ? (
+        <DocumentPreview element={orderPreview} paper={paper} label={t('cuts.orderTitle')} />
+      ) : mode === 'hoja' ? (
+        <DocumentPreview
+          element={previewElement}
+          paper={paper}
+          label={t('cuts.sheetPreview')}
+          footer={previewFooter(Math.min(totalBars, PREVIEW_LIMITS.cutBars), totalBars, 'bars', t.locale)}
+        />
       ) : opt.groups.length === 0 ? (
-        <div className="rounded-lg border border-paper-200 bg-paper-0 px-6 py-12 text-center text-paper-600">
-          Esta OT no tiene perfiles para cortar.
-        </div>
+        <p className="py-12 text-center text-fg-muted">{t('cuts.none')}</p>
       ) : (
         <>
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Resaltar una ventana">
+            <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t('cuts.highlight')}>
               {[...windows.values()].map((w) => {
                 const active = focusRef === w.ref
                 return (
@@ -149,55 +212,53 @@ export function CutsTab({
                     aria-pressed={active}
                     onClick={() => setFocusRef(active ? null : w.ref)}
                     className={cn(
-                      'inline-flex h-7 items-center gap-1.5 rounded-full border pr-2.5 pl-1.5 text-[13px] font-medium transition-colors duration-120 touch:h-9',
-                      active
-                        ? 'border-paper-900 bg-paper-900 text-paper-0'
-                        : focusRef
-                          ? 'border-paper-200 bg-paper-0 text-paper-600 hover:text-paper-900'
-                          : 'border-paper-200 bg-paper-0 text-paper-900 hover:border-paper-350',
+                      'code-id inline-flex h-7 items-center rounded-xs px-2 text-table font-medium transition-colors duration-100 touch:h-10 touch:px-3',
+                      active ? 'bg-inverse text-fg-inverse' : focusRef ? 'text-fg-muted hover:bg-hover hover:text-fg' : 'text-fg-strong hover:bg-hover',
                     )}
                     title={w.name}
                   >
-                    <span aria-hidden className="size-3.5 rounded-full border border-paper-900/30" style={{ background: w.tint }} />
                     {w.ref}
                   </button>
                 )
               })}
               {focusRef ? (
                 <Button size="sm" variant="ghost" icon={X} onClick={() => setFocusRef(null)}>
-                  Ver todas
+                  {t('cuts.seeAll')}
                 </Button>
               ) : null}
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="text-[13px] text-paper-600 tabular" aria-live="polite">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <span className="text-table text-fg-muted tabular" aria-live="polite">
                 {cutBars > 0 ? (
                   <>
-                    <strong className="font-semibold text-ok-600">{cutBars}</strong> de {totalBars} barras cortadas
-                    <button type="button" onClick={marks.clear} className="ml-2 font-medium text-ink-600 hover:text-ink-700">
-                      Desmarcar
+                    <T ns={es} k="cuts.cutCount" values={{ b: <strong className="font-medium text-fg-strong" />, cut: fmt.number(cutBars), total: totalBars }} />
+                    <button type="button" onClick={marks.clear} className="ml-2 font-medium text-accent hover:underline">
+                      {t('cuts.unmark')}
                     </button>
                   </>
                 ) : (
-                  'Toca el número de una barra al cortarla'
+                  t('cuts.tapHint')
                 )}
+              </span>
+              <span title={t('cuts.largeHint')}>
+                <Switch size="sm" label={t('cuts.large')} checked={large} onCheckedChange={setLarge} />
               </span>
               {opt.groups.length > 1 ? (
                 <Select
                   size="sm"
-                  aria-label="Perfil a mostrar"
+                  aria-label={t('cuts.profile')}
                   className="w-60"
                   value={groupKey}
                   onValueChange={setGroupKey}
                   options={[
-                    { value: 'all', label: `Todos los perfiles (${opt.groups.length})` },
-                    ...opt.groups.map((g) => ({ value: g.key, label: `${g.code} · ${colorName(g.colorId)}`, description: g.name })),
+                    { value: 'all', label: t('cuts.allProfiles', { count: opt.groups.length }) },
+                    ...opt.groups.map((gr) => ({ value: gr.key, label: `${gr.code} · ${colorName(gr.colorId)}`, description: gr.name })),
                   ]}
                 />
               ) : null}
             </div>
           </div>
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-8">
             {groups.map((group) => (
               <CutGroup
                 key={group.key}
@@ -210,85 +271,98 @@ export function CutsTab({
                 isCut={marks.has}
                 onToggleCut={marks.toggle}
                 barKeyOf={barKey}
+                ids={ids.get(group.key)}
+                large={large}
               />
             ))}
           </div>
         </>
       )}
+      <SawMode open={sawOpen} onOpenChange={setSawOpen} steps={steps} catalog={catalog} cut={data.cut} isDone={marks.has} onDone={marks.setMany} />
     </div>
   )
 }
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+/** Todo, o los tipos de pieza elegidos: se pueden sumar («Hojas» y «Junquillos»). */
+function PartFilter({ available, parts, onChange }: { available: readonly CutPartKind[]; parts: readonly CutPartKind[]; onChange: (next: CutPartKind[]) => void }) {
+  const t = useT(es)
+  const chip = (active: boolean) =>
+    cn('inline-flex h-7 items-center rounded-xs px-2 text-table font-medium transition-colors duration-100 touch:h-10 touch:px-3', active ? 'bg-inverse text-fg-inverse' : 'text-fg hover:bg-hover hover:text-fg-strong')
   return (
-    <div className="min-w-0">
-      <dt className="text-[13px] text-paper-600">{label}</dt>
-      <dd className="flex items-baseline gap-1.5">
-        <span className="text-h2 font-semibold tracking-[-0.01em] text-paper-900 tabular">{value}</span>
-        {hint ? <span className="text-[13px] text-paper-600 tabular">{hint}</span> : null}
-      </dd>
+    <div role="group" aria-label={t('cuts.parts.label')} className="flex flex-wrap items-center gap-1">
+      <button type="button" aria-pressed={parts.length === 0} onClick={() => onChange([])} className={chip(parts.length === 0)}>
+        {t('cuts.parts.all')}
+      </button>
+      {available.map((part) => {
+        const active = parts.includes(part)
+        return (
+          <button key={part} type="button" aria-pressed={active} onClick={() => onChange(active ? parts.filter((p) => p !== part) : available.filter((p) => p === part || parts.includes(p)))} className={chip(active)}>
+            {t(`cuts.parts.${part}`)}
+          </button>
+        )
+      })}
     </div>
   )
 }
 
-const FIELD_COPY: Record<CutField, { label: string; hint?: string; min: number; max: number; step: number; decimals: number }> = {
-  barLength: { label: 'Largo de barra', hint: 'Simula otro largo para todos los perfiles.', min: 1000, max: 12000, step: 100, decimals: 0 },
-  kerf: { label: 'Disco de sierra', hint: 'Lo que se come cada corte.', min: 0, max: 20, step: 0.5, decimals: 1 },
-  trimStart: { label: 'Despunte al inicio', min: 0, max: 500, step: 5, decimals: 0 },
-  trimEnd: { label: 'Despunte al final', min: 0, max: 500, step: 5, decimals: 0 },
-  minReusable: { label: 'Guardar retazos desde', min: 0, max: 5000, step: 50, decimals: 0 },
+const FIELD_RANGE: Record<CutField, { min: number; max: number; step: number; decimals: number }> = {
+  barLength: { min: 1000, max: 12000, step: 100, decimals: 0 },
+  kerf: { min: 0, max: 20, step: 0.5, decimals: 1 },
+  trimStart: { min: 0, max: 500, step: 5, decimals: 0 },
+  trimEnd: { min: 0, max: 500, step: 5, decimals: 0 },
+  minReusable: { min: 0, max: 5000, step: 50, decimals: 0 },
 }
 
 function CutSettingsPopover({ simulation }: { simulation: CutSimulation }) {
+  const t = useT(es)
   const simulated = Object.keys(simulation.values).length > 0
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button icon={SlidersHorizontal} aria-label="Ajustes de corte">
-          Ajustes de corte
-          {simulated ? <span aria-hidden className="size-1.5 rounded-full bg-ink-600" /> : null}
+        <Button icon={SlidersHorizontal} aria-label={t('cuts.settings')}>
+          {t('cuts.settings')}
+          {simulated ? <span aria-hidden className="size-1.5 rounded-full bg-accent" /> : null}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-[min(92vw,340px)] p-4">
+      <PopoverContent align="end" className="w-[min(92vw,360px)] p-4">
         <div className="mb-3">
-          <h3 className="font-semibold text-paper-900">Ajustes de corte</h3>
-          <p className="mt-0.5 text-[13px] leading-[18px] text-paper-600">
-            Se aplican al instante en esta OT, sin cambiar tus ajustes. Si te convencen, guárdalos.
-          </p>
+          <h3 className="text-h4 font-medium text-fg-strong">{t('cuts.settings')}</h3>
+          <p className="mt-0.5 text-table text-fg-muted">{t('cuts.settingsHint')}</p>
         </div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-3">
-          {(Object.keys(FIELD_COPY) as CutField[]).map((field) => {
-            const copy = FIELD_COPY[field]
+          {(Object.keys(FIELD_RANGE) as CutField[]).map((field) => {
+            const range = FIELD_RANGE[field]
             const changed = simulation.values[field] !== undefined
             const id = `cut-${field}`
             return (
               <div key={field} className={cn('flex flex-col gap-1', field === 'barLength' && 'col-span-2')}>
-                <label htmlFor={id} className="flex items-center gap-1.5 text-[13px] font-medium text-paper-900">
-                  {copy.label}
-                  {changed ? <span aria-label="Simulado" className="size-1.5 rounded-full bg-ink-600" /> : null}
+                <label htmlFor={id} className="flex items-center gap-1.5 text-table font-medium text-fg">
+                  {t(`cuts.field.${field}`)}
+                  {changed ? <span role="img" aria-label={t('cuts.simulated')} className="size-1.5 rounded-full bg-accent" /> : null}
                 </label>
                 <NumberField
                   id={id}
                   value={simulation.effective[field]}
                   onChange={(v) => simulation.set(field, v)}
-                  min={copy.min}
-                  max={copy.max}
-                  step={copy.step}
-                  bigStep={copy.step * 10}
-                  decimals={copy.decimals}
+                  min={range.min}
+                  max={range.max}
+                  step={range.step}
+                  bigStep={range.step * 10}
+                  decimals={range.decimals}
                 />
-                {copy.hint ? <span className="text-meta text-paper-600">{copy.hint}</span> : null}
+                {field === 'barLength' ? <span className="text-meta text-fg-muted">{t('cuts.field.barLengthHint')}</span> : null}
+                {field === 'kerf' ? <span className="text-meta text-fg-muted">{t('cuts.field.kerfHint')}</span> : null}
               </div>
             )
           })}
         </div>
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-paper-200 pt-3">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-divider pt-3">
           <Button size="sm" variant="ghost" icon={RotateCcw} onClick={simulation.reset} disabled={!simulated}>
-            Volver a mis ajustes
+            {t('cuts.reset')}
           </Button>
           {simulation.saveDefault ? (
             <Button size="sm" onClick={simulation.saveDefault} disabled={!canSave(simulation)} loading={simulation.saving}>
-              Guardar como predeterminado
+              {t('cuts.saveDefault')}
             </Button>
           ) : null}
         </div>
@@ -302,30 +376,62 @@ function canSave(simulation: CutSimulation): boolean {
 }
 
 function SimulationNotice({ simulation }: { simulation: CutSimulation }) {
+  const t = useT(es)
+  const fmt = useFormat()
   const parts: string[] = []
   const v = simulation.values
-  if (v.barLength !== undefined) parts.push(`barras de ${formatNumber(v.barLength)} mm`)
-  if (v.kerf !== undefined) parts.push(`disco de ${formatNumber(v.kerf, 1)} mm`)
+  if (v.barLength !== undefined) parts.push(t('cuts.sim.bar', { value: fmt.number(v.barLength) }))
+  if (v.kerf !== undefined) parts.push(t('cuts.sim.kerf', { value: fmt.number(v.kerf, { maxDecimals: 1 }) }))
   if (v.trimStart !== undefined || v.trimEnd !== undefined)
-    parts.push(`despunte ${formatNumber(simulation.effective.trimStart)} + ${formatNumber(simulation.effective.trimEnd)} mm`)
-  if (v.minReusable !== undefined) parts.push(`retazos desde ${formatNumber(v.minReusable)} mm`)
+    parts.push(t('cuts.sim.trim', { start: fmt.number(simulation.effective.trimStart), end: fmt.number(simulation.effective.trimEnd) }))
+  if (v.minReusable !== undefined) parts.push(t('cuts.sim.reusable', { value: fmt.number(v.minReusable) }))
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-ink-100 bg-ink-50 px-3.5 py-2.5 text-[13px] text-ink-700 sm:flex-row sm:items-center sm:justify-between">
-      <p>
-        <strong className="font-semibold">Simulación:</strong> {parts.join(' · ')}. Tus ajustes guardados no cambian.
-      </p>
-      <div className="flex shrink-0 items-center gap-1">
-        <Button size="sm" variant="ghost" onClick={simulation.reset}>
-          Volver a mis ajustes
-        </Button>
-        {simulation.saveDefault && canSave(simulation) ? (
-          <Button size="sm" onClick={simulation.saveDefault} loading={simulation.saving}>
-            Guardar como predeterminado
+    <Notice
+      tone="accent"
+      size="compact"
+      action={
+        <div className="flex shrink-0 items-center gap-1">
+          <Button size="xs" variant="ghost" onClick={simulation.reset}>
+            {t('cuts.reset')}
           </Button>
-        ) : null}
-      </div>
-    </div>
+          {simulation.saveDefault && canSave(simulation) ? (
+            <Button size="xs" onClick={simulation.saveDefault} loading={simulation.saving}>
+              {t('cuts.saveDefault')}
+            </Button>
+          ) : null}
+        </div>
+      }
+    >
+      <T ns={es} k="cuts.simulation" values={{ b: <strong className="font-semibold text-fg-strong" />, parts: parts.join(' · ') }} />
+    </Notice>
   )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Letra grande (modo taller), recordada en este equipo
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LARGE_KEY = 'fz-taller-letra-grande'
+
+function useLargeBars(): [boolean, (on: boolean) => void] {
+  // Junto a la sierra se usa la tableta: en pantallas táctiles parte en grande hasta que se elija otra cosa.
+  const [large, setLarge] = useState(() => {
+    try {
+      const stored = localStorage.getItem(LARGE_KEY)
+      return stored === null ? Boolean(window.matchMedia?.('(pointer: coarse)').matches) : stored === '1'
+    } catch {
+      return false
+    }
+  })
+  const update = useCallback((on: boolean) => {
+    setLarge(on)
+    try {
+      localStorage.setItem(LARGE_KEY, on ? '1' : '0')
+    } catch {
+      // almacenamiento bloqueado: vale solo para esta visita
+    }
+  }, [])
+  return [large, update]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -360,6 +466,7 @@ export function useCutMarks(orderId: string, sig: string) {
   const keys = useMemo(() => {
     const list = readStore(orderId)[sig]
     return new Set(Array.isArray(list) ? list : [])
+    // `version` fuerza la relectura tras guardar.
   }, [orderId, sig, version])
 
   const persist = useCallback(
@@ -390,5 +497,16 @@ export function useCutMarks(orderId: string, sig: string) {
     [keys, persist],
   )
   const clear = useCallback(() => persist(new Set()), [persist])
-  return { has, toggle, clear, size: keys.size }
+  const setMany = useCallback(
+    (list: readonly string[], on: boolean) => {
+      const next = new Set(keys)
+      for (const key of list) {
+        if (on) next.add(key)
+        else next.delete(key)
+      }
+      persist(next)
+    },
+    [keys, persist],
+  )
+  return { has, toggle, clear, setMany, size: keys.size }
 }

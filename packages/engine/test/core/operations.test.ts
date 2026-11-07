@@ -22,18 +22,21 @@ import {
   splitNode,
   TYPOLOGIES,
 } from '../../src/core'
+import { TYPOLOGY_IDS } from '../../src/types'
 import type { DesignNode, SplitNode, TypologyId, WindowDesign } from '../../src/types'
 import { design, prolineCatalog } from './fixtures'
 
 const catalog = prolineCatalog()
 const base = { lineId: 'pro6004', colorId: 'blanco', glassId: 'dvh-4-12-4' }
 
-const ALL_TYPOLOGY_IDS: TypologyId[] = [
+/** Ids de v4: los diseños guardados con ellos deben seguir cargando (compatibilidad). */
+const V4_TYPOLOGY_IDS: TypologyId[] = [
   'fixed', 'casement', 'casement_out', 'tilt_turn', 'tilt', 'awning', 'casement_double', 'fixed_casement',
   'fixed_tilt_turn', 'casement_transom', 'fixed_awning_bottom', 'fixed_3', 'casement_fixed_casement', 'door',
   'door_double', 'door_sidelight', 'door_transom', 'arch', 'trapezoid', 'triangle', 'sliding_2', 'sliding_2_fixed',
   'sliding_3', 'sliding_3_rail', 'sliding_4', 'sliding_mono',
 ]
+const ALL_TYPOLOGY_IDS: TypologyId[] = [...TYPOLOGY_IDS]
 
 function ids(d: WindowDesign): string[] {
   const out: string[] = []
@@ -50,7 +53,9 @@ const sizesOf = (d: WindowDesign, id = d.root.id) => (findNode(d, id) as SplitNo
 
 describe('tipologías', () => {
   it('cubren todos los TypologyId, con nombre, etiquetas y medida por defecto', () => {
-    expect(TYPOLOGIES.map((t) => t.id).sort()).toEqual([...ALL_TYPOLOGY_IDS].sort())
+    expect(TYPOLOGIES.map((t) => t.id)).toEqual(ALL_TYPOLOGY_IDS)
+    expect(TYPOLOGIES).toHaveLength(TYPOLOGY_IDS.length)
+    for (const id of V4_TYPOLOGY_IDS) expect(getTypology(id)?.id).toBe(id)
     for (const t of TYPOLOGIES) {
       expect(t.name.length).toBeGreaterThan(2)
       expect(t.tags.length).toBeGreaterThan(0)

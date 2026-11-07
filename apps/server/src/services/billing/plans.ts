@@ -2,7 +2,7 @@
  * Cifras y fechas de cobro: montos con IVA, períodos, ventana mensual de créditos IA,
  * prorrateo simple al cambiar de plan y acceso (modo lectura).
  */
-import { PLANS, TRIAL_DAYS, type BillingState, type ReadOnlyReason } from '@framezen/shared'
+import { PLANS, TRIAL_DAYS, type BillingState, type ReadOnlyReason } from '@dekopen/shared'
 import type { subscriptions } from '../../db/schema'
 import type { BillingPeriod, PaidPlan } from './tables'
 

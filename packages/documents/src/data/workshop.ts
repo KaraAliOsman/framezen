@@ -21,8 +21,8 @@ import {
   type QuoteExtra,
   type QuoteInput,
   type QuoteItemInput,
-} from '@framezen/engine'
-import type { Client, DocumentPrefs, Feature, Org, Quote, QuoteItem, Role, WorkOrder } from '@framezen/shared'
+} from '@dekopen/engine'
+import type { Client, DocumentPrefs, Feature, Org, Quote, QuoteItem, Role, WorkOrder } from '@dekopen/shared'
 import { WINDOW_TINTS, sideWords as workshopSideWords } from '../workshop/helpers'
 import { WORKSHOP_DOCUMENTS, type WorkshopDocumentKind } from '../workshop/registry'
 import type { WorkshopDocumentData, WorkshopPaper, WorkshopSale } from '../workshop/types'
@@ -42,10 +42,10 @@ export function workshopTint(index: number): string {
 // Entrada y salida
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** La cotización completa de `@framezen/shared` sirve tal cual; basta con estos campos. */
+/** La cotización completa de `@dekopen/shared` sirve tal cual; basta con estos campos. */
 export type WorkshopQuoteInput = Pick<Quote, 'number' | 'title'> &
   Partial<Pick<Quote, 'client' | 'pricing'>> & {
-    items: readonly Pick<QuoteItem, 'id' | 'ref' | 'qty' | 'design' | 'name' | 'location' | 'notes' | 'manualUnitPrice'>[]
+    items: readonly (Pick<QuoteItem, 'id' | 'ref' | 'qty' | 'design' | 'name' | 'location' | 'notes' | 'manualUnitPrice'> & Partial<Pick<QuoteItem, 'role' | 'altGroup' | 'included' | 'discountPct'>>)[]
     extras?: readonly QuoteExtra[]
     discountPct?: number
   }
@@ -60,7 +60,7 @@ export interface WorkshopDocInputArgs {
     cut?: Partial<CutSettings>
     documents?: Partial<Pick<DocumentPrefs, 'paper' | 'accent'>>
   }
-  workOrder: Pick<WorkOrder, 'number'> & Partial<Pick<WorkOrder, 'createdAt' | 'dueDate' | 'notes' | 'clientName'>>
+  workOrder: Pick<WorkOrder, 'number'> & Partial<Pick<WorkOrder, 'createdAt' | 'dueDate' | 'notes' | 'clientName'>> & { fromQuote?: boolean }
   client?: Pick<Client, 'name'> | null
   /**
    * Simulación de corte sin guardar («¿y si uso barras de 6 m o un disco de 3?»). Reemplaza
@@ -191,6 +191,11 @@ export function buildWorkshopDocInput(args: WorkshopDocInputArgs): WorkshopDocIn
     if (name) input.name = name
     if (location) input.location = location
     if (typeof item.manualUnitPrice === 'number' && Number.isFinite(item.manualUnitPrice)) input.manualUnitPrice = item.manualUnitPrice
+    // El motor decide con esto qué se fabrica: un opcional sin marcar o una alternativa descartada no van a producción.
+    if (item.role) input.role = item.role
+    if (item.altGroup) input.altGroup = item.altGroup
+    if (item.included !== undefined) input.included = item.included
+    if (item.discountPct) input.discountPct = item.discountPct
     return input
   })
 
@@ -232,6 +237,7 @@ export function buildWorkshopDocInput(args: WorkshopDocInputArgs): WorkshopDocIn
       date: calendarDate(workOrder.createdAt, args.timeZone ?? CHILE_TZ, args.now ?? new Date()),
       ...(dueDate ? { dueDate } : {}),
       ...(notes ? { notes } : {}),
+      ...(workOrder.fromQuote ? { fromQuote: true } : {}),
     },
     catalog,
     ...(Object.keys(windowNotes).length ? { windowNotes } : {}),
@@ -264,6 +270,8 @@ function workshopSale(
     let labor = 0
     let install = 0
     for (const item of evaluation.items) {
+      // Lo que quedó fuera del total tampoco suma aquí: `t.cost` ya no lo cuenta.
+      if (item.price.pending?.length && !(item.price.totalNet > 0)) continue
       const qty = Math.max(0, Number(item.price.qty) || 0)
       for (const key of Object.keys(materials) as (keyof MaterialCost)[]) materials[key] += (item.price.materials[key] ?? 0) * qty
       waste += (item.price.waste ?? 0) * qty
@@ -384,4 +392,9 @@ export function workshopDocumentFileName(kind: WorkshopDocumentKind, workOrderNu
   const base = WORKSHOP_DOCUMENTS.find((d) => d.kind === kind)?.fileName ?? 'Documento'
   const number = String(workOrderNumber).replace(/[^\w-]+/g, '')
   return `OT-${number}-${base}.${ext}`
+}
+
+/** Lo mismo para un documento de una cotización sin OT: «Cotizacion-412-Cortes.pdf». */
+export function quoteWorkshopFileName(kind: WorkshopDocumentKind, quoteNumber: number | string, ext = 'pdf'): string {
+  return workshopDocumentFileName(kind, quoteNumber, ext).replace(/^OT-/, 'Cotizacion-')
 }

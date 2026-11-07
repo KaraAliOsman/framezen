@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createDesign, describeDesign, designName, matchTypology, openingLabel, setColor, setOpening, TYPOLOGIES } from '../../src/core'
-import type { DesignNode, WindowDesign } from '../../src/types'
+import type { DesignNode, SplitNode, WindowDesign } from '../../src/types'
 import { design, prolineCatalog } from './fixtures'
 
 const catalog = prolineCatalog()
@@ -40,12 +40,16 @@ describe('describeDesign', () => {
         children: [
           { id: 'n2', type: 'leaf', opening: { kind: 'fixed' } },
           { id: 'n3', type: 'leaf', opening: { kind: 'tilt_turn', hinge: 'left' } },
-          { id: 'n4', type: 'leaf', opening: { kind: 'fixed' } },
+          { id: 'n4', type: 'leaf', opening: { kind: 'casement', hinge: 'right' } },
         ],
       },
     })
     expect(matchTypology(custom)).toBeUndefined()
-    expect(designName(custom)).toBe('Fijo + oscilobatiente + fijo')
+    expect(designName(custom)).toBe('Fijo + oscilobatiente + abatible')
+    // Fijo + oscilobatiente + fijo es tipología propia desde v5.
+    const ftf = { ...custom, root: { ...custom.root, children: [...(custom.root as SplitNode).children.slice(0, 2), { id: 'n4', type: 'leaf', opening: { kind: 'fixed' } }] } } as WindowDesign
+    expect(matchTypology(ftf)).toBe('fixed_tilt_turn_fixed')
+    expect(designName(ftf)).toBe('Fijo + oscilobatiente + fijo')
   })
 })
 
@@ -70,7 +74,9 @@ describe('diseños incompletos (guardados sin validar el árbol)', () => {
       expect(matchTypology(broken(root))).toBeUndefined()
       expect(designName(broken(root))).toBe('Ventana')
     }
-    expect(designName(broken({ id: 'r', type: 'split' }, { shape: { kind: 'arch', rise: 300 } }))).toBe('Arco · ventana')
+    // 300 mm de flecha en 1.200 de ancho es un arco rebajado; 600 es medio punto.
+    expect(designName(broken({ id: 'r', type: 'split' }, { shape: { kind: 'arch', rise: 300 } }))).toBe('Arco rebajado · ventana')
+    expect(designName(broken({ id: 'r', type: 'split' }, { shape: { kind: 'arch', rise: 600 } }))).toBe('Arco · ventana')
   })
 
   it('corredera sin paneles (o con paneles nulos) se nombra «Corredera»', () => {

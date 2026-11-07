@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { Quote } from '@framezen/shared'
+import type { Quote } from '@dekopen/shared'
 import { item, sampleDesign, signup, startServer, type TestServer } from './helpers'
 
 let server: TestServer

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { Catalog, Line } from '@framezen/engine'
-import type { Quote } from '@framezen/shared'
+import type { Catalog, Line } from '@dekopen/engine'
+import type { Quote } from '@dekopen/shared'
 import { applyLineOverride, buildEffectiveCatalog, type OrgCatalogState } from '../src/services/catalog'
 import { setPdfRenderer } from '../src/services/pdf'
 import { item, sampleDesign, signup, startServer, type TestServer } from './helpers'

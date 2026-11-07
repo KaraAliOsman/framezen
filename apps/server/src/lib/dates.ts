@@ -40,3 +40,16 @@ export function monthStartInZone(now: Date, offset = 0, timeZone = CHILE_TZ): Da
   t = midnightUtc - zoneOffsetMs(new Date(t), timeZone)
   return new Date(t)
 }
+
+/** Instante en que empieza (00:00 hora local) el día que contiene `now`, corrido `offset` días. */
+export function dayStartInZone(now: Date, offset = 0, timeZone = CHILE_TZ): Date {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: 'numeric', day: 'numeric' })
+      .formatToParts(now)
+      .map((p) => [p.type, p.value]),
+  )
+  const midnightUtc = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + offset)
+  let t = midnightUtc - zoneOffsetMs(new Date(midnightUtc), timeZone)
+  t = midnightUtc - zoneOffsetMs(new Date(t), timeZone)
+  return new Date(t)
+}

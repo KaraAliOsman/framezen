@@ -6,8 +6,8 @@
  * accesorio o insumo con artículos, una de vidrio con vidrios. Así un herraje cuyo código
  * se parece al de un perfil nunca pisa el precio de ese perfil.
  */
-import type { Catalog, Item, Profile } from '@framezen/engine'
-import type { PriceOverride } from '@framezen/shared'
+import type { Catalog, Item, Profile } from '@dekopen/engine'
+import type { PriceOverride } from '@dekopen/shared'
 import { isPlaceholderPrice, itemKind, parseGlass, rowStatus } from './classify'
 import { colorFromCode, modelGroupKey, profileModelCode } from './codes'
 import { isColorless, normalizeColor } from './colors'

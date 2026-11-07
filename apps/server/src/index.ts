@@ -1,8 +1,10 @@
+import { envFile } from './env-bootstrap'
 import { createServer } from 'node:net'
 import { serve } from '@hono/node-server'
 import { bootstrap, catalogSourceFromEnv, databaseFromEnv } from './bootstrap'
 import { findRepoRoot, loadConfig, type AppConfig } from './config'
 import { createLogger } from './lib/logger'
+import { AI_ISSUE_LOG, aiEnvIssue } from './services/ai/config'
 
 const root = findRepoRoot()
 const logger = createLogger(true)
@@ -27,7 +29,7 @@ function portIsFree(p: number): Promise<boolean> {
 }
 
 if (!(await portIsFree(port))) {
-  logger.error(`El puerto ${port} ya está en uso: probablemente Framezen ya está corriendo. Ciérralo o usa otro PORT.`)
+  logger.error(`El puerto ${port} ya está en uso: probablemente DEKOPEN ya está corriendo. Ciérralo o usa otro PORT.`)
   process.exit(1)
 }
 
@@ -38,6 +40,8 @@ try {
     config,
     logger,
   })
+  if (envFile.loaded) logger.info('Variables: se cargó .env de la raíz (las del entorno tienen prioridad)')
+  else if (envFile.reason === 'unreadable') logger.warn('No se pudo leer .env de la raíz: sigo solo con las variables del entorno')
   logger.info(`Base de datos: ${database.label}${migrations.length ? ` · migraciones aplicadas: ${migrations.join(', ')}` : ''}`)
   if (config.webDist) logger.info(`Sirviendo la web desde ${config.webDist}`)
   if (!config.resendApiKey)
@@ -48,7 +52,10 @@ try {
     )
   logger.info(`Cobros: proveedor ${config.billingProvider === 'flow' ? 'Flow.cl' : 'dev (activa planes al instante)'}`)
 
-  const server = serve({ fetch: app.fetch, port }, () => logger.info(`Framezen API lista en http://localhost:${port}`))
+  const aiIssue = aiEnvIssue(process.env)
+  logger.info(aiIssue ? `IA: ${AI_ISSUE_LOG[aiIssue]}` : 'IA: clave configurada. Comprueba la conexión con `npm run ai:check`')
+
+  const server = serve({ fetch: app.fetch, port }, () => logger.info(`DEKOPEN API lista en http://localhost:${port}`))
 
   let closing = false
   const shutdown = (signal: string) => {

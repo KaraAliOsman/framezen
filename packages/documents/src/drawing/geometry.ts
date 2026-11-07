@@ -1,4 +1,4 @@
-import type { Layout, LayoutDimension, Opening, OpeningKind, Rect, Shape } from '@framezen/engine'
+import type { Layout, LayoutDimension, Opening, OpeningKind, Rect, Shape } from '@dekopen/engine'
 
 export type DrawingView = 'interior' | 'exterior'
 export type DimensionMode = 'none' | 'total' | 'all'
@@ -27,8 +27,10 @@ export interface PlacedDimension {
 }
 
 /** Cotas visibles según el modo, con totales sintetizados si el motor no los trae. */
-export function visibleDimensions(layout: Layout, mode: DimensionMode): LayoutDimension[] {
-  if (mode === 'none') return []
+export function visibleDimensions(layout: Layout, requested: DimensionMode): LayoutDimension[] {
+  if (requested === 'none') return []
+  // Un conjunto siempre lleva la medida de cada unidad además de los totales.
+  const mode: DimensionMode = layout.assembly ? 'all' : requested
   const dims = layout.dimensions ?? []
   const out: LayoutDimension[] = []
   for (const axis of ['x', 'y'] as const) {
@@ -70,18 +72,51 @@ export interface ViewportOptions {
   dimensions: LayoutDimension[]
   view: DrawingView
   caption?: boolean
+  /** Aire extra alrededor (px), para el dibujo dentro de un muro. */
+  margin?: number
+}
+
+/**
+ * Extensión del dibujo en mm (vista interior): el marco más los accesorios que sobresalen (cajón de
+ * persiana arriba, alféizar abajo y a los lados). Sin accesorios es exactamente el marco.
+ */
+export function drawingExtent(layout: Layout): { minX: number; minY: number; maxX: number; maxY: number } {
+  let minX = 0
+  let minY = 0
+  let maxX = layout.width
+  let maxY = layout.height
+  const att = layout.attachments
+  const grow = (r: Rect | undefined) => {
+    if (!r || !(r.w > 0) || !(r.h > 0)) return
+    minX = Math.min(minX, r.x)
+    minY = Math.min(minY, r.y)
+    maxX = Math.max(maxX, r.x + r.w)
+    maxY = Math.max(maxY, r.y + r.h)
+  }
+  if (att?.rollerShutter && att.rollerShutter.type !== 'integrated') grow(att.rollerShutter.box)
+  grow(att?.sill?.rect)
+  return { minX, minY, maxX, maxY }
+}
+
+/**
+ * Borde desde el que se ubican las cotas horizontales (px): el pie del marco o, si hay alféizar, su
+ * borde inferior. Sin alféizar es `vp.oy + layout.height * vp.scale` (lo de siempre).
+ */
+export function dimensionBottom(layout: Layout, vp: Viewport): number {
+  return vp.oy + Math.max(layout.height, drawingExtent(layout).maxY) * vp.scale
 }
 
 /** Escala automática: el dibujo cabe en width × height dejando espacio para las cotas. */
 export function computeViewport(layout: Layout, opts: ViewportOptions): Viewport {
-  const lw = Math.max(1, layout.width)
-  const lh = Math.max(1, layout.height)
+  const ext = drawingExtent(layout)
+  const lw = Math.max(1, ext.maxX - ext.minX)
+  const lh = Math.max(1, ext.maxY - ext.minY)
   const guessW = opts.width ?? (opts.height ? undefined : 320)
   const font = (guessW ?? opts.height ?? 320) >= 300 ? 11 : (guessW ?? opts.height ?? 320) >= 180 ? 10 : 9
   const rowGap = Math.round(font * 1.55)
   const rowsX = placeDimensions(opts.dimensions, 'x').rows
   const rowsY = placeDimensions(opts.dimensions, 'y').rows
-  const base = opts.dimensions.length ? 6 : 2
+  const base = (opts.dimensions.length ? 6 : 2) + (opts.margin ?? 0)
   const pad = {
     top: base,
     right: base + (rowsY ? 4 : 0),
@@ -103,8 +138,10 @@ export function computeViewport(layout: Layout, opts: ViewportOptions): Viewport
     height = padY + ((width - padX) * lh) / lw
   }
   const scale = Math.max(0.0001, Math.min((width - padX) / lw, (height - padY) / lh))
-  const ox = pad.left + (width - padX - lw * scale) / 2
-  const oy = pad.top + (height - padY - lh * scale) / 2
+  // El origen es la esquina del marco: los accesorios que sobresalen corren el marco dentro del cuadro.
+  const leftOverhang = opts.view === 'exterior' ? ext.maxX - layout.width : -ext.minX
+  const ox = pad.left + (width - padX - lw * scale) / 2 + leftOverhang * scale
+  const oy = pad.top + (height - padY - lh * scale) / 2 - ext.minY * scale
   return {
     width: round(width),
     height: round(height),
@@ -220,10 +257,46 @@ function shapePolygon(shape: Shape, w: number, h: number): Pt[] | null {
       [0, h],
     ]
   }
+  if (shape.kind === 'pentagon') {
+    // Pentágono regular escalado (igual que el motor): vértice arriba, hombros y pies.
+    const shoulder = (h * (1 - Math.cos((72 * Math.PI) / 180))) / (1 + Math.cos((36 * Math.PI) / 180))
+    const foot = (w / 2) * (1 - Math.sin((36 * Math.PI) / 180) / Math.sin((72 * Math.PI) / 180))
+    return [
+      [w / 2, 0],
+      [w, shoulder],
+      [w - foot, h],
+      [foot, h],
+      [0, shoulder],
+    ]
+  }
+  if (shape.kind === 'octagon') {
+    const max = Math.min(w, h) / 2 - 1
+    const c = typeof shape.chamfer === 'number' && shape.chamfer > 0 ? Math.min(shape.chamfer, max) : Math.min(w, h) / (2 + Math.SQRT2)
+    return [
+      [c, 0],
+      [w - c, 0],
+      [w, c],
+      [w, h - c],
+      [w - c, h],
+      [c, h],
+      [0, h - c],
+      [0, c],
+    ]
+  }
+  if (shape.kind === 'gable') {
+    const s = Math.min(h - 1, Math.max(1, shape.shoulderHeight))
+    return [
+      [w / 2, 0],
+      [w, h - s],
+      [w, h],
+      [0, h],
+      [0, h - s],
+    ]
+  }
   return null
 }
 
-/** Contorno exterior e interior (en mm) para arcos, trapecios y triángulos. */
+/** Contorno exterior e interior (en mm) de las formas, por si el motor no entrega el suyo. */
 export function shapeOutlines(shape: Shape | undefined, w: number, h: number, face: number): { outer: string; inner: string } | null {
   if (!shape || shape.kind === 'rect') return null
   if (shape.kind === 'arch') {
@@ -234,6 +307,13 @@ export function shapeOutlines(shape: Shape | undefined, w: number, h: number, fa
     const iry = Math.max(1, rise - face)
     const inner = `M${face} ${h - face}L${face} ${round(rise, 1)}A${round(irx, 1)} ${round(iry, 1)} 0 0 1 ${w - face} ${round(rise, 1)}L${w - face} ${h - face}Z`
     return { outer, inner }
+  }
+  if (shape.kind === 'round' || shape.kind === 'oval') {
+    const rx = shape.kind === 'round' ? Math.min(w, h) / 2 : w / 2
+    const ry = shape.kind === 'round' ? Math.min(w, h) / 2 : h / 2
+    const ellipse = (a: number, b: number) =>
+      `M${round(w / 2 + a, 1)} ${round(h / 2, 1)}A${round(a, 1)} ${round(b, 1)} 0 1 1 ${round(w / 2 - a, 1)} ${round(h / 2, 1)}A${round(a, 1)} ${round(b, 1)} 0 1 1 ${round(w / 2 + a, 1)} ${round(h / 2, 1)}Z`
+    return { outer: ellipse(rx, ry), inner: ellipse(Math.max(1, rx - face), Math.max(1, ry - face)) }
   }
   const poly = shapePolygon(shape, w, h)
   if (!poly) return null

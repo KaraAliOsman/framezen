@@ -1,4 +1,4 @@
-import type { PurchaseOrderDraft } from '@framezen/engine'
+import type { PurchaseOrderDraft } from '@dekopen/engine'
 import { DocHeader, DocRoot, Sheet, Signatures, WriteField } from './common'
 import { fmtMoney, fmtNumber, fmtPct, fmtQty } from './format'
 import { colorInfo, otLabel, materialCode } from './helpers'

@@ -9,23 +9,25 @@
 import {
   ASSISTANT_TOOLS,
   PLANS,
-  creditsForTokens,
+  creditsForUsage,
   parseLocalCommand,
+  planLimits,
   type AssistantChatRequest,
   type AssistantChatResponse,
   type AssistantLocalReason,
   type AssistantMessage,
   type AssistantStatus,
   type LocalCommandContext,
-} from '@framezen/shared'
+} from '@dekopen/shared'
 import type { AppDeps, AuthContext } from '../../context'
 import { aiUsage } from '../../db/schema'
 import { newId } from '../../lib/crypto'
 import { getBillingState } from '../billing'
 import type { AiConfig } from './config'
-import { creditsLeftOf, releaseCredits, reserveCredits, settleCredits, type CreditReservation } from './credits'
-import { AiError, DEFAULT_MAX_TOKENS, chatCompletion, estimateTokens, toOpenAiMessages, type OpenAiMessage } from './openai'
+import { creditsLeftOf, dailyAiUsage, dailyCreditsLeft, releaseCredits, reserveCredits, settleCredits, type CreditReservation } from './credits'
+import { AiError, chatCompletion, estimateTokens, toOpenAiMessages, type OpenAiMessage } from './openai'
 import { buildContextMessage, buildSystemPrompt, chileDate } from './prompt'
+import { providerBlocksTurns, providerStatus } from './provider'
 
 export { creditsLeftOf }
 
@@ -40,23 +42,24 @@ export interface AssistantRuntime {
 const TOOLS_TOKENS = Math.ceil(JSON.stringify(ASSISTANT_TOOLS).length / 4)
 
 /** Costo probable de una llamada (entrada estimada + tope de respuesta): lo que se reserva. */
-function estimateCredits(messages: readonly OpenAiMessage[]): number {
-  return creditsForTokens(estimateTokens(messages) + TOOLS_TOKENS + DEFAULT_MAX_TOKENS)
+function estimateCredits(messages: readonly OpenAiMessage[], maxOutputTokens: number): number {
+  return creditsForUsage({ inputTokens: estimateTokens(messages) + TOOLS_TOKENS, outputTokens: maxOutputTokens })
 }
 
-const NOTICES: Record<'no_credits' | 'timeout' | 'rate_limit' | 'auth' | 'other', string> = {
-  no_credits: 'Usaste todos los créditos de IA de este período. Sigo en modo local: entiendo frases como «agrega una corredera de 1500 x 1200».',
-  timeout: 'La IA se demoró demasiado, así que lo resolví en modo local.',
-  rate_limit: 'La IA está con mucha demanda en este momento; por ahora sigo en modo local.',
-  auth: 'La conexión con la IA no está disponible; sigo en modo local mientras lo revisamos.',
-  other: 'No pude conectar con la IA; lo resolví en modo local.',
+const NOTICES: Record<'no_credits' | 'daily_limit' | 'timeout' | 'rate_limit' | 'auth' | 'other', string> = {
+  daily_limit: 'Por hoy se alcanzó el tope de uso de IA. Sigo sin IA: entiendo frases como «agrega una corredera de 1500 x 1200».',
+  no_credits: 'Usaste todos los créditos de IA de este período. Sigo sin IA: entiendo frases como «agrega una corredera de 1500 x 1200».',
+  timeout: 'La IA se demoró demasiado, así que lo resolví sin IA.',
+  rate_limit: 'La IA está con mucha demanda en este momento; por ahora sigo sin IA.',
+  auth: 'La conexión con la IA no está disponible; sigo sin IA mientras se resuelve.',
+  other: 'No pude conectar con la IA; lo resolví sin IA.',
 }
 
 function noticeFor(error: unknown): string {
   if (error instanceof AiError) {
     if (error.kind === 'timeout') return NOTICES.timeout
     if (error.kind === 'rate_limit') return NOTICES.rate_limit
-    if (error.kind === 'auth') return NOTICES.auth
+    if (error.kind === 'auth' || error.kind === 'forbidden' || error.kind === 'billing' || error.kind === 'model') return NOTICES.auth
   }
   return NOTICES.other
 }
@@ -127,14 +130,18 @@ async function localReply(
 }
 
 /** Modo vigente y saldo (para el indicador del panel). */
-export async function assistantStatus(deps: AppDeps, auth: AuthContext, ai: AiConfig | null): Promise<AssistantStatus> {
+export async function assistantStatus(deps: AppDeps, auth: AuthContext, ai: AiConfig | null, options: { fetch?: typeof fetch } = {}): Promise<AssistantStatus> {
   const billing = await getBillingState(deps.db, auth.org.id, deps.config.billingProvider, deps.now())
   const creditsLeft = creditsLeftOf(billing)
   const planHasAi = billing.features.includes('assistant') && billing.status !== 'expired'
-  const reason: AssistantLocalReason | undefined = !planHasAi ? 'plan' : !ai ? 'no_key' : creditsLeft <= 0 ? 'no_credits' : undefined
+  const base: AssistantLocalReason | undefined = !planHasAi ? 'plan' : !ai ? 'no_key' : creditsLeft <= 0 ? 'no_credits' : undefined
+  // El proveedor solo se consulta si es lo único que falta saber (y sin gastar tokens).
+  const provider = !base || base === 'no_key' ? await providerStatus(deps, ai, options.fetch ? { fetch: options.fetch } : {}) : undefined
+  const reason: AssistantLocalReason | undefined = provider && providerBlocksTurns(provider.state) && provider.state !== 'no_key' ? 'ai_error' : base
   return {
     mode: reason ? 'local' : 'ai',
     ...(reason ? { reason } : {}),
+    ...(provider ? { provider: provider.state } : {}),
     creditsLeft,
     creditsIncluded: billing.aiCredits.included + billing.aiCredits.extra,
   }
@@ -150,6 +157,11 @@ export async function runAssistant(deps: AppDeps, auth: AuthContext, request: As
   if (!planHasAi) return localReply(deps, auth, request, creditsLeft, 'plan')
   if (!runtime.ai) return localReply(deps, auth, request, creditsLeft, 'no_key')
   if (creditsLeft <= 0) return localReply(deps, auth, request, 0, 'no_credits', NOTICES.no_credits)
+  // Mismos topes diarios que el asistente v2 (este endpoint sigue montado: no puede ser un atajo).
+  const usage = await dailyAiUsage(deps, auth.org.id, auth.user.id)
+  if (dailyCreditsLeft(billing.plan, usage) <= 0 || usage.userCalls >= planLimits(billing.plan).aiTurnsPerUserDay) {
+    return localReply(deps, auth, request, creditsLeft, 'no_credits', NOTICES.daily_limit)
+  }
 
   const messages: OpenAiMessage[] = [
     {
@@ -168,7 +180,7 @@ export async function runAssistant(deps: AppDeps, auth: AuthContext, request: As
   // Reserva atómica: con pedidos simultáneos, solo llaman a la IA los que alcanzan a apartar saldo.
   let reservation: CreditReservation | null
   try {
-    reservation = await reserveCredits(deps, auth, estimateCredits(messages))
+    reservation = await reserveCredits(deps, auth, estimateCredits(messages, runtime.ai.maxCompletionTokens))
   } catch (error) {
     deps.logger.warn('Marco: no se pudo reservar créditos; respondo en modo local', error instanceof Error ? error.message : error)
     return localReply(deps, auth, request, creditsLeft, 'ai_error', NOTICES.other)
@@ -178,7 +190,7 @@ export async function runAssistant(deps: AppDeps, auth: AuthContext, request: As
 
   try {
     const result = await chatCompletion({ config: runtime.ai, messages, tools: ASSISTANT_TOOLS, fetch: runtime.fetch, signal: runtime.signal })
-    const settled = await settleCredits(deps, auth, reservation, creditsForTokens(result.totalTokens), result.model)
+    const settled = await settleCredits(deps, auth, reservation, result.credits, result.model)
     const content = result.content || (result.toolCalls.length ? '' : 'Listo.')
     const message: AssistantMessage = { role: 'assistant', content }
     if (result.toolCalls.length) message.toolCalls = result.toolCalls

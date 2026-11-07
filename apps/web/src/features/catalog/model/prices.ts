@@ -2,10 +2,11 @@
  * Lógica pura de la pestaña Precios: filas editables a partir del catálogo efectivo, filtros,
  * ajuste masivo por porcentaje (con su deshacer exacto) y aplicación optimista de precios propios.
  */
-import type { Catalog, Id, Item, Profile, ProfileRole } from '@framezen/engine'
-import type { PriceOverride } from '@framezen/shared'
-import { formatMeters } from '@framezen/engine'
-import { formatNumber, normalizeSearch } from '../../../lib/format'
+import type { Catalog, Id, Item, Profile, ProfileRole } from '@dekopen/engine'
+import type { Locale, PriceOverride } from '@dekopen/shared'
+import { normalizeSearch } from '../../../lib/format'
+import { getFormatter, translate } from '../../../lib/i18n'
+import es from '../i18n/es'
 
 export type PriceFamily = 'profile' | 'reinforcement' | 'hardware' | 'accessory' | 'glass'
 
@@ -23,12 +24,22 @@ export interface PriceRow {
   lineId?: Id
   lineName?: string
   role?: ProfileRole
-  /** «barra 5,8 m», «u», «caja de 1.000», «m²». */
+  /** «barra 5,8 m», «unidad», «caja de 1.000», «m²» (en el idioma de la interfaz al armar las filas). */
   unit: string
   price: number
   /** Precio cargado por el taller (no el de lista). */
   own: boolean
   minArea?: number
+  /**
+   * Color propio que hereda el precio de otro («Mismo precio», recargo): en $0 solo porque el color
+   * de referencia tampoco tiene precio; no es un faltante aparte.
+   */
+  inherited?: boolean
+}
+
+/** Precio que falta de verdad (los heredados en $0 ya cuentan en su color de referencia). */
+export function isMissingPrice(row: Pick<PriceRow, 'price' | 'inherited'>): boolean {
+  return !(row.price > 0) && !row.inherited
 }
 
 export type FamilyFilter = 'all' | Exclude<PriceFamily, 'glass'>
@@ -56,20 +67,9 @@ export interface PriceFilters {
 
 export const EMPTY_FILTERS: PriceFilters = { q: '', family: 'all', brandId: 'all', lineId: 'all', colorId: 'all', missing: false, own: false, focus: null }
 
-export const FAMILY_LABEL: Record<PriceFamily, string> = {
-  profile: 'Perfiles',
-  reinforcement: 'Refuerzos',
-  hardware: 'Herrajes',
-  accessory: 'Accesorios',
-  glass: 'Vidrios',
-}
-
-export const FAMILY_SINGULAR: Record<PriceFamily, string> = {
-  profile: 'Perfil',
-  reinforcement: 'Refuerzo',
-  hardware: 'Herraje',
-  accessory: 'Accesorio',
-  glass: 'Vidrio',
+/** Nombre de la familia de precios («Perfiles», «Herrajes»…). */
+export function familyLabel(family: PriceFamily, locale?: Locale): string {
+  return translate(es, `family.${family}`, undefined, locale)
 }
 
 export function overrideKey(o: Pick<PriceOverride, 'kind' | 'id' | 'colorId'>): string {
@@ -84,34 +84,44 @@ export function reinforcementPrice(profile: Profile): { price: number; colorKey?
   return priced ? { price: priced[1], colorKey: priced[0] } : { price: 0 }
 }
 
-export function itemUnitLabel(item: Pick<Item, 'unit' | 'packSize'>): string {
-  const pack = item.packSize && item.packSize > 1 ? formatNumber(item.packSize) : ''
+export function itemUnitLabel(item: Pick<Item, 'unit' | 'packSize'>, locale?: Locale): string {
+  const pack = item.packSize && item.packSize > 1 ? getFormatter({ locale }).number(item.packSize) : ''
+  const t = (key: Parameters<typeof translate<typeof es>>[1]) => translate(es, key, { pack }, locale)
   switch (item.unit) {
     case 'caja':
-      return pack ? `caja de ${pack}` : 'caja'
+      return pack ? t('unit.boxOf') : t('unit.box')
     case 'm':
-      return pack ? `rollo de ${pack} m` : 'metro'
+      return pack ? t('unit.rollOf') : t('unit.meter')
     case 'par':
-      return 'par'
+      return t('unit.pair')
     case 'kit':
-      return 'kit'
+      return t('unit.kit')
     case 'cartucho':
-      return 'cartucho'
+      return t('unit.cartridge')
     default:
-      return pack ? `envase de ${pack}` : 'unidad'
+      return pack ? t('unit.packOf') : t('unit.unit')
   }
+}
+
+/** Unidad de compra de un perfil: la barra con su largo («barra 5,8 m»). */
+export function barUnitLabel(barLength: number | undefined, locale?: Locale): string {
+  return translate(es, 'unit.bar', { length: getFormatter({ locale }).meters(barLength || 5800) }, locale)
 }
 
 export function itemFamily(item: Pick<Item, 'kind'>): 'hardware' | 'accessory' {
   return item.kind === 'hardware' ? 'hardware' : 'accessory'
 }
 
-/** Todas las filas de precio del catálogo efectivo (perfiles por color, refuerzos, herrajes, accesorios y vidrios). */
-export function buildPriceRows(catalog: Catalog, overrides: readonly PriceOverride[] = []): PriceRow[] {
+/**
+ * Todas las filas de precio del catálogo efectivo (perfiles por color, refuerzos, herrajes, accesorios
+ * y vidrios). Las unidades salen en el idioma indicado (por defecto, el de la interfaz).
+ */
+export function buildPriceRows(catalog: Catalog, overrides: readonly PriceOverride[] = [], locale?: Locale): PriceRow[] {
   const own = new Set(overrides.map(overrideKey))
   const ownIds = new Set(overrides.map((o) => `${o.kind}:${o.id}`))
   const brandName = new Map(catalog.brands.map((b) => [b.id, b.name]))
   const lines = new Map(catalog.lines.map((l) => [l.id, l]))
+  const inherits = new Set(catalog.colors.filter((c) => c.priceFrom).map((c) => c.id))
   const rows: PriceRow[] = []
   // Colores que ofrece cada línea para los perfiles que usa por defecto: aunque la lista no traiga
   // ese color, la fila existe para que el taller pueda cargar el precio que falta.
@@ -138,7 +148,7 @@ export function buildPriceRows(catalog: Catalog, overrides: readonly PriceOverri
       lineId: profile.lineId,
       lineName: line?.name,
       role: profile.role,
-      unit: `barra ${formatMeters(profile.barLength || 5800)}`,
+      unit: barUnitLabel(profile.barLength, locale),
     }
     if (profile.role === 'reinforcement') {
       const { price } = reinforcementPrice(profile)
@@ -152,13 +162,15 @@ export function buildPriceRows(catalog: Catalog, overrides: readonly PriceOverri
     }
     for (const colorId of colors) {
       const key = overrideKey({ kind: 'profile', id: profile.id, colorId })
+      const price = profile.priceByColor[colorId] ?? 0
       rows.push({
         ...common,
         key,
         family: 'profile',
         colorId,
-        price: profile.priceByColor[colorId] ?? 0,
+        price,
         own: own.has(key) || own.has(overrideKey({ kind: 'profile', id: profile.id })),
+        ...(!(price > 0) && inherits.has(colorId) ? { inherited: true } : {}),
       })
     }
   }
@@ -174,7 +186,7 @@ export function buildPriceRows(catalog: Catalog, overrides: readonly PriceOverri
       name: item.name,
       brandId: item.brandId,
       brandName: brandName.get(item.brandId) ?? item.brandId,
-      unit: itemUnitLabel(item),
+      unit: itemUnitLabel(item, locale),
       price: item.price ?? 0,
       own: own.has(key),
     })
@@ -190,8 +202,8 @@ export function buildPriceRows(catalog: Catalog, overrides: readonly PriceOverri
       code: glass.composition ?? '',
       name: glass.name,
       brandId: glass.brandId ?? '',
-      brandName: glass.brandId ? (brandName.get(glass.brandId) ?? glass.brandId) : 'Sin marca',
-      unit: 'm²',
+      brandName: glass.brandId ? (brandName.get(glass.brandId) ?? glass.brandId) : translate(es, 'unit.noBrand', undefined, locale),
+      unit: translate(es, 'unit.m2', undefined, locale),
       price: glass.pricePerM2 ?? 0,
       own: own.has(key),
       minArea: glass.minArea,
@@ -216,7 +228,7 @@ export function filterRows(rows: readonly PriceRow[], filters: PriceFilters, col
     // El color solo existe en perfiles: filtrar por color deja solo esas filas (así un ajuste
     // masivo «+5 % al nogal» nunca toca herrajes ni refuerzos).
     if (filters.colorId !== 'all' && row.colorId !== filters.colorId) return false
-    if (filters.missing && row.price > 0) return false
+    if (filters.missing && !isMissingPrice(row)) return false
     if (filters.own && !row.own) return false
     if (terms.length) {
       const text = rowSearchText(row, row.colorId ? colorNames?.get(row.colorId) : undefined)
@@ -337,7 +349,7 @@ export function bulkAdjust(rows: readonly PriceRow[], pct: number, options: { ro
 /** Precios sin valor (en $0) por familia. */
 export function missingByFamily(rows: readonly PriceRow[]): Record<PriceFamily, number> {
   const out: Record<PriceFamily, number> = { profile: 0, reinforcement: 0, hardware: 0, accessory: 0, glass: 0 }
-  for (const row of rows) if (!(row.price > 0)) out[row.family]++
+  for (const row of rows) if (isMissingPrice(row)) out[row.family]++
   return out
 }
 

@@ -1,57 +1,62 @@
 import { Link } from 'react-router'
-import { FramezenLogo } from '../../../ui/FramezenLogo'
+import { useT } from '../../../lib/i18n'
+import { DekopenWordmark } from '../../../ui/DekopenLogo'
+import es from '../i18n/es'
+import { LanguageSwitcher } from './LanguageSwitcher'
 import { Container } from './primitives'
 import { NAV_LINKS } from './SiteHeader'
 
+const LINK = 'rounded-xs text-fg-muted transition-colors duration-100 hover:text-fg-strong'
+
+/** Pie: enlaces, idioma y el logotipo grande como cierre de la página. */
 export function SiteFooter() {
-  const year = new Date().getFullYear()
+  const t = useT(es)
   return (
-    <footer className="border-t border-paper-200 bg-paper-50">
-      <Container className="grid grid-cols-1 gap-10 py-14 md:grid-cols-12">
-        <div className="md:col-span-5">
-          <FramezenLogo size="md" className="text-paper-900" />
-          <p className="mt-4 max-w-[36ch] text-[14px] leading-[22px] text-paper-600">
-            El software para talleres y fábricas de ventanas y puertas de PVC. Hecho en Chile, para talleres de toda
-            Latinoamérica.
-          </p>
-        </div>
-        <nav aria-label="Producto" className="md:col-span-4">
-          <p className="text-[13px] font-medium text-paper-900">Producto</p>
-          <ul className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-[14px]">
-            {NAV_LINKS.map((link) => (
-              <li key={link.href}>
-                <a href={link.href} className="rounded-xs text-paper-600 transition-colors duration-[120ms] hover:text-paper-900">
-                  {link.label}
-                </a>
+    <footer className="bg-canvas text-fg">
+      <Container className="pb-8">
+        <div className="grid grid-cols-2 gap-8 border-t border-divider pt-10 md:grid-cols-12">
+          <p className="col-span-2 max-w-[38ch] text-base text-fg-muted md:col-span-6">{t('footer.tagline')}</p>
+          <nav aria-label={t('footer.product')} className="md:col-span-3">
+            <ul className="grid gap-2 text-base">
+              {NAV_LINKS.map((link) => (
+                <li key={link.href}>
+                  <a href={link.href} className={LINK}>
+                    {t(`nav.${link.key}`)}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+          <nav aria-label={t('footer.account')} className="md:col-span-3">
+            <ul className="grid gap-2 text-base">
+              <li>
+                <Link to="/crear-cuenta" className={LINK}>
+                  {t('common.createAccount')}
+                </Link>
               </li>
-            ))}
-          </ul>
-        </nav>
-        <nav aria-label="Cuenta" className="md:col-span-3">
-          <p className="text-[13px] font-medium text-paper-900">Cuenta</p>
-          <ul className="mt-3 grid gap-2 text-[14px]">
-            <li>
-              <Link to="/crear-cuenta" className="rounded-xs text-paper-600 transition-colors duration-[120ms] hover:text-paper-900">
-                Crear cuenta
-              </Link>
-            </li>
-            <li>
-              <Link to="/entrar" className="rounded-xs text-paper-600 transition-colors duration-[120ms] hover:text-paper-900">
-                Entrar
-              </Link>
-            </li>
-            <li>
-              <Link to="/recuperar" className="rounded-xs text-paper-600 transition-colors duration-[120ms] hover:text-paper-900">
-                Recuperar contraseña
-              </Link>
-            </li>
-          </ul>
-        </nav>
-      </Container>
-      <Container>
-        <div className="flex flex-col gap-2 border-t border-paper-200 py-6 text-[12px] text-paper-600 sm:flex-row sm:justify-between">
-          <p className="tabular">© {year} Framezen</p>
-          <p>Precios en pesos chilenos más IVA. Dibujos y cifras de esta página: catálogo de ejemplo.</p>
+              <li>
+                <Link to="/entrar" className={LINK}>
+                  {t('common.login')}
+                </Link>
+              </li>
+              <li>
+                <Link to="/recuperar" className={LINK}>
+                  {t('footer.recover')}
+                </Link>
+              </li>
+            </ul>
+            <p className="sr-only">{t('footer.language')}</p>
+            <LanguageSwitcher variant="full" className="mt-3 -ml-2.5" />
+          </nav>
+        </div>
+
+        <div aria-hidden className="lp-wordmark mt-14 text-fg-strong">
+          <DekopenWordmark height={100} />
+        </div>
+
+        <div className="mt-6 flex flex-col gap-1 text-table text-fg-muted sm:flex-row sm:justify-between">
+          <p className="tabular">{t('footer.copyright', { year: String(new Date().getFullYear()) })}</p>
+          <p>{t('footer.note')}</p>
         </div>
       </Container>
     </footer>

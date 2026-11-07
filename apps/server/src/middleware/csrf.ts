@@ -2,7 +2,7 @@
  * Protección CSRF para /api/*: una escritura (POST, PUT, PATCH, DELETE) solo se acepta si viene
  * de la propia app. Los navegadores modernos lo dicen en Sec-Fetch-Site; si falta, se mira Origin
  * (debe ser APP_URL o el mismo host). Sin ninguna de las dos (curl, otros servidores) no hay
- * navegador que engañar. Excepción: /api/billing/flow/*, que Flow llama desde su dominio.
+ * navegador que engañar. Excepción: /api/billing/flow/* y /api/public/pay/flow/*, que Flow llama desde su dominio.
  * Sin esto, un formulario de otro sitio (text/plain, sin preflight) dejaba a la víctima dentro
  * de la cuenta del atacante (login CSRF) o escribía datos desde un subdominio hermano.
  */
@@ -11,7 +11,7 @@ import type { AppDeps, AppEnv } from '../context'
 import { HttpError } from '../lib/errors'
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
-const EXEMPT = ['/api/billing/flow/']
+const EXEMPT = ['/api/billing/flow/', '/api/public/pay/flow/']
 
 function originOf(url: string): string | undefined {
   try {
@@ -37,7 +37,7 @@ export function isAllowedOrigin(origin: string, appUrl: string, requestHost: str
 }
 
 const crossSite = () =>
-  new HttpError(403, 'cross_site', 'Por seguridad, esta acción solo se puede hacer desde Framezen. Abre la app y vuelve a intentarlo.')
+  new HttpError(403, 'cross_site', 'Por seguridad, esta acción solo se puede hacer desde DEKOPEN. Abre la app y vuelve a intentarlo.')
 
 export const sameOriginGuard = (deps: AppDeps) =>
   createMiddleware<AppEnv>(async (c, next) => {

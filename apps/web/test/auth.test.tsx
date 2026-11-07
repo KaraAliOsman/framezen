@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router'
-import type { Me } from '@framezen/shared'
+import type { Me } from '@dekopen/shared'
 import { GuestOnly, RequireAuth, safeNext, useSession } from '../src/lib/auth'
 import { createQueryClient } from '../src/lib/queryClient'
 

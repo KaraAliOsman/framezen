@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
-import type { Me } from '@framezen/shared'
+import type { Me } from '@dekopen/shared'
 import { RequireAuth } from '../../lib/auth'
 import { createQueryClient, qk } from '../../lib/queryClient'
 import { useShellStore } from '../../lib/stores'
@@ -76,6 +76,6 @@ describe('navegación del teléfono', () => {
 
   it('marca «Más» cuando estás en una de sus secciones', () => {
     renderShell('/catalogo')
-    expect(screen.getByRole('button', { name: 'Más' }).className).toContain('text-ink-600')
+    expect(screen.getByRole('button', { name: 'Más' }).className).toContain('text-fg-strong')
   })
 })

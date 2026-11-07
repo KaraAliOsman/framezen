@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sampleWorkshopData, workshopLabelCount } from '@framezen/documents'
+import { sampleWorkshopData, workshopLabelCount } from '@dekopen/documents'
 import { renderWorkshopDocument, renderWorkshopDocumentAsync } from '../src/services/pdf/render'
 
 /** Los ids de useId llevan un prefijo por tramo: se numeran en orden de aparición para comparar. */

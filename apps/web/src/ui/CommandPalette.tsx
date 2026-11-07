@@ -3,6 +3,8 @@ import { Command } from 'cmdk'
 import { Dialog as RadixDialog, VisuallyHidden } from 'radix-ui'
 import { CornerDownLeft, Search, type LucideIcon } from 'lucide-react'
 import { cn } from '../lib/cn'
+import { useT } from '../lib/i18n'
+import es from './i18n/es'
 import { accentFilter, ID_SEPARATOR } from './Combobox'
 import { Kbd } from './Kbd'
 
@@ -27,9 +29,11 @@ export interface CommandPaletteProps {
   onOpenChange: (open: boolean) => void
   groups: CommandGroup[]
   placeholder?: string
-  /** Si existe, ofrece «Preguntarle a Marco: …» con lo escrito. */
+  /** Si existe, ofrece «Preguntarle a {asistente}: …» con lo escrito. */
   onAsk?: (query: string) => void
   askIcon?: ReactNode
+  /** Nombre del asistente que recibe la pregunta (dato, p. ej. «Marco»); sin él, «el asistente». */
+  askName?: string
   /** Para búsquedas remotas: avisa cada vez que cambia el texto. */
   onQueryChange?: (query: string) => void
 }
@@ -38,19 +42,21 @@ function renderIcon(icon: CommandAction['icon']) {
   if (!icon) return <span className="size-4" />
   if (isValidElement(icon)) return icon
   const Icon = icon as LucideIcon
-  return <Icon aria-hidden strokeWidth={1.75} className="size-4 text-paper-600" />
+  return <Icon aria-hidden strokeWidth={1.75} className="size-4 text-fg-muted group-data-[selected=true]:text-fg" />
 }
 
-/** Paleta ⌘K: navegar, buscar objetos y ejecutar acciones (o preguntarle a Marco). */
+/** Paleta ⌘K: navegar, buscar objetos y ejecutar acciones (o preguntarle al asistente). */
 export function CommandPalette({
   open,
   onOpenChange,
   groups,
-  placeholder = 'Busca o escribe un comando…',
+  placeholder,
   onAsk,
   askIcon,
+  askName,
   onQueryChange,
 }: CommandPaletteProps) {
+  const t = useT(es)
   const [query, setQuery] = useState('')
   const trimmed = query.trim()
 
@@ -70,36 +76,36 @@ export function CommandPalette({
       }}
     >
       <RadixDialog.Portal>
-        <RadixDialog.Overlay className="fz-overlay fixed inset-0 z-50 bg-paper-900/25 dark:bg-black/50" />
+        <RadixDialog.Overlay className="fixed inset-0 z-50 bg-scrim" />
         <RadixDialog.Content
           aria-describedby={undefined}
-          className="fz-pop fixed top-[14vh] left-1/2 z-50 w-[calc(100vw-24px)] max-w-[640px] -translate-x-1/2 overflow-hidden rounded-lg border border-paper-200 bg-paper-0 shadow-pop sm:top-[20vh]"
+          className="fixed top-[14vh] left-1/2 z-50 w-[calc(100vw-24px)] max-w-[640px] -translate-x-1/2 overflow-hidden rounded-lg bg-raised text-fg shadow-pop focus-visible:outline-none sm:top-[18vh]"
         >
           <VisuallyHidden.Root>
-            <RadixDialog.Title>Buscar y comandos</RadixDialog.Title>
+            <RadixDialog.Title>{t('palette.title')}</RadixDialog.Title>
           </VisuallyHidden.Root>
           <Command filter={accentFilter} loop className="flex flex-col">
-            <div className="flex items-center gap-3 border-b border-paper-200 px-4">
-              <Search aria-hidden strokeWidth={1.75} className="size-[18px] shrink-0 text-paper-600" />
+            <div className="flex items-center gap-3 px-4 pt-1">
+              <Search aria-hidden strokeWidth={1.75} className="size-[18px] shrink-0 text-fg-muted" />
               <Command.Input
                 value={query}
                 onValueChange={(v) => {
                   setQuery(v)
                   onQueryChange?.(v)
                 }}
-                placeholder={placeholder}
-                className="h-13 w-full bg-transparent text-lead outline-none placeholder:text-paper-600/70 focus-visible:outline-none"
+                placeholder={placeholder ?? t('palette.placeholder')}
+                className="h-14 w-full bg-transparent text-lead text-fg-strong outline-none placeholder:text-fg-faint focus-visible:outline-none"
               />
-              <Kbd>Esc</Kbd>
+              <Kbd>{t('keys.escape')}</Kbd>
             </div>
             <Command.List className="scrollbar-quiet max-h-[min(420px,60vh)] overflow-y-auto p-2">
               {onAsk && trimmed ? (
-                // Con Marco abajo basta una línea: nada de bloque vacío encima de su sugerencia.
-                <Command.Empty className="px-2 pt-2 pb-1 text-[13px] text-paper-600">
-                  Sin coincidencias para «{trimmed}».
+                // Con el asistente abajo basta una línea: nada de bloque vacío encima de su sugerencia.
+                <Command.Empty className="px-2 pt-2 pb-1 text-table text-fg-muted">
+                  {t('palette.noMatchesFor', { query: trimmed })}
                 </Command.Empty>
               ) : (
-                <Command.Empty className="px-3 py-8 text-center text-paper-600">Nada por aquí. Prueba con otra palabra.</Command.Empty>
+                <Command.Empty className="px-3 py-10 text-center text-fg-muted">{t('palette.nothing')}</Command.Empty>
               )}
               {groups
                 .filter((g) => g.items.length > 0)
@@ -107,7 +113,7 @@ export function CommandPalette({
                   <Command.Group
                     key={group.heading}
                     heading={group.heading}
-                    className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-meta [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-paper-600"
+                    className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-meta [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-fg-muted"
                   >
                     {group.items.map((item) => (
                       <Command.Item
@@ -116,13 +122,13 @@ export function CommandPalette({
                         keywords={[item.hint ?? '', ...(item.keywords ?? [])]}
                         onSelect={() => run(item.onSelect)}
                         className={cn(
-                          'group relative flex h-10 cursor-default items-center gap-3 rounded-sm px-2 text-base',
-                          'data-[selected=true]:bg-paper-100',
+                          'group relative flex h-10 cursor-default items-center gap-3 rounded-sm px-2.5 text-base text-fg',
+                          'data-[selected=true]:bg-hover data-[selected=true]:text-fg-strong',
                         )}
                       >
                         {renderIcon(item.icon)}
                         <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                        {item.hint ? <span className="shrink-0 truncate text-[13px] text-paper-600">{item.hint}</span> : null}
+                        {item.hint ? <span className="max-w-[45%] shrink-0 truncate text-table text-fg-muted">{item.hint}</span> : null}
                         {item.shortcut ? <Kbd combo={item.shortcut} /> : null}
                       </Command.Item>
                     ))}
@@ -130,39 +136,41 @@ export function CommandPalette({
                 ))}
               {onAsk && trimmed ? (
                 <Command.Group
-                  heading="Marco"
+                  heading={askName || t('palette.askHeading')}
                   forceMount
-                  className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-meta [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-paper-600"
+                  className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-meta [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-fg-muted"
                 >
                   <Command.Item
                     value={`${trimmed}${ID_SEPARATOR}__ask__`}
                     forceMount
                     onSelect={() => run(() => onAsk(trimmed))}
-                    className="flex h-10 cursor-default items-center gap-3 rounded-sm px-2 text-base data-[selected=true]:bg-ink-50"
+                    className="flex h-10 cursor-default items-center gap-3 rounded-sm px-2.5 text-base text-fg data-[selected=true]:bg-hover data-[selected=true]:text-fg-strong"
                   >
-                    {askIcon ?? <span aria-hidden className="size-4 rounded-full bg-ink-600" />}
+                    {askIcon ?? <span aria-hidden className="size-4 rounded-full bg-accent" />}
                     <span className="min-w-0 flex-1 truncate">
-                      Preguntarle a Marco: <span className="font-medium">«{trimmed}»</span>
+                      {askName
+                        ? t.rich('palette.ask', { name: askName, query: trimmed, b: <span className="font-medium" /> })
+                        : t.rich('palette.askGeneric', { query: trimmed, b: <span className="font-medium" /> })}
                     </span>
                   </Command.Item>
                 </Command.Group>
               ) : null}
             </Command.List>
-            <div className="flex items-center gap-4 border-t border-paper-200 bg-paper-50 px-4 py-2 text-meta text-paper-600">
+            <div className="flex items-center gap-4 border-t border-divider px-4 py-2 text-meta text-fg-muted">
               <span className="inline-flex items-center gap-1.5">
                 <Kbd>
-                  <CornerDownLeft aria-label="Enter" className="size-3" />
+                  <CornerDownLeft aria-label={t('keys.enter')} className="size-3" />
                 </Kbd>
-                abrir
+                {t('palette.open')}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Kbd>↑</Kbd>
                 <Kbd>↓</Kbd>
-                moverte
+                {t('palette.move')}
               </span>
               <span className="ml-auto inline-flex items-center gap-1.5">
                 <Kbd combo="mod+k" />
-                abrir y cerrar
+                {t('palette.toggle')}
               </span>
             </div>
           </Command>

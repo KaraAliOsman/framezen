@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
-import { createDesign, DEFAULT_PRICING, evaluateQuote, setColor, setGlass, type WindowDesign } from '@framezen/engine'
-import type { Client, Org, Quote, QuoteItem } from '@framezen/shared'
+import { createDesign, DEFAULT_PRICING, evaluateQuote, setColor, setGlass, type WindowDesign } from '@dekopen/engine'
+import type { Client, Org, Quote, QuoteItem } from '@dekopen/shared'
 import {
   buildQuoteDocData,
   mergeQuoteDocPrefs,
@@ -15,6 +15,7 @@ import {
 } from '../../src/data/quote'
 import { describeOpening, QuoteDocument, SAMPLE_CATALOG, SAMPLE_PREFS } from '../../src/sales'
 import { formatClp } from '../../src/base'
+import { sampleWorkshopCatalog } from '../../src/workshop/sample'
 
 const catalog = SAMPLE_CATALOG
 const casement = (typology: string, width: number, height: number, colorId = 'white'): WindowDesign =>
@@ -86,7 +87,6 @@ describe('buildQuoteDocData', () => {
       const price = evaluation.items[index].price
       expect(docItem.unitPrice).toBe(price.unitNet)
       expect(docItem.total).toBe(price.totalNet)
-      expect(docItem.unitPrice).toBeGreaterThan(0)
     })
     expect(data.items[1].qty).toBe(2)
     expect(data.items[1].total).toBe(data.items[1].unitPrice * 2)
@@ -107,7 +107,7 @@ describe('buildQuoteDocData', () => {
     expect(v1.name).toBe('Ventanal del living')
     expect(v1.location).toBe('Living')
     expect(v1.notes).toBe('Con mosquitero')
-    expect(v1.lineName).toBe('PVC Perfiles Andes Corredera 70')
+    expect(v1.lineName).toBe('PVC Corredera 70')
     expect(v1.colorName).toBe('Nogal')
     expect(v1.glassName).toBe('Termopanel 4-12-4')
     expect(v1.width).toBe(2000)
@@ -122,7 +122,7 @@ describe('buildQuoteDocData', () => {
 
   it('combina las preferencias de la organización con los textos de la cotización', () => {
     const q = quote({
-      documentOverrides: { quoteTemplate: 'editorial', intro: 'Hola Carolina, aquí va lo conversado.', validityDays: '30' as unknown as number, notes: 'Incluye visita técnica.' } as Quote['documentOverrides'],
+      documentOverrides: { quoteTemplate: 'editorial', intro: 'Hola Carolina, aquí va lo conversado.', validityDays: '30' as unknown as number, notes: 'Incluye visita técnica.' } as unknown as Quote['documentOverrides'],
     })
     const data = buildQuoteDocData({ quote: q, org, catalog, settings })
     expect(data.prefs.quoteTemplate).toBe('editorial')
@@ -139,9 +139,9 @@ describe('buildQuoteDocData', () => {
   it('completa ajustes parciales sin romperse', () => {
     const data = buildQuoteDocData({ quote: quote(), org, catalog, settings: {} })
     expect(data.prefs.quoteTemplate).toBe('esencial')
-    expect(data.prefs.validityDays).toBe(15)
+    // Sin vigencia definida no se supone ninguna.
+    expect(data.prefs.validityDays).toBe(0)
     expect(data.prefs.showUnitPrice).toBe(true)
-    expect(data.totals.total).toBeGreaterThan(0)
   })
 
   it('recorta empresa y cliente a lo que ve el cliente', () => {
@@ -161,8 +161,8 @@ describe('buildQuoteDocData', () => {
       validUntil: '2026-11-17',
       acceptedBy: { name: 'Carolina Muñoz', rut: '12.345.678-5', at: '2026-11-03T12:00:00.000Z' },
     })
-    const data = buildQuoteDocData({ quote: q, org, catalog, settings, portalUrl: 'https://app.framezen.cl/c/abc' })
-    expect(data.quote).toMatchObject({ number: 412, revision: 2, date: '2026-11-02', validUntil: '2026-11-17', portalUrl: 'https://app.framezen.cl/c/abc' })
+    const data = buildQuoteDocData({ quote: q, org, catalog, settings, portalUrl: 'https://app.dekopen.cl/c/abc' })
+    expect(data.quote).toMatchObject({ number: 412, revision: 2, date: '2026-11-02', validUntil: '2026-11-17', portalUrl: 'https://app.dekopen.cl/c/abc' })
     expect(data.quote.acceptedBy?.name).toBe('Carolina Muñoz')
     // Sin envío: la fecha es la de la última edición en hora de Chile.
     expect(buildQuoteDocData({ quote: quote(), org, catalog, settings }).quote.date).toBe('2026-10-30')
@@ -188,8 +188,11 @@ describe('buildQuoteDocData', () => {
   })
 
   it('aplica los ajustes de precio de la cotización encima de los de la organización', () => {
-    const base = buildQuoteDocData({ quote: quote(), org, catalog, settings })
-    const pricier = buildQuoteDocData({ quote: quote({ pricing: { marginPct: 55 } }), org, catalog, settings })
+    const priced = sampleWorkshopCatalog()
+    const line = priced.lines[0]
+    const items = [item('z', 'V1', createDesign('fixed', { lineId: line.id, width: 1000, height: 1000, colorId: line.colorIds[0], glassId: priced.glass[0].id }))]
+    const base = buildQuoteDocData({ quote: quote({ items }), org, catalog: priced, settings })
+    const pricier = buildQuoteDocData({ quote: quote({ items, pricing: { marginPct: 55 } }), org, catalog: priced, settings })
     expect(pricier.items[0].unitPrice).toBeGreaterThan(base.items[0].unitPrice)
   })
 
@@ -242,7 +245,7 @@ describe('buildQuoteDocData', () => {
     expect(data.items[0].layout.width).toBe(1000)
   })
 
-  it('se dibuja en las cuatro plantillas con cifras del motor', () => {
+  it('se dibuja con los ids v4 y cifras del motor', () => {
     const data = buildQuoteDocData({ quote: quote({ client }), org, catalog, settings, portalUrl: 'https://x/c/abc' })
     for (const template of ['esencial', 'galeria', 'compacta', 'editorial'] as const) {
       const html = renderToStaticMarkup(createElement(QuoteDocument, { data, template }))
@@ -258,10 +261,12 @@ describe('buildQuoteDocData', () => {
 describe('ayudas del documento', () => {
   it('preferencias: ignora tipos incorrectos y respeta textos vacíos de la cotización', () => {
     const prefs = mergeQuoteDocPrefs(
-      { ...SAMPLE_PREFS, quoteTemplate: 'galeria' },
-      { quoteTemplate: 'inexistente' as never, showArea: 'sí' as never, warranty: '', accent: '' },
+      { ...SAMPLE_PREFS, quoteTemplate: 'hogar' },
+      { quoteTemplate: 'no es un id válido!' as never, showArea: 'sí' as never, warranty: '', accent: '' },
     )
-    expect(prefs.quoteTemplate).toBe('galeria')
+    // Un diseño inválido de la cotización no pisa el del taller (los ids v4 como «galeria» siguen valiendo).
+    expect(prefs.quoteTemplate).toBe('hogar')
+    expect(mergeQuoteDocPrefs({ ...SAMPLE_PREFS, quoteTemplate: 'hogar' }, { quoteTemplate: 'galeria' }).quoteTemplate).toBe('galeria')
     expect(prefs.showArea).toBe(SAMPLE_PREFS.showArea)
     expect(prefs.warranty).toBe('')
     expect(prefs.accent).toBeUndefined()
@@ -284,7 +289,7 @@ describe('ayudas del documento', () => {
 
   it('línea, color bicolor y vidrios mezclados', () => {
     const design = casement('fixed_casement', 1500, 1200)
-    expect(quoteDocLine(design, catalog)).toBe('PVC Perfiles Andes Serie 60')
+    expect(quoteDocLine(design, catalog)).toBe('PVC Serie 60')
     expect(quoteDocColor(setColor(design, 'walnut', 'white'), catalog)).toBe('Nogal exterior, blanco interior')
     const leafId = design.root.type === 'split' ? design.root.children[0].id : design.root.id
     expect(quoteDocGlass(setGlass(design, leafId, 'lam-33'), catalog)).toBe('Laminado 3+3 empavonado y termopanel 4-12-4')

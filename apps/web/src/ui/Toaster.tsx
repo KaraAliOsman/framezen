@@ -1,7 +1,9 @@
 import { useEffect, type RefObject } from 'react'
 import { Toaster as Sonner, toast, type ExternalToast } from 'sonner'
 import { CircleAlert, CircleCheck, Info, TriangleAlert } from 'lucide-react'
+import { translate, useT } from '../lib/i18n'
 import { useOptionalTheme } from '../lib/theme'
+import es from './i18n/es'
 
 export { toast }
 
@@ -18,10 +20,11 @@ export const TOP_TOAST_GAP = 96
 
 /** Contenedor de avisos. Va una vez en la raíz de la app. */
 export function Toaster() {
-  const resolved = useOptionalTheme()?.resolved ?? 'light'
+  const resolved = useOptionalTheme()?.resolved
+  const t = useT(es)
   return (
     <Sonner
-      theme={resolved}
+      theme={resolved === 'dark' ? 'dark' : 'light'}
       position="bottom-center"
       duration={TOAST_DURATION}
       gap={8}
@@ -29,7 +32,7 @@ export function Toaster() {
       // Arriba: bajo la barra superior (48 px si no hay shell) y la cabecera del lienzo, nunca encima.
       offset={{ top: `var(--fz-toast-area-top, ${48 + TOP_TOAST_GAP}px)`, right: 20, bottom: 20, left: 20 }}
       mobileOffset={{ bottom: 'calc(72px + env(safe-area-inset-bottom))' }}
-      containerAriaLabel="Avisos"
+      containerAriaLabel={t('common.toasts')}
       icons={{
         success: <CircleCheck aria-hidden className="size-4" strokeWidth={2} />,
         error: <CircleAlert aria-hidden className="size-4" strokeWidth={2} />,
@@ -95,7 +98,7 @@ export function useToastArea(ref: RefObject<HTMLElement | null>, { gap = TOP_TOA
 }
 
 export interface UndoToastOptions extends Omit<ExternalToast, 'action' | 'duration'> {
-  /** Texto del botón (por defecto «Deshacer»). */
+  /** Texto del botón (por defecto «Deshacer», en el idioma de la interfaz). */
   actionLabel?: string
   /** Se llama si el aviso se cierra sin deshacer (para confirmar el borrado en el servidor). */
   onCommit?: () => void
@@ -105,7 +108,7 @@ export interface UndoToastOptions extends Omit<ExternalToast, 'action' | 'durati
  * Aviso con «Deshacer» durante 8 s. Preferido a un diálogo de confirmación para todo lo reversible.
  *   toastUndo('Borraste la V3', () => restore())
  */
-export function toastUndo(message: string, onUndo: () => void, { actionLabel = 'Deshacer', onCommit, ...options }: UndoToastOptions = {}) {
+export function toastUndo(message: string, onUndo: () => void, { actionLabel = translate(es, 'common.undo'), onCommit, ...options }: UndoToastOptions = {}) {
   let undone = false
   return toast(message, {
     ...options,

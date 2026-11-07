@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { Client, Paged } from '@framezen/shared'
+import type { Client, Paged } from '@dekopen/shared'
 import { api, request } from '../../lib/api'
 import { qk } from '../../lib/queryClient'
 

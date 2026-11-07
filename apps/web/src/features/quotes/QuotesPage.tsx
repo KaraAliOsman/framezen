@@ -1,18 +1,19 @@
 /**
- * /cotizaciones — todas las cotizaciones con su estado, cliente y total. Filtros por estado con
- * conteos, búsqueda tolerante a tildes y acciones por fila (abrir, duplicar, enviar, papelera
- * con deshacer). «Nueva cotización» crea y abre al instante.
+ * /cotizaciones — hoja sin cajas: tres cifras (por seguir, aceptado, total de lo que se ve), filtros
+ * pequeños y la tabla a sangre, con la obra y el cliente en dos líneas. Selección múltiple (cambiar
+ * estado, papelera con deshacer) y acciones por fila (abrir, enviar, duplicar para otro cliente,
+ * papelera). «Nueva cotización» crea y abre al instante.
  */
 import { useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Copy, ExternalLink, MoreHorizontal, Plus, Search, Send, Trash2 } from 'lucide-react'
-import { formatCLP, type Catalog } from '@framezen/engine'
-import type { Paged, QuoteSummary } from '@framezen/shared'
+import { ChevronDown, CircleDot, Copy, ExternalLink, MoreHorizontal, Plus, Search, Send, Trash2 } from 'lucide-react'
+import type { Catalog } from '@dekopen/engine'
+import type { Paged, Quote, QuoteStatus, QuoteSummary } from '@dekopen/shared'
 import { api, humanError, request } from '../../lib/api'
-import { cn } from '../../lib/cn'
-import { formatDate, formatNumber, formatRelative, revisionLetter } from '../../lib/format'
-import { useCatalog, useCreateQuote, useDuplicateQuote } from '../../lib/hooks'
+import { revisionLetter } from '../../lib/format'
+import { useCatalog, useCreateQuote, useSettings } from '../../lib/hooks'
+import { useFormat, useGlossary, useT } from '../../lib/i18n'
 import { qk } from '../../lib/queryClient'
 import { useShortcut } from '../../lib/useShortcut'
 import { usePageTitle } from '../../lib/usePageTitle'
@@ -22,43 +23,59 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   EmptyState,
   IconButton,
   Input,
+  KPI,
+  Notice,
+  Numeric,
   Page,
   PageHeader,
+  QUOTE_STATUS_COPY,
+  RowTitle,
+  Skeleton,
   SkeletonRows,
+  StatStrip,
   StatusPill,
   toast,
   toastUndo,
   type DataTableColumn,
 } from '../../ui'
-import { DesignThumbnail } from '../designer'
+import { QuoteThumb } from '../home/QuoteThumb'
+import { DuplicateDialog, type DuplicateBody, type DuplicateSource } from './DuplicateDialog'
 import { useMediaQuery } from './editor/context'
+import es from './i18n/es'
 import { FILTERS, filterFromParam, type QuoteFilter as Filter } from './lib/filters'
 
 const LIST_LIMIT = 200
 const listKey = qk.quotes({ limit: LIST_LIMIT })
+const BULK_STATUSES: QuoteStatus[] = ['draft', 'sent', 'accepted', 'rejected', 'workshop', 'installed', 'closed']
+/** Lo que ya se vendió: aceptada y todo lo que viene después. */
+const WON_STATUSES: QuoteStatus[] = ['accepted', 'workshop', 'installed', 'closed']
 
-/** Vacío de un filtro por estado (sin búsqueda): qué no hay, en vez de «con estos filtros». */
-const EMPTY_FILTER_TITLE: Record<Exclude<Filter, 'all'>, string> = {
-  draft: 'No tienes borradores.',
-  sent: 'No tienes cotizaciones enviadas.',
-  accepted: 'No tienes cotizaciones aceptadas.',
-  workshop: 'No tienes cotizaciones en taller.',
-  rejected: 'No tienes cotizaciones rechazadas.',
+type Fmt = ReturnType<typeof useFormat>
+type Tr = ReturnType<typeof useT<typeof es>>
+
+/** Texto de búsqueda tolerante a tildes (y a la «ı» turca). */
+function fold(text: string): string {
+  return text.normalize('NFD').replace(/\p{M}/gu, '').replace(/ı/g, 'i').toLowerCase()
 }
 
 export default function QuotesPage() {
-  usePageTitle('Cotizaciones')
+  const t = useT(es)
+  const g = useGlossary()
+  const fmt = useFormat()
+  usePageTitle(t('list.title'))
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const desktop = useMediaQuery('(min-width: 768px)')
   const catalog = useCatalog()
+  const settings = useSettings()
   const createQuote = useCreateQuote()
-  const duplicate = useDuplicateQuote()
   const [params, setParams] = useSearchParams()
   const filter = filterFromParam(params.get('estado'))
   // El filtro vive en la URL: el embudo de Inicio enlaza con ?estado= y «Atrás» lo respeta.
@@ -73,6 +90,9 @@ export default function QuotesPage() {
       { replace: true },
     )
   const [query, setQuery] = useState('')
+  const [selected, setSelected] = useState<Set<string>>(() => new Set())
+  const [duplicating, setDuplicating] = useState<DuplicateSource | null>(null)
+  const tax = settings.data?.taxLabel?.trim() || g.term('business.vat')
 
   const list = useQuery({
     queryKey: listKey,
@@ -85,6 +105,21 @@ export default function QuotesPage() {
     for (const row of rows) for (const f of FILTERS) if (f.statuses?.includes(row.status)) out[f.value]++
     return out
   }, [rows])
+
+  const statuses = FILTERS.find((f) => f.value === filter)?.statuses
+  const filterFn = useMemo(() => (statuses ? (row: QuoteSummary) => statuses.includes(row.status) : undefined), [statuses])
+  // Cifras de arriba: «Por seguir» y «Aceptado» dentro de lo buscado, el total según lo que se ve.
+  const stats = useMemo(() => {
+    const terms = fold(query).split(/\s+/).filter(Boolean)
+    const found = terms.length ? rows.filter((r) => terms.every((term) => fold(`${r.number} ${r.title} ${r.clientName ?? ''}`).includes(term))) : rows
+    const sum = (list: QuoteSummary[]) => ({ count: list.length, total: list.reduce((acc, r) => acc + r.total, 0) })
+    const visible = filterFn ? found.filter(filterFn) : found
+    return {
+      followUp: sum(found.filter((r) => r.status === 'sent')),
+      won: sum(found.filter((r) => WON_STATUSES.includes(r.status))),
+      shown: { ...sum(visible), filtered: visible.length !== rows.length },
+    }
+  }, [rows, filterFn, query])
 
   const newQuote = () => {
     if (createQuote.isPending) return
@@ -99,24 +134,32 @@ export default function QuotesPage() {
   useShortcut('c', newQuote)
 
   const open = (row: QuoteSummary) => navigate(`/cotizaciones/${row.id}`)
-  const duplicateRow = (row: QuoteSummary) =>
-    duplicate.mutate(row.id, {
-      onSuccess: (copy) => {
-        toast.success(`Duplicaste la N° ${row.number}: ahora es la N° ${copy.number}.`)
-        navigate(`/cotizaciones/${copy.id}`)
-      },
-      onError: (e) => toast.error(humanError(e)),
-    })
+  const duplicateRow = async (row: QuoteSummary, body: DuplicateBody) => {
+    const copy = await request<Quote>(`/quotes/${encodeURIComponent(row.id)}/duplicate`, { method: 'POST', body })
+    queryClient.setQueryData(qk.quote(copy.id), copy)
+    void queryClient.invalidateQueries({ queryKey: ['quotes'] })
+    toast.success(t('list.toast.duplicated', { from: row.number, to: copy.number }))
+    navigate(`/cotizaciones/${copy.id}`)
+  }
   const sendRow = (row: QuoteSummary) => navigate(`/cotizaciones/${row.id}?enviar=1`)
-  const trashRow = async (row: QuoteSummary) => {
+
+  /** Papelera optimista con «Deshacer» (una o varias). */
+  const trashRows = async (targets: QuoteSummary[]) => {
+    if (!targets.length) return
     const previous = queryClient.getQueryData<Paged<QuoteSummary>>(listKey)
+    const ids = new Set(targets.map((r) => r.id))
     queryClient.setQueryData<Paged<QuoteSummary>>(listKey, (data) =>
-      data ? { items: data.items.filter((q) => q.id !== row.id), total: Math.max(0, data.total - 1) } : data,
+      data ? { items: data.items.filter((q) => !ids.has(q.id)), total: Math.max(0, data.total - ids.size) } : data,
     )
+    const done: QuoteSummary[] = []
     try {
-      await api.quotes.remove(row.id)
-      toastUndo(`Moviste la N° ${row.number} a la papelera.`, () => {
-        api.quotes.restore(row.id).then(
+      for (const row of targets) {
+        await api.quotes.remove(row.id)
+        done.push(row)
+      }
+      const message = targets.length === 1 ? t('list.toast.trashed', { number: targets[0].number }) : t('list.bulk.trashDone', { count: targets.length })
+      toastUndo(message, () => {
+        Promise.all(done.map((row) => api.quotes.restore(row.id))).then(
           () => void queryClient.invalidateQueries({ queryKey: ['quotes'] }),
           (e) => toast.error(humanError(e)),
         )
@@ -125,19 +168,43 @@ export default function QuotesPage() {
       void queryClient.invalidateQueries({ queryKey: ['quotes'], refetchType: 'none' })
     } catch (error) {
       if (previous) queryClient.setQueryData(listKey, previous)
+      void queryClient.invalidateQueries({ queryKey: ['quotes'] })
       toast.error(humanError(error))
     }
   }
 
-  const statuses = FILTERS.find((f) => f.value === filter)?.statuses
-  const filterFn = statuses ? (row: QuoteSummary) => statuses.includes(row.status) : undefined
+  /** Cambiar el estado de varias, con «Deshacer» que devuelve a cada una el suyo. */
+  const setStatusRows = async (targets: QuoteSummary[], status: QuoteStatus) => {
+    const changed = targets.filter((r) => r.status !== status)
+    if (!changed.length) return
+    try {
+      for (const row of changed) await api.quotes.setStatus(row.id, status)
+      void queryClient.invalidateQueries({ queryKey: ['quotes'] })
+      toastUndo(t('list.bulk.statusDone', { status: g.quoteStatus(status), count: changed.length }), () => {
+        Promise.all(changed.map((row) => api.quotes.setStatus(row.id, row.status))).then(
+          () => void queryClient.invalidateQueries({ queryKey: ['quotes'] }),
+          (e) => toast.error(humanError(e)),
+        )
+      })
+    } catch (error) {
+      void queryClient.invalidateQueries({ queryKey: ['quotes'] })
+      toast.error(humanError(error))
+    }
+  }
+
   const clearFilters = () => {
     setFilter('all')
     setQuery('')
   }
 
   const actionsFor = (row: QuoteSummary) => (
-    <RowActions row={row} onOpen={() => open(row)} onDuplicate={() => duplicateRow(row)} onSend={() => sendRow(row)} onTrash={() => void trashRow(row)} />
+    <RowActions
+      row={row}
+      onOpen={() => open(row)}
+      onDuplicate={() => setDuplicating({ id: row.id, number: row.number, title: row.title, clientName: row.clientName })}
+      onSend={() => sendRow(row)}
+      onTrash={() => void trashRows([row])}
+    />
   )
 
   // Sin datos por un error de la API: se muestra el error con «Reintentar», nunca el vacío de cuenta
@@ -146,249 +213,307 @@ export default function QuotesPage() {
   const empty = list.isSuccess && rows.length === 0
   const newButton = (
     <Button variant="primary" icon={Plus} shortcut="c" onClick={newQuote} loading={createQuote.isPending}>
-      Nueva cotización
+      {t('list.newQuote')}
     </Button>
   )
 
   return (
     <Page width="wide">
-      <PageHeader title="Cotizaciones" description="Todo lo que has cotizado, con su estado y su total." actions={newButton} />
+      <PageHeader title={t('list.title')} actions={empty ? undefined : newButton} />
 
       {failed ? (
-        <div role="alert" className="rounded-lg border border-paper-200 bg-paper-0 px-4 py-10 text-center text-paper-600">
-          <p className="text-paper-900">No pudimos cargar tus cotizaciones.</p>
-          <p className="mt-1">{humanError(list.error)}</p>
-          <Button className="mt-4" onClick={() => void list.refetch()} loading={list.isFetching}>
-            Reintentar
-          </Button>
-        </div>
-      ) : empty ? (
-        <div className="rounded-lg border border-paper-200 bg-paper-0">
+        <div role="alert">
           <EmptyState
-            sketch="casement"
-            title="Tu primera cotización en menos de 3 minutos"
-            description="Elige la tipología, escribe ancho × alto y el precio sale al instante. Se guarda sola mientras la armas; después la envías por WhatsApp o la pasas a taller."
-            action={newButton}
+            size="compact"
+            title={t('list.loadError')}
+            description={humanError(list.error)}
+            action={
+              <Button size="sm" onClick={() => void list.refetch()} loading={list.isFetching}>
+                {t('list.retry')}
+              </Button>
+            }
           />
         </div>
+      ) : empty ? (
+        <EmptyState sketch="sliding" title={t('list.empty.title')} description={t('list.empty.description')} action={newButton} />
       ) : (
         <>
-          <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <FilterTabs value={filter} onChange={setFilter} counts={counts} />
+          <Stats loading={list.isPending} stats={stats} tax={tax} t={t} fmt={fmt} />
+          <div className="mb-2 flex items-center gap-2">
+            <StatusFilter value={filter} onChange={setFilter} counts={counts} t={t} fmt={fmt} />
             <Input
               icon={Search}
+              size="sm"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar por obra, cliente o N°"
-              aria-label="Buscar cotizaciones"
+              placeholder={t('list.searchPlaceholder')}
+              aria-label={t('list.searchLabel')}
               type="search"
-              wrapperClassName="w-full md:w-72"
+              wrapperClassName="min-w-0 flex-1 sm:max-w-72"
             />
           </div>
           {list.isError ? (
             // Falló una actualización pero hay datos de antes: se siguen mostrando, con el aviso.
-            <p role="status" className="mb-3 text-[13px] text-paper-600">
-              No pudimos actualizar la lista: {humanError(list.error)}{' '}
-              <button type="button" className="font-medium text-ink-600" onClick={() => void list.refetch()}>
-                Reintentar
-              </button>
-            </p>
+            <Notice
+              tone="warning"
+              size="compact"
+              className="mb-3"
+              action={
+                <button type="button" className="text-table font-medium text-accent-ink hover:underline" onClick={() => void list.refetch()}>
+                  {t('list.retry')}
+                </button>
+              }
+            >
+              {t('list.refreshError', { error: humanError(list.error) })}
+            </Notice>
           ) : null}
           {desktop ? (
             <DataTable<QuoteSummary>
-              caption="Cotizaciones"
+              caption={t('list.caption')}
               rows={rows}
               loading={list.isPending}
               getRowId={(r) => r.id}
-              columns={columns(catalog.data, actionsFor)}
+              columns={columns(catalog.data, actionsFor, t, fmt)}
+              density="comfortable"
+              bleed
               query={query}
               searchText={(r) => `${r.number} n° ${r.number} ${r.title} ${r.clientName ?? ''}`}
               filter={filterFn}
               onClearFilters={clearFilters}
+              selectable
+              selected={selected}
+              onSelectedChange={setSelected}
+              bulkActions={(chosen, clear) => <BulkActions rows={chosen} t={t} onStatus={(s) => void setStatusRows(chosen, s).then(clear)} onTrash={() => void trashRows(chosen).then(clear)} />}
               emptyFiltered={
                 query.trim() || filter === 'all' ? undefined : (
                   <EmptyState
                     size="compact"
-                    sketch="fixed"
-                    title={EMPTY_FILTER_TITLE[filter]}
+                    title={t(`list.emptyFilter.${filter}`)}
                     action={
                       <Button size="sm" onClick={clearFilters}>
-                        Ver todas
+                        {t('list.seeAll')}
                       </Button>
                     }
                   />
                 )
               }
               onRowClick={open}
-              noun={['cotización', 'cotizaciones']}
+              noun={[t('list.nounOne'), t('list.nounOther')]}
             />
           ) : (
             <MobileList rows={rows} loading={list.isPending} catalog={catalog.data} query={query} filter={filterFn} onOpen={open} actionsFor={actionsFor} onClear={clearFilters} />
           )}
           {list.data && list.data.total > rows.length ? (
-            <p className="mt-3 text-center text-meta text-paper-600">
-              Mostramos las {formatNumber(rows.length)} más recientes de {formatNumber(list.data.total)}.
-            </p>
+            <p className="mt-3 text-center text-meta text-fg-muted">{t('list.truncated', { shown: fmt.number(rows.length), total: fmt.number(list.data.total) })}</p>
           ) : null}
         </>
       )}
+      <DuplicateDialog
+        source={duplicating}
+        onClose={() => setDuplicating(null)}
+        run={(body) => {
+          const row = rows.find((r) => r.id === duplicating?.id)
+          return row ? duplicateRow(row, body) : Promise.resolve()
+        }}
+      />
     </Page>
   )
 }
 
-function FilterTabs({ value, onChange, counts }: { value: Filter; onChange: (f: Filter) => void; counts: Record<Filter, number> }) {
+/** Las tres cifras de la lista: sin cajas, la cifra arriba y lo que significa debajo. */
+function Stats({
+  loading,
+  stats,
+  tax,
+  t,
+  fmt,
+}: {
+  loading: boolean
+  stats: { followUp: { count: number; total: number }; won: { count: number; total: number }; shown: { count: number; total: number; filtered: boolean } }
+  tax: string
+  t: Tr
+  fmt: Fmt
+}) {
+  if (loading) {
+    return (
+      <StatStrip className="mb-8">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="space-y-2">
+            <Skeleton className="h-8 w-36" />
+            <Skeleton className="h-4 w-24" />
+          </div>
+        ))}
+      </StatStrip>
+    )
+  }
+  const money = (n: number) => <Numeric kind="money">{fmt.money(n)}</Numeric>
+  const quotes = (count: number) => t('list.stats.quotes', { count })
   return (
-    <div role="tablist" aria-label="Filtrar por estado" className="scrollbar-quiet -mx-4 flex gap-1 overflow-x-auto px-4 md:mx-0 md:px-0">
-      {FILTERS.map((f) => {
-        const active = f.value === value
-        const n = counts[f.value]
-        return (
-          <button
-            key={f.value}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            onClick={() => onChange(f.value)}
-            className={cn(
-              'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-sm border px-3 text-[13px] font-medium whitespace-nowrap transition-colors duration-120',
-              active ? 'border-ink-100 bg-ink-100 text-ink-700' : 'border-paper-200 bg-paper-0 text-paper-600 hover:border-paper-350/60 hover:text-paper-900',
-            )}
-          >
-            {f.label}
-            <span className={cn('tabular', active ? 'text-ink-700' : 'text-paper-600')}>{formatNumber(n)}</span>
-          </button>
-        )
-      })}
-    </div>
+    <StatStrip className="mb-8">
+      <KPI variant="plain" label={t('list.stats.followUp')} value={money(stats.followUp.total)} hint={quotes(stats.followUp.count)} />
+      <KPI variant="plain" label={t('list.stats.won')} value={money(stats.won.total)} hint={quotes(stats.won.count)} />
+      <KPI variant="plain" className="max-sm:hidden" label={stats.shown.filtered ? t('list.stats.filtered') : t('totals.total', { tax })} value={money(stats.shown.total)} hint={quotes(stats.shown.count)} />
+    </StatStrip>
   )
 }
 
-function Thumb({ row, catalog, size = 36 }: { row: QuoteSummary; catalog?: Catalog; size?: number }) {
+/** Estado como filtro pequeño sobre la tabla, con el conteo de cada uno. */
+function StatusFilter({ value, onChange, counts, t, fmt }: { value: Filter; onChange: (f: Filter) => void; counts: Record<Filter, number>; t: Tr; fmt: Fmt }) {
   return (
-    <span className="flex shrink-0 items-center justify-center rounded-xs border border-paper-200 bg-paper-50" style={{ width: size, height: size }}>
-      {row.firstItem && catalog ? <DesignThumbnail design={row.firstItem.design} catalog={catalog} size={size - 6} /> : null}
-    </span>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="sm" variant="secondary" iconRight={ChevronDown} aria-label={`${t('list.filterLabel')}: ${t(`list.filters.${value}`)}`}>
+          {t(`list.filters.${value}`)}
+          <span className="tabular text-fg-muted">{fmt.number(counts[value])}</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-52">
+        <DropdownMenuRadioGroup value={value} onValueChange={(v) => onChange(v as Filter)}>
+          {FILTERS.map((f) => (
+            <DropdownMenuRadioItem key={f.value} value={f.value}>
+              <span className="flex w-full items-center justify-between gap-3">
+                {t(`list.filters.${f.value}`)}
+                <span className="tabular text-fg-muted">{fmt.number(counts[f.value])}</span>
+              </span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
 /**
- * Columnas de la lista. La obra es la única sin ancho fijo (se queda con el resto), nunca baja de
- * 220 px y, si aun así no cabe, pasa a dos líneas antes que cortarse (igual el cliente). Estado y
- * total tienen su ancho como mínimo: nunca se cortan. Unidades y Actualizada son secundarias: se
- * esconden bajo 1.280 px o si no caben (la lista ya viene ordenada por la más reciente).
+ * Columnas de la lista. La obra es la única sin ancho fijo: dos líneas de 56 px, obra arriba y N° con
+ * cliente abajo (el texto completo queda en el `title`). Estado y total tienen su ancho como mínimo y
+ * nunca se cortan. La fecha es secundaria: se esconde si no cabe.
  */
-function columns(catalog: Catalog | undefined, actionsFor: (row: QuoteSummary) => ReactNode): DataTableColumn<QuoteSummary>[] {
+function columns(catalog: Catalog | undefined, actionsFor: (row: QuoteSummary) => ReactNode, t: Tr, fmt: Fmt): DataTableColumn<QuoteSummary>[] {
   return [
     {
-      id: 'number',
-      header: 'N°',
-      value: (r) => r.number,
-      cell: (r) => <span className="font-medium whitespace-nowrap tabular text-paper-600">{r.number}</span>,
-      width: 56,
-    },
-    {
       id: 'title',
-      header: 'Obra',
+      header: t('list.columns.title'),
       value: (r) => r.title,
       cell: (r) => (
-        <span className="flex min-w-0 items-center gap-2.5" title={r.title || undefined}>
-          <Thumb row={r} catalog={catalog} size={30} />
-          <span className="line-clamp-2 leading-[18px] font-medium whitespace-normal text-paper-900">{r.title || 'Sin nombre'}</span>
+        <span title={[r.title, r.clientName].filter(Boolean).join(' · ') || undefined}>
+          <RowTitle
+            media={<QuoteThumb item={r.firstItem} catalog={catalog} size={40} />}
+            title={r.title || t('list.untitled')}
+            subtitle={
+              <>
+                <span className="tabular">{fmt.docNumber(r.number)}</span> · {r.clientName ?? t('list.noClient')}
+              </>
+            }
+          />
         </span>
       ),
-      minWidth: 220,
-      className: 'py-1',
-    },
-    {
-      id: 'client',
-      header: 'Cliente',
-      value: (r) => r.clientName ?? '',
-      cell: (r) =>
-        r.clientName ? (
-          <span className="line-clamp-2 leading-[18px] whitespace-normal" title={r.clientName}>
-            {r.clientName}
-          </span>
-        ) : (
-          <span className="text-paper-600 italic">Sin cliente</span>
-        ),
-      hideBelow: 'lg',
-      width: '18%',
+      minWidth: 260,
       className: 'py-1',
     },
     {
       id: 'status',
-      header: 'Estado',
+      header: t('list.columns.status'),
       value: (r) => r.status,
       cell: (r) => <StatusPill status={r.status} suffix={r.revision > 1 ? revisionLetter(r.revision) : undefined} />,
-      width: 124,
-    },
-    {
-      id: 'units',
-      header: 'Unidades',
-      value: (r) => r.units,
-      align: 'right',
-      format: (n) => formatNumber(n),
-      hideBelow: 'xl',
-      width: 96,
-    },
-    {
-      id: 'total',
-      header: 'Total',
-      value: (r) => r.total,
-      align: 'right',
-      format: (n) => <span className="font-medium whitespace-nowrap">{formatCLP(n)}</span>,
-      footer: 'sum',
       width: 136,
     },
     {
       id: 'updated',
-      header: 'Actualizada',
+      header: t('list.columns.updated'),
       value: (r) => r.updatedAt,
       cell: (r) => (
-        <span className="whitespace-nowrap text-paper-600" title={formatDate(r.updatedAt)}>
-          {formatRelative(r.updatedAt)}
+        <span className="whitespace-nowrap text-fg-muted" title={fmt.date(r.updatedAt)}>
+          {fmt.relative(r.updatedAt)}
         </span>
       ),
       align: 'right',
-      hideBelow: 'xl',
-      width: 112,
+      hideBelow: 'lg',
+      width: 148,
     },
     {
       id: 'actions',
-      header: <span className="sr-only">Acciones</span>,
+      header: <span className="sr-only">{t('list.columns.actions')}</span>,
       cell: actionsFor,
-      width: 52,
+      width: 48,
       sortable: false,
       align: 'right',
-      className: 'overflow-visible',
+      className: 'overflow-visible pr-2 pl-0',
+    },
+    {
+      id: 'total',
+      header: t('list.columns.total'),
+      value: (r) => r.total,
+      align: 'right',
+      format: (n) => <span className="font-medium whitespace-nowrap text-fg-strong">{fmt.money(n)}</span>,
+      footer: 'sum',
+      width: 136,
     },
   ]
 }
 
 function RowActions({ row, onOpen, onDuplicate, onSend, onTrash }: { row: QuoteSummary; onOpen: () => void; onDuplicate: () => void; onSend: () => void; onTrash: () => void }) {
+  const t = useT(es)
   return (
     <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} className="flex justify-end">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <IconButton icon={MoreHorizontal} size="sm" label={`Acciones de la N° ${row.number}`} tooltip={false} />
+          <IconButton
+            icon={MoreHorizontal}
+            size="sm"
+            label={t('list.row.actions', { number: row.number })}
+            tooltip={false}
+            className="data-[state=open]:opacity-100 focus-visible:opacity-100 touch:opacity-100 md:opacity-0 [tr:hover_&]:opacity-100"
+          />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
           <DropdownMenuItem icon={ExternalLink} onSelect={onOpen}>
-            Abrir
+            {t('list.row.open')}
           </DropdownMenuItem>
           <DropdownMenuItem icon={Send} onSelect={onSend}>
-            Enviar al cliente
+            {t('list.row.send')}
           </DropdownMenuItem>
           <DropdownMenuItem icon={Copy} onSelect={onDuplicate}>
-            Duplicar
+            {t('list.row.duplicate')}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem icon={Trash2} danger onSelect={onTrash}>
-            Mover a la papelera
+            {t('list.row.trash')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
+  )
+}
+
+/** Barra flotante de la selección múltiple: cambiar estado y mover a la papelera (con deshacer). */
+function BulkActions({ rows, t, onStatus, onTrash }: { rows: QuoteSummary[]; t: Tr; onStatus: (status: QuoteStatus) => void; onTrash: () => void }) {
+  const g = useGlossary()
+  const common = rows.every((r) => r.status === rows[0]?.status) ? rows[0]?.status : undefined
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" icon={CircleDot}>
+            {t('list.bulk.status')}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="center" side="top" className="w-48">
+          <DropdownMenuRadioGroup value={common ?? ''} onValueChange={(v) => onStatus(v as QuoteStatus)}>
+            {BULK_STATUSES.map((s) => (
+              <DropdownMenuRadioItem key={s} value={s}>
+                <span className="inline-flex items-center gap-2">
+                  <span aria-hidden className={`size-1.5 rounded-full ${QUOTE_STATUS_COPY[s].dot}`} />
+                  {g.quoteStatus(s)}
+                </span>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Button size="sm" icon={Trash2} onClick={onTrash}>
+        {t('list.bulk.trash')}
+      </Button>
+    </>
   )
 }
 
@@ -411,55 +536,54 @@ function MobileList({
   actionsFor: (row: QuoteSummary) => ReactNode
   onClear: () => void
 }) {
+  const t = useT(es)
+  const fmt = useFormat()
   if (loading) return <SkeletonRows rows={5} columns={2} />
-  const terms = query
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean)
+  const terms = fold(query).split(/\s+/).filter(Boolean)
   const visible = rows.filter((r) => {
     if (filter && !filter(r)) return false
     if (!terms.length) return true
-    const text = `${r.number} ${r.title} ${r.clientName ?? ''}`.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
-    return terms.every((t) => text.includes(t))
+    const text = fold(`${r.number} ${r.title} ${r.clientName ?? ''}`)
+    return terms.every((term) => text.includes(term))
   })
   if (!visible.length) {
     return (
-      <div className="rounded-md border border-paper-200 bg-paper-0 px-4 py-10 text-center text-paper-600">
-        {query.trim() ? <>Sin resultados para «{query.trim()}».</> : 'Ninguna cotización con ese estado.'}{' '}
-        <button type="button" onClick={onClear} className="font-medium text-ink-600">
-          Quitar filtros
+      <div className="px-4 py-10 text-center text-fg-muted">
+        {query.trim() ? t('list.noResults', { query: query.trim() }) : t('list.noStatus')}{' '}
+        <button type="button" onClick={onClear} className="font-medium text-accent-ink">
+          {t('list.clearFilters')}
         </button>
       </div>
     )
   }
   return (
-    <ul className="space-y-2">
+    <ul className="-mx-4 divide-y divide-divider border-t border-divider bg-plate">
       {visible.map((row) => (
         <li key={row.id}>
-          <div className="relative flex items-center gap-3 rounded-md border border-paper-200 bg-paper-0 p-3 active:bg-paper-50">
+          <div className="relative flex min-h-[72px] items-center gap-3 px-4 py-2.5 active:bg-hover">
             <button
               type="button"
               onClick={() => onOpen(row)}
-              aria-label={`N° ${row.number}, ${row.title || 'Sin nombre'}, ${formatCLP(row.total)}`}
-              className="absolute inset-0 rounded-md focus-visible:outline-offset-[-2px]"
+              aria-label={t('list.mobileRow', { number: row.number, title: row.title || t('list.untitled'), total: fmt.money(row.total) })}
+              className="absolute inset-0 focus-visible:-outline-offset-2"
             />
             <span aria-hidden className="pointer-events-none">
-              <Thumb row={row} catalog={catalog} size={48} />
+              <QuoteThumb item={row.firstItem} catalog={catalog} size={40} />
             </span>
             <div aria-hidden className="pointer-events-none min-w-0 flex-1">
               <div className="flex items-baseline justify-between gap-2">
-                <span className="truncate text-base font-medium text-paper-900">{row.title || 'Sin nombre'}</span>
-                <span className="shrink-0 text-base font-medium tabular">{formatCLP(row.total)}</span>
+                <span className="truncate text-base font-medium text-fg-strong">{row.title || t('list.untitled')}</span>
+                <span className="shrink-0 text-base font-medium tabular text-fg-strong">{fmt.money(row.total)}</span>
               </div>
-              <div className="mt-1 flex items-center gap-2 text-meta text-paper-600">
-                <span className="shrink-0 whitespace-nowrap tabular">N°&nbsp;{row.number}</span>
-                <StatusPill status={row.status} className="h-5" />
-                <span className="truncate">{row.clientName ?? ''}</span>
+              <div className="mt-0.5 flex items-center justify-between gap-2 text-table text-fg-muted">
+                <span className="min-w-0 truncate">
+                  <span className="tabular">{fmt.docNumber(row.number)}</span>
+                  {row.clientName ? ` · ${row.clientName}` : ''}
+                </span>
+                <StatusPill status={row.status} size="sm" />
               </div>
             </div>
-            <div className="relative z-10">{actionsFor(row)}</div>
+            <div className="relative z-10 -mr-1">{actionsFor(row)}</div>
           </div>
         </li>
       ))}

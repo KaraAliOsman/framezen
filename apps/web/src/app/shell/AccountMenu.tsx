@@ -1,8 +1,9 @@
 import { useNavigate } from 'react-router'
-import { Building2, CreditCard, Keyboard, LogOut, Monitor, Moon, Sun } from 'lucide-react'
+import { Building2, CreditCard, Keyboard, LogOut, Monitor, Moon, Ruler, Sun } from 'lucide-react'
 import { useLogout, useSession } from '../../lib/auth'
+import { useGlossary, useT } from '../../lib/i18n'
 import { describePlan } from '../../lib/plan'
-import { useTheme, type ThemePreference } from '../../lib/theme'
+import { THEME_CHOICES, useTheme, type ThemePreference } from '../../lib/theme'
 import {
   Avatar,
   Badge,
@@ -17,97 +18,97 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
+  Meter,
 } from '../../ui'
+import es from '../i18n/es'
+import { LanguageSubmenu } from './LanguageMenu'
 
-const THEME_LABEL: Record<ThemePreference, string> = { light: 'Claro', dark: 'Oscuro', system: 'Como el sistema' }
+const THEME_KEY = { original: 'account.original', light: 'account.light', dark: 'account.dark', system: 'account.system' } as const
+const THEME_ICON = { original: Ruler, light: Sun, dark: Moon, system: Monitor } as const
 
-/** Menú de cuenta: persona, empresa, plan y días de prueba, tema y salir. */
+/** Menú de cuenta: persona, empresa, plan y días de prueba, tema, idioma, atajos y salir. */
 export function AccountMenu({ onShowShortcuts }: { onShowShortcuts?: () => void }) {
+  const t = useT(es)
+  const g = useGlossary()
   const me = useSession()
   const navigate = useNavigate()
   const logout = useLogout()
-  const { theme, resolved, setTheme } = useTheme()
+  const { theme, setTheme } = useTheme()
   const plan = describePlan(me.billing)
-  const ThemeIcon = theme === 'system' ? Monitor : resolved === 'dark' ? Moon : Sun
+  const ThemeIcon = THEME_ICON[theme]
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label={`Cuenta de ${me.user.name}`}
-          className="inline-flex size-9 items-center justify-center rounded-full transition-colors duration-120 hover:bg-paper-100 data-[state=open]:bg-paper-100"
+          aria-label={t('account.trigger', { name: me.user.name })}
+          className="inline-flex size-9 items-center justify-center rounded-full transition-colors duration-100 hover:bg-hover data-[state=open]:bg-hover"
         >
-          <Avatar name={me.user.name} size="sm" tone="ink" />
+          <Avatar name={me.user.name} size="sm" tone="ink" className="size-7" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-72">
         <div className="flex items-center gap-3 px-2 pt-2 pb-2.5">
           <Avatar name={me.user.name} size="md" tone="ink" />
           <div className="min-w-0">
-            <div className="truncate font-medium text-paper-900">{me.user.name}</div>
-            <div className="truncate text-[13px] text-paper-600">{me.user.email}</div>
+            <div className="truncate font-medium text-fg-strong">{me.user.name}</div>
+            <div className="truncate text-table text-fg-muted">{me.user.email}</div>
           </div>
         </div>
 
-        <div className="mx-1 mb-1 rounded-sm border border-paper-200 bg-paper-50 px-3 py-2.5">
+        <div className="mx-1 mb-1 rounded-sm bg-sunken px-3 py-2.5">
           <div className="flex items-center justify-between gap-2">
-            <span className="truncate text-[13px] font-medium text-paper-900">{me.org.name}</span>
-            <Badge tone={plan.isTrial ? 'ink' : 'neutral'} size="sm">
-              {plan.name}
+            <span className="truncate text-table font-medium text-fg-strong">{me.org.name}</span>
+            <Badge tone={plan.isTrial ? 'accent' : 'neutral'} size="sm">
+              {g.plan(plan.code)}
             </Badge>
           </div>
           {plan.isTrial && plan.trialDaysLeft !== null ? (
             <div className="mt-2 space-y-1.5">
-              <div
-                className="h-1 overflow-hidden rounded-full bg-paper-200"
-                role="progressbar"
-                aria-label="Días de prueba usados"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(plan.trialProgress * 100)}
-              >
-                <div
-                  className="h-full origin-left rounded-full bg-ink-600"
-                  style={{ transform: `scaleX(${Math.max(0.04, plan.trialProgress)})` }}
-                />
-              </div>
-              <p className="text-meta text-paper-600">
-                {plan.trialDaysLeft === 0
-                  ? 'Tu prueba terminó: puedes ver y exportar todo.'
-                  : plan.trialDaysLeft === 1
-                    ? 'Queda 1 día de prueba con todo Pro.'
-                    : `Quedan ${plan.trialDaysLeft} días de prueba con todo Pro.`}
+              <Meter value={Math.round(plan.trialProgress * 100)} max={100} tone="auto" aria-label={t('account.trialAria')} />
+              <p className="text-meta text-fg-muted">
+                {plan.trialDaysLeft === 0 ? t('account.trialEnded') : t('account.trialLeft', { count: plan.trialDaysLeft })}
               </p>
             </div>
           ) : null}
         </div>
 
         <DropdownMenuItem icon={Building2} onSelect={() => navigate('/ajustes/empresa')}>
-          Datos de la empresa
+          {t('account.company')}
         </DropdownMenuItem>
-        <DropdownMenuItem icon={CreditCard} onSelect={() => navigate('/ajustes/plan')} hint={plan.isTrial ? 'Elegir plan' : undefined}>
-          Plan y facturación
+        <DropdownMenuItem icon={CreditCard} onSelect={() => navigate('/ajustes/plan')} hint={plan.isTrial ? t('account.choosePlan') : undefined}>
+          {t('account.plan')}
         </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuSub>
-          <DropdownMenuSubTrigger icon={ThemeIcon}>Tema · {THEME_LABEL[theme]}</DropdownMenuSubTrigger>
+          <DropdownMenuSubTrigger icon={ThemeIcon}>{t('account.theme', { theme: t(THEME_KEY[theme]) })}</DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
-            <DropdownMenuLabel>Apariencia</DropdownMenuLabel>
+            <DropdownMenuLabel>{t('account.appearance')}</DropdownMenuLabel>
             <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as ThemePreference)}>
-              <DropdownMenuRadioItem value="light">Claro</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="dark">Oscuro</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="system">Como el sistema</DropdownMenuRadioItem>
+              {THEME_CHOICES.map((value) => {
+                const Icon = THEME_ICON[value]
+                return (
+                  <DropdownMenuRadioItem key={value} value={value}>
+                    <span className="flex items-center gap-2">
+                      <Icon aria-hidden strokeWidth={1.75} className="size-4 text-fg-muted" />
+                      {t(THEME_KEY[value])}
+                    </span>
+                  </DropdownMenuRadioItem>
+                )
+              })}
             </DropdownMenuRadioGroup>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
+        <LanguageSubmenu />
         {onShowShortcuts ? (
           <DropdownMenuItem icon={Keyboard} shortcut="?" onSelect={onShowShortcuts}>
-            Atajos de teclado
+            {t('account.shortcuts')}
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem icon={LogOut} onSelect={() => logout.mutate()}>
-          Cerrar sesión
+          {t('account.logout')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

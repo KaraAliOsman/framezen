@@ -110,11 +110,11 @@ describe('MarcoEngine.sample(t)', () => {
     expect(e.sample(0.5).body).toBe(fresh.sample(0.5).body)
   })
 
-  it('en reposo es un círculo con dos ojos y mira casi de frente', () => {
+  it('en reposo es la ventanita con dos ojos y mira casi de frente', () => {
     const f = new MarcoEngine().sample(1)
     const { w, h } = extent(f.body)
-    expect(Math.abs(w - h)).toBeLessThan(3)
-    expect(w).toBeGreaterThan(195)
+    expect(Math.abs(w - h)).toBeLessThan(30)
+    expect(w).toBeGreaterThan(160)
     expect(f.eyes).toHaveLength(2)
     expect(f.dots).toHaveLength(0)
     expect(f.pill).toBeNull()

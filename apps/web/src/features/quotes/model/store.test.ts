@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createDesign, DEFAULT_CUT, DEFAULT_PRICING, evaluateQuote, setColor, type WindowDesign } from '@framezen/engine'
-import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@framezen/catalog'
-import type { Quote, QuoteSaveBody } from '@framezen/shared'
+import { createDesign, DEFAULT_CUT, DEFAULT_PRICING, evaluateQuote, setColor, type WindowDesign } from '@dekopen/engine'
+import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@dekopen/catalog'
+import type { Quote, QuoteSaveBody } from '@dekopen/shared'
 import { createQuoteEditor, UnsavedChangesError, type EditorNotice, type EditorSettings, type QuoteTransport } from './store'
 import { docFromQuote, mergeDocs } from './doc'
+import { undoText } from './history'
 import { createLocalDraftStore, type LocalDraft, type LocalDraftStore } from './localDrafts'
 
 const catalog = SAMPLE_CATALOG
@@ -125,13 +126,13 @@ describe('historial de deshacer/rehacer', () => {
     editor.setDiscount(5)
     editor.updateDesign('b', (d) => setColor(d, 'nogal'), 'Cambiar color a Nogal')
     const state = editor.get()
-    expect(state.past.map((e) => e.label)).toEqual(['Cantidad de V1: 3', 'Descuento 5 %', 'Cambiar color a Nogal'])
+    expect(state.past.map((e) => undoText(e.label))).toEqual(['Cantidad de V1: 3', 'Descuento 5 %', 'Cambiar color a Nogal'])
 
     expect(editor.undo()).toBe('Cambiar color a Nogal')
     expect(editor.get().doc.items[1].design.colorId).toBe(SAMPLE_DEFAULTS.colorId)
     expect(editor.undo()).toBe('Descuento 5 %')
     expect(editor.get().doc.discountPct).toBe(0)
-    expect(editor.get().future.map((e) => e.label)).toEqual(['Descuento 5 %', 'Cambiar color a Nogal'])
+    expect(editor.get().future.map((e) => undoText(e.label))).toEqual(['Descuento 5 %', 'Cambiar color a Nogal'])
 
     expect(editor.redo()).toBe('Descuento 5 %')
     expect(editor.get().doc.discountPct).toBe(5)
@@ -197,7 +198,7 @@ describe('ventanas y referencias', () => {
     const { editor } = setup()
     const id = editor.addItem({ design: design('tilt_turn'), qty: 2, location: 'Cocina' })
     expect(editor.get().selectedItemId).toBe(id)
-    expect(editor.get().past.at(-1)?.label).toBe('Agregar V3')
+    expect(undoText(editor.get().past.at(-1)?.label)).toBe('Agregar V3')
     const copy = editor.duplicateItem('a')!
     expect(editor.get().doc.items.map((i) => [i.id, i.ref])).toEqual([
       ['a', 'V1'],
@@ -228,7 +229,7 @@ describe('ventanas y referencias', () => {
       ['b', 'V1'],
       ['a', 'V2'],
     ])
-    expect(editor.get().past.at(-1)?.label).toBe('Reordenar ventanas')
+    expect(undoText(editor.get().past.at(-1)?.label)).toBe('Reordenar ventanas')
   })
 })
 
@@ -340,7 +341,7 @@ describe('autoguardado', () => {
     expect(editor.get().doc.discountPct).toBe(8)
     expect(editor.get().save.dirty).toBe(false)
     expect(notices[0]?.kind).toBe('conflict')
-    expect(editor.get().past.at(-1)?.label).toBe('Tus cambios de esta pestaña')
+    expect(undoText(editor.get().past.at(-1)?.label)).toBe('Tus cambios de esta pestaña')
     // «Recuperar mis cambios»: vuelve el 12 % y se guarda sobre la versión nueva.
     ;(notices[0] as Extract<EditorNotice, { kind: 'conflict' }>).recover()
     expect(editor.get().doc.discountPct).toBe(12)
@@ -466,7 +467,7 @@ describe('cambios sin guardar en este equipo', () => {
     const reopened = setup(structuredClone(server.quote), { drafts: drafts.store, notices, server }).editor
     expect(reopened.get().doc.title).toBe('Editado sin conexión')
     expect(reopened.get().save.dirty).toBe(true)
-    expect(reopened.get().past.at(-1)?.label).toBe('Recuperar cambios sin guardar')
+    expect(undoText(reopened.get().past.at(-1)?.label)).toBe('Recuperar cambios sin guardar')
     await vi.advanceTimersByTimeAsync(10)
     expect(notices).toContainEqual({ kind: 'restored' })
     expect(server.quote.title).toBe('Editado sin conexión')

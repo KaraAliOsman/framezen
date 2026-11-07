@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Quote, QuoteItem, WorkOrder } from '@framezen/shared'
+import type { Quote, QuoteItem, WorkOrder } from '@dekopen/shared'
 import { boardOrders, buildBoard, moveInProgress, orderRefs, parseCardId } from './board'
 
 const NOW = new Date('2026-10-31T13:00:00Z')

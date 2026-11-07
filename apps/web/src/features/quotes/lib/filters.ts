@@ -1,14 +1,17 @@
-/** Filtros por estado de /cotizaciones y lectura de `?estado=` (enlaces del embudo de Inicio). */
-import type { QuoteStatus } from '@framezen/shared'
+/**
+ * Filtros por estado de /cotizaciones y lectura de `?estado=` (enlaces del embudo de Inicio). Los
+ * nombres visibles salen de `list.filters.<valor>` (i18n de cotizaciones).
+ */
+import type { QuoteStatus } from '@dekopen/shared'
 
 export type QuoteFilter = 'all' | 'draft' | 'sent' | 'accepted' | 'workshop' | 'rejected'
-export const FILTERS: { value: QuoteFilter; label: string; statuses?: QuoteStatus[] }[] = [
-  { value: 'all', label: 'Todas' },
-  { value: 'draft', label: 'Borradores', statuses: ['draft'] },
-  { value: 'sent', label: 'Enviadas', statuses: ['sent'] },
-  { value: 'accepted', label: 'Aceptadas', statuses: ['accepted'] },
-  { value: 'workshop', label: 'En taller', statuses: ['workshop', 'installed'] },
-  { value: 'rejected', label: 'Rechazadas', statuses: ['rejected'] },
+export const FILTERS: { value: QuoteFilter; statuses?: QuoteStatus[] }[] = [
+  { value: 'all' },
+  { value: 'draft', statuses: ['draft'] },
+  { value: 'sent', statuses: ['sent'] },
+  { value: 'accepted', statuses: ['accepted'] },
+  { value: 'workshop', statuses: ['workshop', 'installed'] },
+  { value: 'rejected', statuses: ['rejected'] },
 ]
 
 /**
@@ -19,6 +22,7 @@ export function filterFromParam(value: string | null | undefined): QuoteFilter {
   const key = (value ?? '')
     .trim()
     .toLowerCase()
+    .replace(/ı/g, 'i')
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
     .replace(/[\s_]+/g, '-')

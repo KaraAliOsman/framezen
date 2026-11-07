@@ -3,7 +3,7 @@
  * docs/research/06 y 11). Sobrescriben lo que el importador deduce de la pauta
  * de la distribuidora. Códigos de perfil sin color (PRO01, PRO-R1…).
  */
-import type { BrandSettings, Line, Pauta, ProfileRole, TypologyId } from '@framezen/engine'
+import type { BrandSettings, Line, Pauta, ProfileRole, TypologyId } from '@dekopen/engine'
 import { VERIFIED_SOURCE_MARK } from './readiness'
 
 export interface VerifiedLine {
@@ -36,7 +36,7 @@ export interface VerifiedLine {
 
 /**
  * Fuente que ve cada taller en la ficha de la línea (`Line.source`). Nunca cita la orden de trabajo
- * con que se verificó (es de un tercero): solo dice que Framezen la verificó, y `lineReadiness` lo
+ * con que se verificó (es de un tercero): solo dice que DEKOPEN la verificó, y `lineReadiness` lo
  * reconoce como evidencia.
  */
 const VERIFIED = `Pauta de la distribuidora, ${VERIFIED_SOURCE_MARK}`
@@ -73,6 +73,10 @@ export const PROLINE_LINES: Record<string, VerifiedLine> = {
       sashOverlap: 8,
       glassGap: 5,
       mullionDeduction: 20,
+      // Plantilla PRO6004: doble hoja con separación 10 y batiente −56; solera a 13 de la cota.
+      frenchGap: 10,
+      frenchMullionDeduction: 56,
+      thresholdGap: 13,
       reinforcement: { frame: 114, sash: 146, mullion: 20 },
     },
     doorPauta: { sashWidth: 110, sashDeduction: 90, reinforcement: { frame: 114, sash: 108, mullion: 20 } },

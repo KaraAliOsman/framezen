@@ -1,7 +1,8 @@
 import { Hono } from 'hono'
 import { and, count, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
-import type { Paged, QuoteItem, Station, WorkOrder } from '@framezen/shared'
+import { includedLineIds } from '@dekopen/engine'
+import type { Paged, QuoteItem, Station, WorkOrder } from '@dekopen/shared'
 import type { AppDeps, AppEnv } from '../context'
 import type { Db } from '../db/client'
 import { quotes, workOrders } from '../db/schema'
@@ -36,19 +37,27 @@ export function toWorkOrder(row: WorkOrderRow): WorkOrder {
 
 const DONE: Station[] = ['ready', 'installed']
 
+type StationItem = Pick<QuoteItem, 'ref' | 'qty'> & Partial<Pick<QuoteItem, 'id' | 'role' | 'altGroup' | 'included'>>
+
+/** Lo que va a producción: un opcional sin marcar o una alternativa descartada no se fabrica. */
+export function fabricatedItems<T extends StationItem>(items: readonly T[]): T[] {
+  const counted = includedLineIds(items.map((item) => ({ ...item, id: item.id ?? item.ref })))
+  return items.filter((item) => counted.has(item.id ?? item.ref))
+}
+
 /**
  * Estación de cada ventana que hoy tiene la cotización (las de cantidad 0 no se fabrican). Una
  * ventana sin avance registrado (agregada o renombrada después de abrir la OT) cuenta como «corte»:
  * la OT no puede quedar terminada ni la cotización instalada con ventanas sin fabricar.
  */
-export function stationsOf(progress: Record<string, Station>, items: Pick<QuoteItem, 'ref' | 'qty'>[] | undefined): Station[] {
-  const current = (items ?? []).filter((item) => item.qty > 0)
+export function stationsOf(progress: Record<string, Station>, items: StationItem[] | undefined): Station[] {
+  const current = fabricatedItems(items ?? []).filter((item) => item.qty > 0)
   if (!current.length) return Object.values(progress)
   return current.map((item) => progress[item.ref] ?? 'cut')
 }
 
 /** Estado según el avance: todo listo = terminada; algo avanzado = en curso. */
-export function statusFromProgress(progress: Record<string, Station>, items?: Pick<QuoteItem, 'ref' | 'qty'>[]): WorkOrderStatus {
+export function statusFromProgress(progress: Record<string, Station>, items?: StationItem[]): WorkOrderStatus {
   const stations = items ? stationsOf(progress, items) : Object.values(progress)
   if (stations.length && stations.every((s) => DONE.includes(s))) return 'done'
   if (stations.some((s) => s !== 'cut')) return 'in_progress'
@@ -102,7 +111,7 @@ export function workOrderRoutes(deps: AppDeps) {
       if (existing) return { existing }
       const number = await allocateWorkOrderNumber(tx, org.id)
       const progress: Record<string, Station> = {}
-      for (const item of quote.data.items) progress[item.ref] = 'cut'
+      for (const item of fabricatedItems(quote.data.items)) progress[item.ref] = 'cut'
       const now = deps.now()
       const [row] = await tx
         .insert(workOrders)

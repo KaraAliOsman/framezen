@@ -7,7 +7,13 @@ import type { Quote } from '../packages/shared/src/api'
 
 test('Marco en modo local opera la cotización abierta', async ({ page }) => {
   await signupApi(page, 'marco')
-  const status = await (await page.request.get('/api/assistant/status')).json().catch(() => ({}))
+  // Este modo es el del plan sin IA: no depende de si el servidor de la prueba tiene una clave conectada.
+  await page.route('**/api/assistant/v2/status', async (route) => {
+    const response = await route.fetch()
+    const json = await response.json()
+    await route.fulfill({ response, json: { ...json, ai: { ...json.ai, available: false, reason: 'no_key' } } })
+  })
+  const status = await (await page.request.get('/api/assistant/v2/status')).json().catch(() => ({}))
   test.info().annotations.push({ type: 'asistente', description: JSON.stringify(status).slice(0, 300) })
 
   const id = await newQuoteFromUi(page)
@@ -19,8 +25,10 @@ test('Marco en modo local opera la cotización abierta', async ({ page }) => {
   const panel = page.getByRole('dialog', { name: 'Marco, tu asistente' }).or(page.getByRole('complementary', { name: 'Marco, tu asistente' })).or(page.locator('[aria-label="Marco, tu asistente"]')).first()
   if (!(await panel.isVisible({ timeout: 1500 }).catch(() => false))) await page.getByRole('button', { name: 'Abrir a Marco' }).click()
   await expect(panel).toBeVisible()
-  const box = page.getByPlaceholder(/Pídeme algo/)
+  // Campo del mensaje (combobox con sugerencias de comandos); en modo local invita a escribir un comando.
+  const box = panel.getByRole('combobox', { name: 'Mensaje para Marco' })
   await expect(box).toBeVisible()
+  await expect(panel.getByText('Comandos simples')).toBeVisible()
 
   const say = async (text: string) => {
     await box.click()

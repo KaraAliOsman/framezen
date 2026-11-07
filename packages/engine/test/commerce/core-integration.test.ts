@@ -45,18 +45,21 @@ describe('comercio + núcleo', () => {
     const bom = computeBom(d, cat)
     const price = priceItem(bom, d, cat, DEFAULT_PRICING)
     expect(bom.warnings.filter((w) => w.code === 'profile_missing').map((w) => w.message)).toEqual([
-      'El junquillo de PRO6004 no está en tu catálogo: se cotiza en $0. Agrégalo en Catálogo.',
+      'El junquillo de PRO6004 no está en tu catálogo: la ventana queda fuera del total. Agrégalo en Catálogo.',
     ])
     expect(price.warnings.filter((w) => w.code === 'price_missing')).toEqual([])
     expect(price.warnings.some((w) => w.message.includes('—'))).toBe(false)
-    // El corte se cotiza en $0 pero sigue en el desglose.
+    // El corte sigue en el desglose, y la ventana queda fuera del total hasta tener su perfil.
     expect(price.lines.find((l) => l.name.startsWith('Junquillo'))?.total).toBe(0)
+    expect(price.pending).toEqual([{ code: 'profile_missing', ref: 'junquillo' }])
+    expect(price.unitNet).toBe(0)
   })
 
   it('una línea inexistente no llena el precio de «El perfil —»', () => {
     const d = design({ lineId: 'nada' })
     const price = priceItem(computeBom(d, catalog), d, catalog, DEFAULT_PRICING)
-    expect(price.warnings.map((w) => w.code)).toEqual(['line_missing'])
+    expect(price.warnings.map((w) => w.code)).toEqual(['price_pending', 'line_missing'])
+    expect(price.pending?.[0]).toEqual({ code: 'line_missing', ref: 'línea' })
   })
 
   it('buildWorkshopData arma ventanas, cortes, vidrios, materiales y CSV de sierra', () => {

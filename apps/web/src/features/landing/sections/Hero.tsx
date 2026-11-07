@@ -1,112 +1,90 @@
-import { Check } from 'lucide-react'
-import { useReducedMotion } from 'motion/react'
-import { TRIAL_DAYS } from '@framezen/shared'
-import { ButtonLink, Container, Reveal, useEntrance } from '../components/primitives'
-import { HeroDesigner } from '../designer/HeroDesigner'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
+import { WindowDrawing } from '@dekopen/documents'
+import { computeLayout, createDesign } from '@dekopen/engine'
+import { DEFAULT_QUOTE_PRESET_ID, DOC_PRESETS, TRIAL_DAYS } from '@dekopen/shared'
+import { lazy, Suspense, useMemo } from 'react'
+import { useLocale, useT } from '../../../lib/i18n'
+import { ButtonLink, Caption, Container, Reveal } from '../components/primitives'
+import { DrawingBoundary } from '../designer/DrawingBoundary'
+import { useElementSize } from '../designer/useElementSize'
+import es from '../i18n/es'
+import { useSampleQuote } from '../lib/sampleContext'
 
-const PROMISES = [
-  `${TRIAL_DAYS} días gratis, sin tarjeta`,
-  'Todas tus marcas de perfiles',
-  'Computador, tablet o teléfono',
-]
+const QuoteSheet = lazy(() => import('./QuoteSheet'))
+
+/** Ancho de la hoja A4 a 96 dpi. */
+const PAGE_WIDTH = 794
+
+function heroWindow() {
+  const line = SAMPLE_CATALOG.lines.find((l) => l.typologyIds.includes('sliding_4')) ?? SAMPLE_CATALOG.lines[0]
+  const glass = SAMPLE_CATALOG.glass.find((g) => g.kind === 'dvh') ?? SAMPLE_CATALOG.glass[0]
+  const design = createDesign('sliding_4', { lineId: line?.id ?? '', width: 4800, height: 2100, colorId: 'antracita', glassId: glass?.id ?? '' })
+  return { design, layout: computeLayout(design, SAMPLE_CATALOG) }
+}
 
 export function Hero() {
-  const reduce = useReducedMotion()
+  const t = useT(es)
+  const { locale } = useLocale()
+  const sample = useSampleQuote()
+  const [stageRef, stage] = useElementSize<HTMLDivElement>({ width: 1440, height: 640 })
+  const hero = useMemo(() => {
+    try {
+      return heroWindow()
+    } catch {
+      return null
+    }
+  }, [])
+  const phone = stage.width < 700
+  const sheetWidth = phone ? 164 : Math.min(360, Math.round(stage.width * 0.25))
 
   return (
-    <section aria-labelledby="hero-title" className="relative pt-10 pb-20 sm:pt-16 lg:pt-20 lg:pb-24">
-      <Container>
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-12 lg:items-end lg:gap-10">
-          <div className="lg:col-span-7">
-            <Reveal as="p" when="mount" className="text-[14px] font-medium text-paper-600">
-              Para talleres de ventanas y puertas de PVC
-            </Reveal>
-            <Reveal
-              as="h1"
-              when="mount"
-              delay={0.04}
-              id="hero-title"
-              className="mt-5 text-[38px] leading-[42px] font-semibold tracking-[-0.025em] text-paper-900 sm:text-[60px] sm:leading-[62px] lg:text-[64px] lg:leading-[66px]"
-            >
-              Cotiza en minutos.{' '}
-              <span className="block">
-                Fabrica al{' '}
-                <span className="relative inline-block whitespace-nowrap">
-                  milímetro.
-                  <MillimeterMark delay={reduce ? 0 : 0.35} />
-                </span>
-              </span>
-            </Reveal>
-          </div>
-
-          <div className="lg:col-span-5 lg:pb-1 xl:pl-8">
-            <Reveal as="p" when="mount" delay={0.08} className="max-w-[46ch] text-[17px] leading-[28px] text-pretty text-paper-600">
-              Dibujas la ventana, ves su precio al instante y mandas una cotización que da gusto aceptar. Después,
-              el taller recibe los cortes optimizados, los vidrios y los materiales. Sin planillas ni medidas copiadas
-              a mano.
-            </Reveal>
-            <Reveal when="mount" delay={0.12} className="mt-7 flex flex-wrap items-center gap-3">
-              <ButtonLink to="/crear-cuenta" size="lg" arrow>
-                Probar gratis {TRIAL_DAYS} días
-              </ButtonLink>
-              <ButtonLink to="/entrar" size="lg" variant="secondary">
-                Ya tengo cuenta
-              </ButtonLink>
-            </Reveal>
-          </div>
-        </div>
-
-        <Reveal
-          as="ul"
-          when="mount"
-          delay={0.16}
-          className="mt-8 flex flex-col gap-2 text-[14px] text-paper-600 sm:flex-row sm:flex-wrap sm:gap-x-6 lg:mt-10"
-        >
-          {PROMISES.map((promise) => (
-            <li key={promise} className="flex items-center gap-1.5">
-              <Check aria-hidden strokeWidth={1.75} className="size-4 text-ok-600" />
-              {promise}
-            </li>
-          ))}
+    <section aria-labelledby="hero-title" className="bg-canvas">
+      <Container className="pt-10 sm:pt-16 lg:pt-20">
+        <Reveal as="h1" when="mount" id="hero-title" className="font-display text-display-sm font-medium text-balance text-fg-strong lg:text-display xl:text-display-lg">
+          {t('hero.title')}
         </Reveal>
-
-        <Reveal when="mount" delay={0.12} className="mt-10 lg:mt-12">
-          <HeroDesigner />
-          <p className="mt-3 max-w-[90ch] text-[12px] leading-4 text-paper-600">
-            Pruébalo con tus medidas: el dibujo y el precio los calcula aquí mismo el motor de Framezen, con un catálogo
-            de ejemplo, margen de 40 % y mano de obra incluida. Con tu lista de precios, el precio es el tuyo.
-          </p>
+        <Reveal when="mount" delay={0.06} className="mt-6 grid gap-6 lg:mt-10 lg:grid-cols-12 lg:items-end">
+          <p className="max-w-[58ch] text-lead text-pretty text-fg-muted lg:col-span-7">{t('hero.lead')}</p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center lg:col-span-5 lg:justify-end">
+            <ButtonLink to="/crear-cuenta" variant="primary" size="lg" arrow>
+              {t('hero.cta', { days: TRIAL_DAYS })}
+            </ButtonLink>
+            <p className="text-table text-fg-muted">{t('hero.note')}</p>
+          </div>
         </Reveal>
       </Container>
+
+      {/* La portada es el producto: una ventana real en su muro y la cotización que la vende. */}
+      <div ref={stageRef} className="relative mt-10 h-[320px] overflow-hidden bg-sunken sm:mt-14 sm:h-[480px] lg:h-[640px]">
+        {hero ? (
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 ">
+            <DrawingBoundary resetKey="hero" fallback={null}>
+              <WindowDrawing
+                layout={hero.layout}
+                design={hero.design}
+                catalog={SAMPLE_CATALOG}
+                context="wall"
+                dimensions="none"
+                symbols={false}
+                detail="high"
+                locale={locale}
+                width={Math.max(stage.width, phone ? 640 : 960)}
+                title={t('hero.drawing')}
+              />
+            </DrawingBoundary>
+          </div>
+        ) : null}
+        {sample ? (
+          <div className="absolute top-6 right-4 shadow-pop sm:top-10 sm:right-8 lg:top-14 lg:right-[max(48px,calc((100%-1312px)/2+48px))]" style={{ width: sheetWidth, height: Math.round(sheetWidth * 1.414) }}>
+            <Suspense fallback={<div className="size-full bg-canvas" />}>
+              <QuoteSheet doc={sample.doc} template={DOC_PRESETS[DEFAULT_QUOTE_PRESET_ID]} scale={sheetWidth / PAGE_WIDTH} className="lp-first-page size-full overflow-hidden bg-canvas" />
+            </Suspense>
+          </div>
+        ) : null}
+      </div>
+      <Container className="pt-3">
+        <Caption>{t('hero.caption')}</Caption>
+      </Container>
     </section>
-  )
-}
-
-/** Cota bajo «milímetro.»: línea fina con remates oblicuos que se dibuja al cargar. */
-function MillimeterMark({ delay }: { delay: number }) {
-  const ref = useEntrance<HTMLSpanElement>({
-    when: 'mount',
-    delay,
-    duration: 300,
-    keyframes: [
-      { opacity: 0, transform: 'scaleX(0.6)' },
-      { opacity: 1, transform: 'none' },
-    ],
-  })
-  return (
-    <span ref={ref} aria-hidden data-reveal="" className="absolute right-[0.32em] -bottom-2 left-0 flex origin-left items-center text-ink-600">
-      <ObliqueTick />
-      <span className="-mx-[5px] h-px flex-1 bg-current" />
-      <ObliqueTick />
-    </span>
-  )
-}
-
-function ObliqueTick() {
-  return (
-    <svg width="10" height="12" viewBox="0 0 10 12" className="shrink-0">
-      <line x1="5" y1="1" x2="5" y2="11" stroke="currentColor" strokeWidth="1" strokeOpacity="0.55" />
-      <line x1="1.5" y1="9.5" x2="8.5" y2="2.5" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
   )
 }

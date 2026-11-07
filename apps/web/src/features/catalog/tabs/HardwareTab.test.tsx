@@ -1,11 +1,11 @@
 import '../../../../test/setup'
 import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import type { Catalog, Item } from '@framezen/engine'
-import { SAMPLE_CATALOG } from '@framezen/catalog'
+import type { Catalog, Item } from '@dekopen/engine'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
 import { HardwareTab, variantsText } from './HardwareTab'
 
-const brown: Item = { id: 'fz.manilla-ventana-marron', brandId: 'framezen-genericos', kind: 'hardware', code: 'FZ-MANILLA-M', name: 'Manilla de ventana marrón', unit: 'u', price: 2900 }
+const brown: Item = { id: 'fz.manilla-ventana-marron', brandId: 'dekopen-genericos', kind: 'hardware', code: 'FZ-MANILLA-M', name: 'Manilla de ventana marrón', unit: 'u', price: 2900 }
 
 /** Ejemplo con la manilla de la línea practicable en marrón para nogal. */
 function catalogWithVariant(): Catalog {

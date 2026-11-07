@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { Catalog } from '@framezen/engine'
-import { SAMPLE_CATALOG } from '@framezen/catalog'
+import type { Catalog } from '@dekopen/engine'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
 import { buildPriceRows, EMPTY_FILTERS, filterRows, activeFilterCount } from './prices'
-import { completePricesFocus, completePricesLabel, missingPriceKeys, readinessByLine, READINESS_COPY } from './readiness'
+import { completePricesFocus, completePricesLabel, missingPriceKeys, readinessByLine, readinessCopy } from './readiness'
 
 const serie60 = SAMPLE_CATALOG.lines.find((line) => line.id === 'serie-60')!
 const sashId = serie60.profiles.sash!
@@ -15,9 +15,9 @@ const withoutSashPrices: Catalog = {
 
 describe('completitud en la web', () => {
   it('usa lenguaje humano para los tres estados', () => {
-    expect(READINESS_COPY.ready.label).toBe('Lista para cotizar')
-    expect(READINESS_COPY.warnings.label).toBe('Cotiza con avisos')
-    expect(READINESS_COPY.geometry.label).toBe('Solo medidas')
+    expect(readinessCopy('ready').label).toBe('Lista para cotizar')
+    expect(readinessCopy('warnings').label).toBe('Cotiza con avisos')
+    expect(readinessCopy('geometry').label).toBe('Solo medidas')
   })
 
   it('una línea completa no ofrece completar precios', () => {

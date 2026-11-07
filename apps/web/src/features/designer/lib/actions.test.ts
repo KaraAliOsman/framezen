@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { SAMPLE_CATALOG } from '@framezen/catalog'
-import { computeBom, createDesign, findNode, type LeafNode, type SplitNode, type TypologyId, type WindowDesign } from '@framezen/engine'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
+import { computeBom, createDesign, findNode, type LeafNode, type SplitNode, type TypologyId, type WindowDesign } from '@dekopen/engine'
 import {
   OPENING_PRESETS,
   applyOpeningPreset,

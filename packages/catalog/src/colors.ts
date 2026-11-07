@@ -2,7 +2,8 @@
  * Paleta canónica de colores de perfil y normalización de los nombres que usan
  * los proveedores («ROBLE DOR», «GOLDEN OAK», «JET BLACK»…). Los hex son de dibujo.
  */
-import type { Color } from '@framezen/engine'
+import type { Color } from '@dekopen/engine'
+import { builtinTextureRef, cloneTexture } from './textures'
 import { normalizeKey, sentenceCase, slug } from './text'
 
 interface PaletteEntry extends Color {
@@ -42,14 +43,56 @@ const PALETTE: PaletteEntry[] = [
   { id: 'acero-inox', name: 'Acero inoxidable', hex: '#C9CBCD', code: 'IN', aliases: ['ACERO INOX', 'INOX', 'ACERO INOXIDABLE'], suffixes: ['INOX', 'IN'] },
 ]
 
+/**
+ * Foliados con textura incluida (veta de madera, texturizado, metalizado): id del color → id de
+ * la textura en `BUILTIN_TEXTURES`. Los colores lisos (blanco, negro, gris) no llevan textura.
+ */
+const PALETTE_TEXTURES: Record<string, string> = {
+  'nogal': 'wood-walnut',
+  'nogal-oscuro': 'wood-walnut-dark',
+  'nogal-claro': 'wood-walnut-light',
+  'antracita': 'textured-anthracite',
+  'grafito': 'textured-graphite',
+  'roble-dorado': 'wood-golden-oak',
+  'roble': 'wood-oak',
+  'roble-montana': 'wood-mountain-oak',
+  'roble-natural': 'wood-natural-oak',
+  'roble-gris': 'wood-grey-oak',
+  'winchester': 'wood-winchester',
+  'titanio': 'metallic-titanium',
+  'peltre': 'metallic-pewter',
+  'lenga': 'wood-lenga',
+  'wengue': 'wood-wenge',
+  'colonial': 'wood-colonial',
+  'anteak': 'wood-anteak',
+  'caoba': 'wood-mahogany',
+  'embero': 'wood-embero',
+  'madera': 'wood-generic',
+  'bronce': 'metallic-bronze',
+  'mate': 'metallic-aluminium',
+  'acero-inox': 'metallic-steel',
+}
+for (const entry of PALETTE) {
+  const texture = PALETTE_TEXTURES[entry.id] ? builtinTextureRef(PALETTE_TEXTURES[entry.id]) : undefined
+  if (texture) entry.texture = texture
+}
+
 const BY_ALIAS = new Map<string, PaletteEntry>()
 for (const entry of PALETTE) for (const alias of entry.aliases) BY_ALIAS.set(normalizeKey(alias), entry)
 
 /** Valores de la columna Color que no son un color de perfil (vidrio, separadores, N/A…). */
 const COLORLESS = /^(|N\/?A|NA|SIN COLOR|INCOLORO|TRANSPARENTE|VIDRIO|ESPEJO|SEPARADOR.*|MATE \d.*|NEGRO \d.*|BRONCE \d.*|-+)$/
 
+/** Color público de una entrada de la paleta (sin alias ni sufijos; la textura viaja copiada). */
+function paletteColor({ id, name, hex, code, texture }: PaletteEntry): Color {
+  const color: Color = { id, name, hex, code }
+  const copy = cloneTexture(texture)
+  if (copy) color.texture = copy
+  return color
+}
+
 /** Colores de la paleta canónica (sin alias), para catálogos y selectores. */
-export const COLOR_PALETTE: Color[] = PALETTE.map(({ id, name, hex, code }) => ({ id, name, hex, code }))
+export const COLOR_PALETTE: Color[] = PALETTE.map(paletteColor)
 
 /** true si el texto de color no corresponde a un color de perfil (los refuerzos, por ejemplo). */
 export function isColorless(name: string | undefined | null): boolean {
@@ -69,15 +112,15 @@ function guessHex(key: string): string {
 }
 
 /**
- * Normaliza un nombre de color de proveedor a la paleta canónica. Si no lo conoce,
- * crea un color con id derivado del nombre y un tono aproximado. Un nombre vacío o
- * «sin color» devuelve el color neutro «sin-color».
+ * Normaliza un nombre de color de proveedor a la paleta canónica (con su textura si es foliado).
+ * Si no lo conoce, crea un color con id derivado del nombre y un tono aproximado. Un nombre vacío
+ * o «sin color» devuelve el color neutro «sin-color».
  */
 export function normalizeColor(name: string): Color {
   const key = normalizeKey(name).replace(/[.]+$/, '')
   if (isColorless(key)) return { id: 'sin-color', name: 'Sin color', hex: '#D8D4CC' }
   const known = BY_ALIAS.get(key)
-  if (known) return { id: known.id, name: known.name, hex: known.hex, code: known.code }
+  if (known) return paletteColor(known)
   return { id: slug(key), name: sentenceCase(key), hex: guessHex(key) }
 }
 

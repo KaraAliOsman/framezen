@@ -2,7 +2,8 @@
  * PDF de documentos (Chromium en el servidor, mismas plantillas que la web).
  *
  *   GET /api/quotes/:id/pdf?template=<QuoteTemplateId>          (sesión)
- *   GET /api/work-orders/:id/pdf?doc=<tipo>&labels=roll&brandId=&glass=0&prices=0 (sesión)
+ *   GET /api/work-orders/:id/pdf?doc=<tipo>&labels=roll&brandId=&glass=0&prices=0&parts=sash,bead (sesión)
+ *   GET /api/quotes/:id/cuts/pdf?doc=cuts|cut-order&parts=sash,bead  (sesión; calculado al vuelo, sin crear nada)
  *   GET /api/catalog/pdf?template=<CatalogTemplateId>&lines=a,b  (sesión)
  *   GET /api/public/quotes/:token/pdf?template=                  (portal, sin sesión)
  *
@@ -13,13 +14,14 @@
  */
 import { Hono, type Context } from 'hono'
 import { and, desc, eq, isNull } from 'drizzle-orm'
-import { workshopDocumentAccess } from '@framezen/documents'
-import { FEATURE_COPY, PLANS, planFeatures, type Quote } from '@framezen/shared'
+import { workshopDocumentAccess } from '@dekopen/documents'
+import { FEATURE_COPY, PLANS, planFeatures, type Quote } from '@dekopen/shared'
 import type { AppDeps, AppEnv } from '../context'
 import { orgs, quoteRevisions, quotes, subscriptions, workOrders } from '../db/schema'
 import { HttpError, notFound } from '../lib/errors'
 import { RateLimiter } from '../lib/rate-limit'
 import { requireAuth } from '../middleware/auth'
+import { assetStore } from '../services/assets'
 import {
   buildCatalogDoc,
   buildQuoteDoc,
@@ -27,8 +29,6 @@ import {
   contentDisposition,
   PdfUnavailableError,
   pickCatalogTemplate,
-  pickQuoteTemplate,
-  quotePrefs,
   renderCatalogDocumentAsync,
   renderPdf,
   renderQuoteDocumentAsync,
@@ -38,10 +38,14 @@ import {
   type RenderedDocument,
 } from '../services/pdf'
 import type { ItemPrices } from '../services/pricing'
-import { findClient, findQuote, publicClient, sentQuoteDoc, toClient, toQuote } from '../services/quotes'
+import { renderedQuote } from '../services/pdf/quote-file'
+import { findClient, findQuote, publicClient, toClient, toQuote } from '../services/quotes'
 import { clientIp, toOrg } from '../services/session'
 import { getSettings } from '../services/settings'
+import { notePortalPdf } from './public'
 import { toWorkOrder } from './work-orders'
+import { textureDataUrlsForColors } from '../services/textures'
+import { loadQuoteTemplateForRender, templateAssetDataUrls } from '../services/templates'
 
 type Snapshot = Quote & { itemPrices?: ItemPrices }
 
@@ -113,21 +117,7 @@ export function pdfRoutes(deps: AppDeps) {
     // También desde la papelera: nunca se esconden datos.
     const row = await findQuote(deps.db, org.id, c.req.param('id'), { includeDeleted: true })
     if (!row) throw notFound('No encontramos esa cotización.')
-    const client = await findClient(deps.db, org.id, row.clientId)
-    const clientData = client ? toClient(client) : null
-    // Enviada y sin cambios: las cifras y la fecha de esa revisión (igual que el portal). Editada
-    // después: borrador de la revisión siguiente, recalculado y sin fecha de envío.
-    const sent = await sentQuoteDoc(deps.db, row)
-    const { sentAt: _sentAt, ...unsent } = toQuote(row, clientData)
-    void _sentAt
-    const quote: Quote = sent.kind === 'draft' ? { ...unsent, revision: sent.revision } : toQuote(row, clientData)
-    const pinned = sent.kind === 'sent' ? { ...(sent.itemPrices ? { itemPrices: sent.itemPrices } : {}), ...(sent.totals ? { totals: sent.totals } : {}), date: sent.date } : {}
-    const settings = await getSettings(deps.db, org.id)
-    const { catalog } = await deps.catalogs.effective(org.id, { onlyEnabled: false, kerf: settings.cut.kerf })
-    const portalUrl = row.shareToken && row.revision > 0 ? `${deps.config.appUrl}/c/${row.shareToken}` : undefined
-    const data = buildQuoteDoc({ quote, org: toOrg(org), catalog, settings, client: clientData, portalUrl, ...pinned })
-    const template = pickQuoteTemplate(c.req.query('template'), data.prefs.quoteTemplate)
-    return respondDocument(c, deps, await renderQuoteDocumentAsync(data, template))
+    return respondDocument(c, deps, await renderedQuote(deps, org, row, c.req.query('template')))
   })
 
   app.get('/work-orders/:id/pdf', auth, async (c) => {
@@ -179,6 +169,36 @@ export function pdfRoutes(deps: AppDeps) {
         ...workshopRenderOptionsFromQuery((name) => c.req.query(name)),
       }),
     )
+  })
+
+  // Los cortes de una cotización sin OT: se calculan al vuelo y no se guarda nada.
+  app.get('/quotes/:id/cuts/pdf', auth, async (c) => {
+    const { org, role } = c.get('auth')
+    const quoteRow = await findQuote(deps.db, org.id, c.req.param('id'), { includeDeleted: true })
+    if (!quoteRow) throw notFound('No encontramos esa cotización.')
+    const kind = c.req.query('doc') === 'cut-order' ? 'cut-order' : 'cuts'
+    const viewer = { role, features: planFeatures(await planOf(deps, org.id)) }
+    const access = workshopDocumentAccess(kind, viewer)
+    if (!access.visible) throw new HttpError(403, 'forbidden', `${access.reason} Pídele al dueño que te lo comparta.`)
+    const client = await findClient(deps.db, org.id, quoteRow.clientId)
+    const clientData = client ? toClient(client) : null
+    const settings = await getSettings(deps.db, org.id)
+    const { catalog } = await deps.catalogs.effective(org.id, { onlyEnabled: false, kerf: settings.cut.kerf })
+    const paperQuery = c.req.query('paper')
+    const quote = toQuote(quoteRow, clientData)
+    const input = buildWorkshopDoc({
+      workOrder: { number: quote.number, fromQuote: true, ...(clientData?.name ? { clientName: clientData.name } : {}) },
+      quote,
+      org: toOrg(org),
+      catalog,
+      settings,
+      client: clientData,
+      viewer,
+      now: deps.now(),
+      ...(paperQuery === 'a4' || paperQuery === 'letter' ? { paper: paperQuery } : {}),
+    })
+    const { parts } = workshopRenderOptionsFromQuery((name) => c.req.query(name))
+    return respondDocument(c, deps, await renderWorkshopDocumentAsync(input.data, { kind, paper: input.paper, ...(parts ? { parts } : {}) }))
   })
 
   app.get('/catalog/pdf', auth, async (c) => {
@@ -247,12 +267,18 @@ export function publicPdfRoutes(deps: AppDeps) {
     }
     const settings = await getSettings(deps.db, row.orgId)
     const { catalog } = await deps.catalogs.effective(row.orgId, { onlyEnabled: false, kerf: settings.cut.kerf })
+    const textures = await textureDataUrlsForColors(deps, row.orgId, catalog.colors)
+    const loaded = await loadQuoteTemplateForRender(deps.db, row.orgId, { requested: c.req.query('template'), documents: settings.documents, overrides: quote.documentOverrides })
+    const assets = await templateAssetDataUrls(assetStore(deps), row.orgId, loaded.template, settings.documents, quote.documentOverrides)
     const data = buildQuoteDoc(
       {
         quote,
         org: toOrg(orgRow),
         catalog,
         settings,
+        textures,
+        template: loaded.template,
+        assets,
         client: snapshot.client ? publicClient(snapshot.client) : null,
         portalUrl: `${deps.config.appUrl}/c/${token}`,
         ...(itemPrices ? { itemPrices } : {}),
@@ -260,8 +286,9 @@ export function publicPdfRoutes(deps: AppDeps) {
         date: revision.createdAt.toISOString().slice(0, 10),
       },
     )
-    const template = pickQuoteTemplate(c.req.query('template'), quotePrefs(settings, quote).quoteTemplate)
-    return respondDocument(c, deps, await renderQuoteDocumentAsync(data, template))
+    const response = await respondDocument(c, deps, await renderQuoteDocumentAsync(data, loaded.template))
+    if (response.status === 200 && c.req.query('format') !== 'html') await notePortalPdf(c, deps, row, revision, snapshot.client?.name)
+    return response
   })
 
   return app

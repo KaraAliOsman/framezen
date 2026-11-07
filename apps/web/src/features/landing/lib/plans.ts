@@ -1,4 +1,6 @@
-import { PLAN_ORDER, PLANS, type Plan } from '@framezen/shared'
+import { PLAN_ORDER, PLANS, type Plan } from '@dekopen/shared'
+import { translate } from '../../../lib/i18n'
+import es from '../i18n/es'
 
 export type BillingPeriod = 'monthly' | 'yearly'
 
@@ -35,9 +37,9 @@ export function maxSavingsPct(): number {
   return Math.max(...PLAN_ORDER.map((code) => quotePlan(PLANS[code], 'yearly').savingsPct))
 }
 
-/** «1 persona», «Hasta 3 personas», «Personas ilimitadas». */
+/** «1 persona», «Hasta 3 personas», «Personas ilimitadas» (en el idioma de la página). */
 export function seatsLabel(seats: number | null): string {
-  if (seats === null) return 'Personas ilimitadas'
-  if (seats === 1) return '1 persona'
-  return `Hasta ${seats} personas`
+  if (seats === null) return translate(es, 'plans.seats.unlimited')
+  if (seats === 1) return translate(es, 'plans.seats.one')
+  return translate(es, 'plans.seats.upTo', { count: seats })
 }

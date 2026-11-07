@@ -72,7 +72,7 @@ export interface RenderSliceOptions {
  * raíz de los documentos de taller). El render por tramos dibuja el contenedor con un marcador en el
  * lugar de los hijos y luego cada hijo por separado. Los componentes sin hooks no necesitan marca.
  */
-export const RENDER_SLOT: unique symbol = Symbol.for('framezen.documents.renderSlot')
+export const RENDER_SLOT: unique symbol = Symbol.for('dekopen.documents.renderSlot')
 
 /** Contenedores HTML que se pueden partir sin cambiar el resultado (nunca style, script, select, textarea…). */
 const SPLIT_TAGS = new Set(['div', 'section', 'article', 'main', 'header', 'footer', 'aside', 'nav', 'ul', 'ol', 'table', 'thead', 'tbody', 'tfoot', 'figure'])

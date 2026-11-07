@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { Catalog } from '@framezen/engine'
-import type { PriceOverride } from '@framezen/shared'
+import type { Catalog } from '@dekopen/engine'
+import type { PriceOverride } from '@dekopen/shared'
 import {
   activeFilterCount,
   applyOverridesToCatalog,
@@ -84,6 +84,25 @@ describe('filas de precios', () => {
 
   it('cuenta los que están en $0 por familia', () => {
     expect(missingByFamily(buildPriceRows(catalog))).toEqual({ profile: 1, reinforcement: 0, hardware: 0, accessory: 1, glass: 0 })
+  })
+
+  it('un color propio que hereda el precio («Mismo precio») no suma faltantes aparte', () => {
+    const offered: Catalog = { ...catalog, lines: catalog.lines.map((l) => ({ ...l, profiles: { frame: 'andes.s60.marco', sash: 'andes.s60.hoja' } })) }
+    const withCustom: Catalog = {
+      ...offered,
+      colors: [...offered.colors, { id: 'custom-crema', name: 'Crema', hex: '#EEE8D5', priceFrom: { factor: 1, colorId: 'blanco' } }],
+      lines: offered.lines.map((l) => ({ ...l, colorIds: [...l.colorIds, 'custom-crema'] })),
+      // El servidor ya copió el precio del blanco donde existe; la hoja no tiene precio en blanco.
+      profiles: offered.profiles.map((p) => (p.id === 'andes.s60.marco' ? { ...p, priceByColor: { ...p.priceByColor, 'custom-crema': 17100 } } : p)),
+    }
+    const rows = buildPriceRows(withCustom)
+    expect(missingByFamily(rows)).toEqual(missingByFamily(buildPriceRows(offered)))
+    const sashCrema = rows.find((r) => r.id === 'andes.s60.hoja' && r.colorId === 'custom-crema')!
+    expect(sashCrema).toMatchObject({ price: 0, inherited: true })
+    expect(filterRows(rows, { ...EMPTY_FILTERS, missing: true }).some((r) => r.colorId === 'custom-crema')).toBe(false)
+    // Un color propio con precio manual (sin herencia) sí cuenta lo que le falta.
+    const manual: Catalog = { ...withCustom, colors: withCustom.colors.map((c) => (c.id === 'custom-crema' ? { id: c.id, name: c.name, hex: c.hex } : c)) }
+    expect(missingByFamily(buildPriceRows(manual)).profile).toBe(missingByFamily(rows).profile + 1)
   })
 
   it('nombra las unidades de compra en lenguaje de taller', () => {

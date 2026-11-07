@@ -2,7 +2,7 @@
  * Prueba de humo con el motor: cada tipología de cada línea del catálogo de ejemplo
  * se puede dibujar, despiezar y cotizar con precio, herrajes y sin errores.
  */
-import { computeBom, createDesign, priceItem } from '@framezen/engine'
+import { computeBom, createDesign, priceItem } from '@dekopen/engine'
 import { describe, expect, it } from 'vitest'
 import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '../src/index'
 

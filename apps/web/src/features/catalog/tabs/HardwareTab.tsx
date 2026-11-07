@@ -1,48 +1,45 @@
-import { useMemo, useState } from 'react'
-import { ArrowUpRight } from 'lucide-react'
-import type { AccessoryRule, Catalog, ColorVariants, HardwareRule, Item, Line, OpeningKind } from '@framezen/engine'
-import { formatCLP } from '@framezen/engine'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
+import { ArrowUpRight, Package, type LucideIcon } from 'lucide-react'
+import type { AccessoryRule, Catalog, ColorVariants, ExtraKind, HardwareRule, Item, Line, OpeningKind } from '@dekopen/engine'
+import { INSECT_SCREEN_TYPES, ROLLER_SHUTTER_OPERATIONS, ROLLER_SHUTTER_TYPES } from '@dekopen/engine'
 import { cn } from '../../../lib/cn'
-import { formatNumber } from '../../../lib/format'
-import { Card, EmptyState, Select, Skeleton } from '../../../ui'
-import { LINE_KIND_LABEL } from '../model/labels'
+import { useFormat, useGlossary, useT, type GlossaryHelpers } from '../../../lib/i18n'
+import { EmptyState, Select, Skeleton } from '../../../ui'
+import { IconInsectScreen, IconOpeningSliding, IconRollerShutter, IconSill, OPENING_ICONS } from '../../../ui/icons'
+import es from '../i18n/es'
 import { itemUnitLabel } from '../model/prices'
 import { SectionTitle } from '../parts'
 
-const OPENING_LABEL: Record<OpeningKind, string> = {
-  fixed: 'Paño fijo',
-  casement: 'Abatir',
-  tilt_turn: 'Oscilobatiente',
-  tilt: 'Oscilante',
-  awning: 'Proyectante',
-  door: 'Puerta',
+type T = ReturnType<typeof useT<typeof es>>
+type Fmt = ReturnType<typeof useFormat>
+
+/** Orden de las aperturas en la tabla (de la más común a la más especial). */
+const OPENING_ORDER: OpeningKind[] = ['fixed', 'casement', 'tilt_turn', 'tilt', 'awning', 'door', 'pivot_v', 'pivot_h', 'tilt_slide', 'parallel_slide', 'folding']
+const EXTRA_ORDER: ExtraKind[] = ['rollerShutter', 'insectScreen', 'sill', 'threshold']
+const EXTRA_ICON: Record<ExtraKind, LucideIcon> = { rollerShutter: IconRollerShutter, insectScreen: IconInsectScreen, sill: IconSill, threshold: IconSill }
+
+function openingsKey(rule: HardwareRule): string {
+  return [...rule.openings].sort((a, b) => OPENING_ORDER.indexOf(a) - OPENING_ORDER.indexOf(b)).join('+')
 }
 
-const PER_LABEL: Record<AccessoryRule['per'], string> = {
-  window: 'por ventana',
-  sash: 'por hoja',
-  mullion: 'por travesaño',
-  glass_m: 'por metro de vidrio',
-  frame_m: 'por metro de marco',
-  reinforcement_m: 'por metro de refuerzo',
-  perimeter_m: 'por metro de perímetro',
+function openingsText(rule: HardwareRule, line: Line, t: T, g: GlossaryHelpers): string {
+  if (!rule.openings.length) return line.kind === 'sliding' ? t('hardware.movingSash') : t('hardware.anySash')
+  return rule.openings.map((o) => g.opening(o)).join(', ')
 }
 
-function openingsText(rule: HardwareRule, line: Line): string {
-  if (!rule.openings.length) return line.kind === 'sliding' ? 'Hoja móvil' : 'Toda hoja que abre'
-  return rule.openings.map((o) => OPENING_LABEL[o] ?? o).join(', ')
-}
-
-function range(min?: number, max?: number): string | null {
+function range(min: number | undefined, max: number | undefined, t: T, fmt: Fmt): string | null {
+  const mm = (n: number) => fmt.mm(Math.round(n), { unit: true })
   if (min === undefined && max === undefined) return null
-  if (min !== undefined && max !== undefined) return `${formatNumber(Math.round(min))}–${formatNumber(Math.round(max))} mm`
-  if (min !== undefined) return `desde ${formatNumber(Math.round(min))} mm`
-  return `hasta ${formatNumber(Math.round(max!))} mm`
+  if (min !== undefined && max !== undefined) return t('hardware.rangeBoth', { min: fmt.mm(Math.round(min)), max: mm(max) })
+  if (min !== undefined) return t('hardware.rangeFrom', { min: mm(min) })
+  return t('hardware.rangeTo', { max: mm(max!) })
 }
 
-function sizeText(rule: HardwareRule): string {
-  const parts = [range(rule.minHeight, rule.maxHeight) && `alto ${range(rule.minHeight, rule.maxHeight)}`, range(rule.minWidth, rule.maxWidth) && `ancho ${range(rule.minWidth, rule.maxWidth)}`].filter(Boolean)
-  return parts.length ? parts.join(' · ') : 'Cualquier medida'
+function sizeText(rule: HardwareRule, t: T, fmt: Fmt): string {
+  const height = range(rule.minHeight, rule.maxHeight, t, fmt)
+  const width = range(rule.minWidth, rule.maxWidth, t, fmt)
+  const parts = [height && t('hardware.height', { range: height }), width && t('hardware.width', { range: width })].filter(Boolean)
+  return parts.length ? parts.join(' · ') : t('hardware.anySize')
 }
 
 /**
@@ -59,29 +56,45 @@ export function variantsText(rule: ColorVariants, items: ReadonlyMap<string, Ite
   return groups.size ? [...groups].map(([name, colors]) => `${colors.join(', ')}: ${name}`).join('\n') : undefined
 }
 
-function qtyText(rule: HardwareRule): string {
-  const base = formatNumber(rule.qty, 2)
-  return rule.perStep ? `${base} + ${formatNumber(rule.perStep.qty, 2)} cada ${formatNumber(rule.perStep.stepMm)} mm` : base
+function qtyText(rule: HardwareRule, t: T, fmt: Fmt): string {
+  const base = fmt.number(rule.qty, { maxDecimals: 2 })
+  return rule.perStep ? t('hardware.qtyStep', { qty: base, step: fmt.number(rule.perStep.qty, { maxDecimals: 2 }), mm: fmt.mm(rule.perStep.stepMm, { unit: true }) }) : base
+}
+
+/** Condiciones extra de un herraje: hoja activa o pasiva, secuencia y sistema de corredera. */
+function hardwareQualifiers(rule: HardwareRule, g: GlossaryHelpers): string[] {
+  const out: string[] = []
+  if (rule.leaf) out.push(g.term(`leafRole.${rule.leaf}`))
+  if (rule.sequence) out.push(g.term(`sequence.${rule.sequence}`))
+  if (rule.systems?.includes('lift_slide')) out.push(g.term('sliding.system.lift_slide'))
+  return out
+}
+
+function isOneOf<T extends string>(list: readonly T[], value: string): value is T {
+  return (list as readonly string[]).includes(value)
+}
+
+/** Nombre de una variante de extra («Motor», «Plisado», «Monoblock…») en el idioma de la interfaz. */
+function variantLabel(extra: ExtraKind | undefined, value: string, g: GlossaryHelpers): string {
+  if (extra === 'rollerShutter') {
+    if (isOneOf(ROLLER_SHUTTER_TYPES, value)) return g.term(`accessory.rollerShutterType.${value}`)
+    if (isOneOf(ROLLER_SHUTTER_OPERATIONS, value)) return g.term(`accessory.rollerShutterOperation.${value}`)
+  }
+  if (extra === 'insectScreen' && isOneOf(INSECT_SCREEN_TYPES, value)) return g.term(`accessory.insectScreenType.${value}`)
+  return value
 }
 
 /** Qué herrajes y accesorios lleva cada línea, según apertura y tamaño de la hoja. */
-export function HardwareTab({
-  catalog,
-  loading,
-  onEditPrice,
-}: {
-  catalog: Catalog | undefined
-  loading: boolean
-  onEditPrice: (item: Item) => void
-}) {
+export function HardwareTab({ catalog, loading, onEditPrice }: { catalog: Catalog | undefined; loading: boolean; onEditPrice: (item: Item) => void }) {
+  const t = useT(es)
+  const g = useGlossary()
+  const fmt = useFormat()
   const brands = useMemo(() => new Map((catalog?.brands ?? []).map((b) => [b.id, b.name])), [catalog])
   const lines = useMemo(
     () =>
       [...(catalog?.lines ?? [])].sort(
         (a, b) =>
-          (brands.get(a.brandId) ?? '').localeCompare(brands.get(b.brandId) ?? '', 'es') ||
-          a.kind.localeCompare(b.kind) ||
-          a.name.localeCompare(b.name, 'es', { numeric: true }),
+          (brands.get(a.brandId) ?? '').localeCompare(brands.get(b.brandId) ?? '', 'es') || a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name, 'es', { numeric: true }),
       ),
     [catalog, brands],
   )
@@ -91,66 +104,91 @@ export function HardwareTab({
   const items = useMemo(() => new Map((catalog?.items ?? []).map((i) => [i.id, i])), [catalog])
   const colorNames = useMemo(() => new Map((catalog?.colors ?? []).map((c) => [c.id, c.name])), [catalog])
 
-  if (loading || !catalog) return <Skeleton className="h-80 rounded-lg" />
+  if (loading || !catalog) return <Skeleton className="h-80 rounded-md" />
   if (!line) {
-    return (
-      <Card>
-        <EmptyState size="compact" sketch="tilt_turn" title="Activa una marca de perfiles" description="Aquí verás qué herrajes y accesorios lleva cada línea, según la apertura y el tamaño de la hoja." />
-      </Card>
-    )
+    return <EmptyState size="compact" title={t('hardware.emptyTitle')} description={t('hardware.emptyDescription')} />
   }
 
-  const hardware = [...line.hardwareRules].sort((a, b) => openingsText(a, line).localeCompare(openingsText(b, line), 'es') || (a.minHeight ?? 0) - (b.minHeight ?? 0))
+  const hardware = [...line.hardwareRules].sort(
+    (a, b) =>
+      OPENING_ORDER.indexOf(a.openings[0] ?? 'fixed') - OPENING_ORDER.indexOf(b.openings[0] ?? 'fixed') ||
+      openingsKey(a).localeCompare(openingsKey(b)) ||
+      (a.minHeight ?? a.minWidth ?? 0) - (b.minHeight ?? b.minWidth ?? 0),
+  )
   const missingHw = hardware.filter((r) => !(items.get(r.itemId)?.price ?? 0)).length
   const missingAcc = line.accessoryRules.filter((r) => !(items.get(r.itemId)?.price ?? 0)).length
 
+  // Herrajes agrupados por apertura (cada grupo con su ícono y su nombre del glosario).
+  const hwGroups: RuleGroup[] = []
+  for (const rule of hardware) {
+    const key = openingsKey(rule)
+    let group = hwGroups.find((entry) => entry.key === key)
+    if (!group) {
+      const first = rule.openings[0]
+      group = {
+        key,
+        title: openingsText(rule, line, t, g),
+        icon: first ? OPENING_ICONS[first] : line.kind === 'sliding' ? IconOpeningSliding : Package,
+        rows: [],
+      }
+      hwGroups.push(group)
+    }
+    const item = items.get(rule.itemId)
+    group.rows.push({
+      id: rule.id,
+      item,
+      variants: variantsText(rule, items, colorNames),
+      qualifiers: hardwareQualifiers(rule, g),
+      cells: [sizeText(rule, t, fmt), qtyText(rule, t, fmt)],
+    })
+  }
+
+  // Accesorios: los de toda ventana y, aparte, los extras (persiana, mosquitero…) que solo se cotizan si la ventana los lleva.
+  const accRow = (rule: AccessoryRule): RuleRow => ({
+    id: rule.id,
+    item: items.get(rule.itemId),
+    variants: variantsText(rule, items, colorNames),
+    qualifiers: rule.variants?.length ? [t('hardware.onlyVariants', { variants: fmt.list(rule.variants.map((v) => variantLabel(rule.extra, v, g)), 'disjunction') })] : [],
+    cells: [t('hardware.perQty', { qty: fmt.number(rule.qty, { maxDecimals: 2 }), per: t(`hardware.per.${rule.per}`) })],
+  })
+  const accGroups: RuleGroup[] = []
+  const always = line.accessoryRules.filter((rule) => !rule.extra)
+  if (always.length) accGroups.push({ key: 'always', title: t('hardware.everyWindow'), icon: Package, rows: always.map(accRow) })
+  for (const extra of EXTRA_ORDER) {
+    const rules = line.accessoryRules.filter((rule) => rule.extra === extra)
+    if (rules.length) accGroups.push({ key: extra, title: g.term(`accessory.${extra}`), icon: EXTRA_ICON[extra], rows: rules.map(accRow), extra: true })
+  }
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-10">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <SectionTitle
-          title="Herrajes y accesorios por línea"
-          description="Lo que el motor agrega solo a cada ventana: según la apertura y el alto o ancho de la hoja. Si un artículo no tiene precio, se cotiza en $0 y te avisamos."
-        />
+        <SectionTitle title={t('hardware.title')} />
         <Select
-          aria-label="Línea"
+          aria-label={t('hardware.lineLabel')}
           value={line.id}
           onValueChange={setLineId}
           className="sm:w-72"
-          options={lines.map((l) => ({ value: l.id, label: `${l.name}`, description: `${brands.get(l.brandId) ?? ''} · ${LINE_KIND_LABEL[l.kind]}` }))}
+          options={lines.map((l) => ({ value: l.id, label: l.name, description: t('common.lineAndBrand', { brand: brands.get(l.brandId) ?? '', kind: g.term(`lineKind.${l.kind}`) }) }))}
         />
       </div>
 
       <RuleSection
-        title="Herrajes"
-        subtitle={`${formatNumber(hardware.length)} reglas${missingHw ? ` · ${missingHw} sin precio` : ''}`}
-        empty="Esta línea no trae reglas de herrajes propias: el motor usa los herrajes genéricos de Framezen."
-        rows={hardware.map((rule) => {
-          const item = items.get(rule.itemId)
-          return {
-            id: rule.id,
-            item,
-            itemId: rule.itemId,
-            variants: variantsText(rule, items, colorNames),
-            cells: [openingsText(rule, line), sizeText(rule), qtyText(rule)],
-          }
-        })}
-        headers={[{ label: 'Apertura', wide: true }, { label: 'Tamaño de hoja', nowrap: true }, { label: 'Cantidad' }]}
+        title={t('hardware.hardwareTitle')}
+        subtitle={missingHw ? t('hardware.rulesMissing', { count: hardware.length, missing: fmt.number(missingHw) }) : t('hardware.rules', { count: hardware.length })}
+        empty={t('hardware.hardwareEmpty')}
+        groups={hwGroups}
+        headers={[{ label: t('hardware.colSize'), nowrap: true }, { label: t('hardware.colQty') }]}
         onEditPrice={onEditPrice}
       />
 
       <RuleSection
-        title="Accesorios"
-        subtitle={`${formatNumber(line.accessoryRules.length)} reglas${missingAcc ? ` · ${missingAcc} sin precio` : ''}`}
-        empty="Esta línea no trae accesorios por regla."
-        rows={line.accessoryRules.map((rule) => ({
-          id: rule.id,
-          item: items.get(rule.itemId),
-          itemId: rule.itemId,
-          variants: variantsText(rule, items, colorNames),
-          cells: [`${formatNumber(rule.qty, 2)} ${PER_LABEL[rule.per] ?? ''}`],
-        }))}
-        headers={[{ label: 'Cantidad' }]}
+        title={t('hardware.accessoriesTitle')}
+        subtitle={missingAcc ? t('hardware.rulesMissing', { count: line.accessoryRules.length, missing: fmt.number(missingAcc) }) : t('hardware.rules', { count: line.accessoryRules.length })}
+        empty={t('hardware.accessoriesEmpty')}
+        groups={accGroups}
+        headers={[{ label: t('hardware.colQty') }]}
         onEditPrice={onEditPrice}
+        note={accGroups.some((group) => group.extra) ? t('hardware.extrasTitle') : undefined}
       />
     </div>
   )
@@ -158,9 +196,11 @@ export function HardwareTab({
 
 /** Nota atenuada con las variantes por color en el tooltip (y para lectores de pantalla). */
 function VariantNote({ text, className }: { text: string; className?: string }) {
+  const t = useT(es)
   return (
-    <span className={cn('shrink-0 text-meta leading-4 text-paper-600', className)} title={text}>
-      · cambia con el color<span className="sr-only">: {text}</span>
+    <span className={cn('shrink-0 text-meta text-fg-muted', className)} title={text}>
+      {t('hardware.variesByColor')}
+      <span className="sr-only">: {text}</span>
     </span>
   )
 }
@@ -168,21 +208,25 @@ function VariantNote({ text, className }: { text: string; className?: string }) 
 interface RuleRow {
   id: string
   item: Item | undefined
-  itemId: string
   /** Artículo que se usa en otros colores de ventana (tooltip); vacío = el mismo en todos. */
   variants?: string
+  /** Condiciones extra («Hoja pasiva», «Solo motor»…). */
+  qualifiers: string[]
   cells: string[]
 }
 
-/**
- * Columna de datos. `wide`: columna ancha (aperturas) que parte línea en vez de quitarle espacio al
- * artículo; `nowrap`: nunca parte línea (medidas). El resto parte línea solo si la tabla es angosta.
- * Los cortes usan el ancho de la tabla (container queries), no el de la pantalla: así responden igual
- * con la barra lateral abierta o cerrada.
- */
+interface RuleGroup {
+  key: string
+  title: string
+  icon: LucideIcon
+  rows: RuleRow[]
+  /** Extra de la ventana (persiana, mosquitero…): solo se cotiza si la ventana lo lleva. */
+  extra?: boolean
+}
+
+/** Columna de datos. `nowrap`: nunca parte línea (medidas). El resto parte línea solo si la tabla es angosta. */
 interface RuleColumn {
   label: string
-  wide?: boolean
   nowrap?: boolean
 }
 
@@ -190,96 +234,124 @@ function RuleSection({
   title,
   subtitle,
   empty,
-  rows,
+  groups,
   headers,
   onEditPrice,
+  note,
 }: {
   title: string
   subtitle: string
   empty: string
-  rows: RuleRow[]
+  groups: RuleGroup[]
   headers: RuleColumn[]
   onEditPrice: (item: Item) => void
+  note?: ReactNode
 }) {
+  const t = useT(es)
+  const fmt = useFormat()
+  const columns = headers.length + 2
   return (
-    <section className="@container overflow-hidden rounded-lg border border-paper-200 bg-paper-0">
-      <header className="flex items-baseline justify-between gap-3 border-b border-paper-200 px-4 py-3">
-        <h3 className="font-semibold text-paper-900">{title}</h3>
-        <span className="text-[13px] text-paper-600">{subtitle}</span>
+    <section className="@container">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 pb-2">
+        <h3 className="text-h4 font-medium text-fg-strong">{title}</h3>
+        <span className="text-table text-fg-muted">{subtitle}</span>
       </header>
-      {rows.length === 0 ? (
-        <p className="px-4 py-6 text-[13px] text-paper-600">{empty}</p>
+      {groups.length === 0 ? (
+        <p className="py-2 text-table text-fg-muted">{empty}</p>
       ) : (
-        <div className="scrollbar-quiet overflow-x-auto">
-          <table className="w-full min-w-[640px] text-table">
+        <div className="scrollbar-quiet -mx-3 overflow-x-auto rounded-panel bg-plate px-3 shadow-plate">
+          <table className="w-full min-w-[600px] text-table">
             <thead>
-              <tr className="h-9 border-b border-paper-200 bg-paper-50 text-meta text-paper-600">
-                <th scope="col" className="px-4 text-left font-medium">
-                  Artículo
+              <tr className="h-9 border-b border-divider text-table text-fg-muted">
+                <th scope="col" className="pr-4 text-left font-normal">
+                  {t('hardware.colItem')}
                 </th>
                 {headers.map((h) => (
-                  <th key={h.label} scope="col" className={cn('px-3 text-left font-medium whitespace-nowrap', h.wide && 'w-[112px] min-w-[112px] @min-[1000px]:w-[180px] @min-[1000px]:min-w-[180px]')}>
+                  <th key={h.label} scope="col" className="px-3 text-left font-normal whitespace-nowrap">
                     {h.label}
                   </th>
                 ))}
-                <th scope="col" className="px-4 text-right font-medium">Precio</th>
+                <th scope="col" className="pl-4 text-right font-normal">
+                  {t('hardware.colPrice')}
+                </th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
-                const price = row.item?.price ?? 0
+              {groups.map((group, gi) => {
+                const Icon = group.icon
+                const firstExtra = group.extra && !groups.slice(0, gi).some((other) => other.extra)
                 return (
-                  <tr key={row.id} className="h-10 border-b border-paper-200 last:border-b-0">
-                    {/* El artículo se lleva el espacio que sobra: es lo que se lee. En tablas angostas el código va debajo del nombre. */}
-                    <td className="w-full min-w-[220px] max-w-0 px-4 py-1.5 @min-[1000px]:min-w-[260px] @min-[1000px]:py-0">
-                      <span className="flex min-w-0 flex-col-reverse @min-[1000px]:flex-row @min-[1000px]:items-baseline @min-[1000px]:gap-2">
-                        {/* «Cambia con el color»: junto al código en tablas angostas (no le quita espacio al nombre) y tras el nombre en las anchas. */}
-                        {row.item?.code || row.variants ? (
-                          <span className="flex min-w-0 items-baseline gap-1.5 @min-[1000px]:shrink-0">
-                            {row.item?.code ? (
-                              <span className="truncate font-mono text-[11px] leading-4 text-paper-600 @min-[1000px]:text-[12px]">{row.item.code}</span>
-                            ) : null}
-                            {row.variants ? <VariantNote text={row.variants} className="@min-[1000px]:hidden" /> : null}
-                          </span>
-                        ) : null}
-                        <span className="flex min-w-0 items-baseline gap-1.5">
-                          <span className="truncate text-paper-900" title={row.item?.name}>
-                            {row.item?.name ?? 'Artículo que ya no está en el catálogo'}
-                          </span>
-                          {row.variants ? <VariantNote text={row.variants} className="hidden @min-[1000px]:inline" /> : null}
+                  <Fragment key={group.key}>
+                    {firstExtra && note ? (
+                      <tr className="border-b border-divider">
+                        <td colSpan={columns} className="pt-4 pb-1.5 text-table text-fg-muted">
+                          {note}
+                        </td>
+                      </tr>
+                    ) : null}
+                    <tr className="h-10 border-b border-divider">
+                      <th scope="colgroup" colSpan={columns} className="pt-2 text-left font-medium text-fg-strong">
+                        <span className="flex items-center gap-2">
+                          <Icon aria-hidden className="size-4 text-fg-muted" strokeWidth={1.75} />
+                          <span className="truncate">{group.title}</span>
+                          <span className="font-normal text-fg-faint tabular">· {t('hardware.sashGroupCount', { count: group.rows.length })}</span>
                         </span>
-                      </span>
-                    </td>
-                    {row.cells.map((cell, i) => (
-                      <td
-                        key={i}
-                        className={cn(
-                          'px-3 py-1.5 leading-[18px] text-paper-900 tabular @min-[1000px]:py-2',
-                          headers[i]?.nowrap ? 'whitespace-nowrap' : !headers[i]?.wide && '@min-[800px]:whitespace-nowrap',
-                        )}
-                      >
-                        {cell}
-                      </td>
-                    ))}
-                    <td className="px-4 text-right whitespace-nowrap">
-                      {row.item ? (
-                        <button
-                          type="button"
-                          onClick={() => onEditPrice(row.item!)}
-                          className={cn(
-                            'group inline-flex items-center gap-1 rounded-xs tabular hover:text-ink-700',
-                            price > 0 ? 'text-paper-900' : 'text-warn-600',
-                          )}
-                          title={`Cambiar precio (${itemUnitLabel(row.item)})`}
-                        >
-                          {price > 0 ? formatCLP(price) : 'Sin precio'}
-                          <ArrowUpRight aria-hidden className="size-3.5 opacity-0 transition-opacity group-hover:opacity-100" strokeWidth={1.75} />
-                        </button>
-                      ) : (
-                        <span className="text-paper-600">—</span>
-                      )}
-                    </td>
-                  </tr>
+                      </th>
+                    </tr>
+                    {group.rows.map((row) => {
+                      const price = row.item?.price ?? 0
+                      return (
+                        <tr key={row.id} className="h-9 border-b border-divider last:border-b-0">
+                          {/* El artículo se lleva el espacio que sobra: es lo que se lee. En tablas angostas el código va debajo del nombre. */}
+                          <td className="w-full max-w-0 min-w-[220px] py-1 pr-4 @min-[1000px]:min-w-[260px]">
+                            <span className="flex min-w-0 flex-col-reverse @min-[1000px]:flex-row @min-[1000px]:items-baseline @min-[1000px]:gap-2">
+                              {/* «Cambia con el color»: junto al código en tablas angostas (no le quita espacio al nombre) y tras el nombre en las anchas. */}
+                              {row.item?.code || row.variants ? (
+                                <span className="flex min-w-0 items-baseline gap-1.5 @min-[1000px]:shrink-0">
+                                  {row.item?.code ? <span title={row.item.code} className="code-id truncate text-meta text-fg-muted @min-[1000px]:w-[5.5rem]">{row.item.code}</span> : null}
+                                  {row.variants ? <VariantNote text={row.variants} className="@min-[1000px]:hidden" /> : null}
+                                </span>
+                              ) : null}
+                              <span className="flex min-w-0 items-baseline gap-1.5">
+                                <span className="truncate text-fg" title={row.item?.name}>
+                                  {row.item?.name ?? t('hardware.gone')}
+                                </span>
+                                {row.variants ? <VariantNote text={row.variants} className="hidden @min-[1000px]:inline" /> : null}
+                                {row.qualifiers.map((q) => (
+                                  <span key={q} className="shrink-0 text-meta text-fg-muted">
+                                    {q}
+                                  </span>
+                                ))}
+                              </span>
+                            </span>
+                          </td>
+                          {row.cells.map((cell, i) => (
+                            <td
+                              key={i}
+                              className={cn('px-3 py-1 text-fg tabular', headers[i]?.nowrap ? 'whitespace-nowrap' : '@min-[800px]:whitespace-nowrap')}
+                            >
+                              {cell}
+                            </td>
+                          ))}
+                          <td className="pl-4 text-right whitespace-nowrap">
+                            {row.item ? (
+                              <button
+                                type="button"
+                                onClick={() => onEditPrice(row.item!)}
+                                className={cn('group inline-flex min-h-8 items-center gap-1 rounded-xs tabular hover:text-accent-ink', price > 0 ? 'text-fg' : 'text-warning')}
+                                title={t('hardware.changePrice', { unit: itemUnitLabel(row.item, t.locale) })}
+                              >
+                                {price > 0 ? fmt.money(price) : t('common.noPrice')}
+                                <ArrowUpRight aria-hidden className="size-3.5 opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-visible:opacity-100" strokeWidth={1.75} />
+                              </button>
+                            ) : (
+                              <span className="text-fg-muted">{t('common.noneDash')}</span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </Fragment>
                 )
               })}
             </tbody>

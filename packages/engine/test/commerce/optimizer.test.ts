@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { sanitizeCut } from '../../src/commerce/defaults'
 import { optimizeCuts, type CutPieceInput } from '../../src/commerce/optimizer'
 import type { CutSettings } from '../../src/types'
 
@@ -141,9 +142,10 @@ describe('optimizeCuts · comportamiento', () => {
 
   it('ignora piezas inválidas con aviso y nunca lanza', () => {
     const plan = optimizeCuts([piece(0), piece(Number.NaN), piece(1000, 0), piece(1000, 1)], { barLength: -1, kerf: -3 } as CutSettings)
-    expect(plan.totalPieces).toBe(1)
     expect(plan.warnings.some((w) => w.code === 'invalid_piece')).toBe(true)
-    expect(plan.groups[0].bars[0].barLength).toBe(5800)
+    // Barra inválida: no se reemplaza por un largo inventado.
+    expect(plan.groups[0].bars).toEqual([])
+    expect(plan.warnings.some((w) => w.code === 'bar_length_unknown')).toBe(true)
   })
 
   it('grupos grandes usan BFD y responden rápido', () => {
@@ -154,5 +156,23 @@ describe('optimizeCuts · comportamiento', () => {
     const total = many.reduce((s, p) => s + (p.length + 4) * p.qty, 0)
     expect(plan.totalBars).toBeGreaterThanOrEqual(Math.ceil(total / 5770))
     expect(plan.totalPieces).toBe(120)
+  })
+})
+
+describe('sin largo de barra', () => {
+  it('no supone una barra: avisa y no inventa barras', () => {
+    expect(sanitizeCut({}).barLength).toBe(0)
+    expect(sanitizeCut({ barLength: -1 }).barLength).toBe(0)
+    expect(sanitizeCut({ barLength: 6000 }).barLength).toBe(6000)
+    const plan = optimizeCuts([{ key: 'p', code: 'PRO1', length: 1000, qty: 2, label: '' }], {})
+    expect(plan.groups.flatMap((g) => g.bars)).toEqual([])
+    expect(plan.warnings.map((w) => w.code)).toEqual(['bar_length_unknown'])
+    expect(plan.warnings[0].params).toEqual({ profile: 'PRO1' })
+  })
+
+  it('el largo del perfil basta aunque Ajustes no traiga', () => {
+    const plan = optimizeCuts([{ key: 'p', length: 1000, qty: 2, barLength: 6000, label: '' }], {})
+    expect(plan.groups[0].bars).toHaveLength(1)
+    expect(plan.warnings).toEqual([])
   })
 })

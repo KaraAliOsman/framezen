@@ -172,19 +172,23 @@ describe('priceItem · reglas', () => {
     expect(glass.total).toBe(Math.round(0.7 * 10000))
   })
 
-  it('precio $0 o faltante = aviso (nunca error) y la línea se mantiene en $0', () => {
+  it('precio $0 o faltante = aviso (nunca error), la línea se mantiene en $0 y el ítem queda fuera del total', () => {
     const b = bom({
       cuts: [cut({ profileId: 'pro03', code: 'PRO03', role: 'mullion', length: 900, colorId: 'winchester' })],
       items: [itemLine({ itemId: 'bisagra', qty: 3 })],
     })
     const price = priceItem(b, design({ colorId: 'winchester' }), makeCatalog(), plain())
     expect(price.warnings.map((w) => w.message)).toEqual([
-      'El perfil PRO03 · Travesaño 80 no tiene precio en Winchester: se cotiza en $0.',
-      'El herraje Bisagra 3D no tiene precio: se cotiza en $0.',
+      'El perfil PRO03 · Travesaño 80 no tiene precio en Winchester: queda fuera del total.',
+      'El herraje Bisagra 3D no tiene precio: queda fuera del total.',
+      'Esta ventana queda fuera del total hasta tener precio: falta PRO03 (Winchester) y 1 más.',
     ])
-    expect(price.warnings.every((w) => w.level === 'warn' && w.code === 'price_missing')).toBe(true)
+    expect(price.warnings.every((w) => w.level === 'warn')).toBe(true)
     expect(price.lines).toHaveLength(2)
     expect(price.materialsTotal).toBe(0)
+    expect(price.unitNet).toBe(0)
+    expect(price.totalNet).toBe(0)
+    expect(price.pending?.map((p) => p.code)).toEqual(['price_missing', 'price_missing'])
   })
 
   it('con muchos faltantes resume en un solo aviso', () => {
@@ -328,5 +332,37 @@ describe('explainPrice', () => {
       ['Tu ganancia (margen 40 %)', 100],
       ['Precio por unidad (neto)', 250],
     ])
+  })
+})
+
+describe('largo de barra: del perfil, luego de Ajustes, nunca inventado', () => {
+  const sinLargo = (): Catalog => {
+    const catalog = makeCatalog()
+    return { ...catalog, profiles: catalog.profiles.map((p) => ({ ...p, barLength: 0 })) }
+  }
+  const piezas = () => {
+    const b = fixedWindowBom()
+    return { ...b, cuts: b.cuts.map((c) => ({ ...c, barLength: 0 })) }
+  }
+
+  it('sin largo en el perfil usa el de Ajustes que llega en `opts.cut`', () => {
+    const a = priceItem(piezas(), design(), sinLargo(), plain(), { cut: { barLength: 6000 } })
+    const b = priceItem(piezas(), design(), sinLargo(), plain(), { cut: { barLength: 3000 } })
+    expect(a.pending).toBeUndefined()
+    expect(b.materials.profiles).toBeCloseTo(a.materials.profiles * 2, -1)
+  })
+
+  it('el largo del perfil manda sobre el de Ajustes', () => {
+    const conLargo = fixedWindowBom()
+    const a = priceItem(conLargo, design(), makeCatalog(), plain(), { cut: { barLength: 3000 } })
+    const b = priceItem(conLargo, design(), makeCatalog(), plain(), { cut: { barLength: 9000 } })
+    expect(a.materials.profiles).toBe(b.materials.profiles)
+  })
+
+  it('sin ninguno no supone 5.800: queda pendiente, fuera del total, y lo avisa', () => {
+    const price = priceItem(piezas(), design(), sinLargo(), plain())
+    expect(price.pending?.length).toBeGreaterThan(0)
+    expect(price.unitNet).toBe(0)
+    expect(price.warnings.map((w) => w.message).join(' ')).toMatch(/largo de barra/)
   })
 })

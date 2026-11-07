@@ -6,9 +6,9 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { SAMPLE_CATALOG } from '@framezen/catalog'
-import type { Catalog, Glass } from '@framezen/engine'
-import type { Me, OrgSettings, Quote, QuoteStats, WorkOrder } from '@framezen/shared'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
+import type { Catalog, Glass } from '@dekopen/engine'
+import type { Me, OrgSettings, Quote, QuoteStats, WorkOrder } from '@dekopen/shared'
 import { quoteRevisions, subscriptions } from '../src/db/schema'
 import { billingAccounts } from '../src/services/billing/tables'
 import { evaluate } from '../src/services/pricing'

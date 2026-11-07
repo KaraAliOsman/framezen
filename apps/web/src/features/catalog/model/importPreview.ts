@@ -1,11 +1,11 @@
 /**
  * Vista previa de una lista «MisPrecios» antes de aplicarla: qué precios cambian (actual → nuevo),
  * qué filas no calzan con el catálogo y cuáles se omiten. Usa el mismo lector y el mismo cruce
- * que el servidor (`@framezen/catalog`), así que lo que ves es lo que se guarda.
+ * que el servidor (`@dekopen/catalog`), así que lo que ves es lo que se guarda.
  */
-import { matchMisPrecios, parseMisPreciosCsv, type MisPreciosRow } from '@framezen/catalog'
-import type { Catalog, Id } from '@framezen/engine'
-import type { PriceOverride } from '@framezen/shared'
+import { matchMisPrecios, parseMisPreciosCsv, type MisPreciosRow } from '@dekopen/catalog'
+import type { Catalog, Id } from '@dekopen/engine'
+import type { PriceOverride } from '@dekopen/shared'
 import { buildPriceRows, overrideKey, type PriceFamily } from './prices'
 
 export interface ImportChange {

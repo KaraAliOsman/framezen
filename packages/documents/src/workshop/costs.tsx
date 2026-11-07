@@ -1,9 +1,10 @@
-import type { MaterialCost } from '@framezen/engine'
+import type { MaterialCost } from '@dekopen/engine'
 import { DocHeader, DocRoot, Meter, Sheet } from './common'
-import { fmtInt, fmtMoney, fmtPct } from './format'
-import { otLabel, windowTitle } from './helpers'
+import { otLabel, quoteTitle, uniqueFooter, windowTitle } from './helpers'
+import { resolveWorkshopLocale, workshopI18n, type WorkshopI18n } from './locale'
 import type { WorkshopDocumentData, WorkshopDocumentProps } from './types'
 
+/** Familias de costo (rótulos en español; en otro idioma, `costFamilyLabel`). */
 export const WORKSHOP_COST_FAMILIES: { id: keyof MaterialCost; label: string }[] = [
   { id: 'profiles', label: 'Perfiles' },
   { id: 'reinforcement', label: 'Refuerzos' },
@@ -12,15 +13,14 @@ export const WORKSHOP_COST_FAMILIES: { id: keyof MaterialCost; label: string }[]
   { id: 'accessories', label: 'Accesorios e insumos' },
 ]
 
+/** Rótulo de una familia de costo en el idioma del documento. */
+export function costFamilyLabel(id: keyof MaterialCost, w: WorkshopI18n = workshopI18n()): string {
+  return w.t(`costs.${id}`)
+}
+
 /** Margen sobre venta en %, o null si no hay venta. */
 function marginPct(cost: number, price: number): number | null {
   return price > 0 ? ((price - cost) / price) * 100 : null
-}
-
-/** Diferencia con signo: «+$89.571» / «−$12.000». */
-function fmtDelta(value: number): string {
-  const r = Math.round(value)
-  return r > 0 ? `+${fmtMoney(r)}` : fmtMoney(r)
 }
 
 export interface CostDocumentProps extends WorkshopDocumentProps {
@@ -80,57 +80,67 @@ export function workshopCostSummary(data: WorkshopDocumentData) {
 }
 
 /** Costos internos de la OT: venta, costo directo y margen (como el editor) y la compra real de materiales. */
-export function CostDocument({ data, paper, lowMarginPct = 20 }: CostDocumentProps) {
-  const footer = `${otLabel(data)} · Costos internos · ${data.quote.title}`
+export function CostDocument({ data, paper, lowMarginPct = 20, locale, currency, taxLabel }: CostDocumentProps) {
+  const w = resolveWorkshopLocale({ locale, currency, taxLabel }, data)
+  const t = w.t
+  const f = w.f
+  const money = f.money
+  /** Diferencia con signo: «+$89.571» / «−$12.000». */
+  const delta = (value: number) => {
+    const r = Math.round(value)
+    return r > 0 ? `+${money(r)}` : money(r)
+  }
+  const footer = uniqueFooter(t('costs.footer', { ot: otLabel(data, w), title: quoteTitle(data, w) }))
   const { sale } = data
   const sum = workshopCostSummary(data)
   const { rows, sold, directCost, margin, families, purchase } = sum
   const hasDiscount = sum.discount > 0
-  const delta = sum.purchaseDelta === null ? 0 : Math.round(sum.purchaseDelta)
+  const diff = sum.purchaseDelta === null ? 0 : Math.round(sum.purchaseDelta)
+  const pctOrDash = (v: number | null) => (v === null ? '—' : f.pct(v))
 
-  const zeroPrice = data.windows.flatMap((w) =>
-    w.bom.warnings.filter((x) => /price|precio/i.test(x.code) || /sin precio|no tiene precio/i.test(x.message)).map((x) => ({ ref: w.ref, message: x.message })),
+  const zeroPrice = data.windows.flatMap((x) =>
+    x.bom.warnings.filter((y) => /price|precio/i.test(y.code) || /sin precio|no tiene precio/i.test(y.message)).map((y) => ({ ref: x.ref, message: w.warning(y) })),
   )
 
   return (
-    <DocRoot data={data} paper={paper} footer={footer} kind="costs">
-      <Sheet footer={footer} footRight="Documento interno">
-        <DocHeader data={data} kicker="Costos internos" meta={<strong>No compartir con el cliente</strong>} />
+    <DocRoot data={data} paper={paper} footer={footer} kind="costs" w={w}>
+      <Sheet footer={footer} footRight={t('costs.internal')}>
+        <DocHeader data={data} kicker={t('costs.kicker')} meta={<strong>{t('costs.dontShare')}</strong>} w={w} />
 
         <div className="fzw-kpis">
           <div className="fzw-kpi">
-            <span>Venta neta</span>
-            <strong>{fmtMoney(sold)}</strong>
-            <em>{hasDiscount ? `tras ${fmtPct(sum.discountPct)} de descuento, sin IVA ni extras` : 'sin IVA ni extras'}</em>
+            <span>{t('costs.netSales')}</span>
+            <strong>{money(sold)}</strong>
+            <em>{hasDiscount ? t('costs.netSalesDiscount', { pct: f.pct(sum.discountPct), tax: w.tax }) : t('costs.netSalesPlain', { tax: w.tax })}</em>
           </div>
           <div className="fzw-kpi">
-            <span>Costo directo</span>
-            <strong>{fmtMoney(directCost)}</strong>
-            <em>{sale && sale.install > 0 ? 'como en el precio, con mano de obra e instalación' : 'como en el precio, con merma y mano de obra'}</em>
+            <span>{t('costs.directCost')}</span>
+            <strong>{money(directCost)}</strong>
+            <em>{sale && sale.install > 0 ? t('costs.directCostInstall') : t('costs.directCostPlain')}</em>
           </div>
           <div className="fzw-kpi">
-            <span>Margen</span>
-            <strong>{margin === null ? '—' : fmtPct(margin)}</strong>
-            <em>{sold > 0 ? `${fmtMoney(sold - directCost)} de utilidad bruta` : 'sin venta'}</em>
+            <span>{t('costs.margin')}</span>
+            <strong>{pctOrDash(margin)}</strong>
+            <em>{sold > 0 ? t('costs.grossProfit', { money: money(sold - directCost) }) : t('costs.noSales')}</em>
           </div>
           {sum.realCost !== null ? (
             <div className="fzw-kpi">
-              <span>Margen con compra real</span>
-              <strong>{sum.realMargin === null ? '—' : fmtPct(sum.realMargin)}</strong>
-              <em>{delta === 0 ? 'la compra calza con el prorrateo' : `${fmtDelta(delta)} por barras completas y envases`}</em>
+              <span>{t('costs.realMargin')}</span>
+              <strong>{pctOrDash(sum.realMargin)}</strong>
+              <em>{diff === 0 ? t('costs.purchaseMatches') : t('costs.purchaseDelta', { delta: delta(diff) })}</em>
             </div>
           ) : (
             <div className="fzw-kpi">
-              <span>Compra real de materiales</span>
-              <strong>{fmtMoney(purchase)}</strong>
-              <em>barras completas y envases</em>
+              <span>{t('costs.purchase')}</span>
+              <strong>{money(purchase)}</strong>
+              <em>{t('costs.purchaseHint')}</em>
             </div>
           )}
         </div>
 
         {zeroPrice.length > 0 ? (
           <div className="fzw-callout" role="note">
-            <div className="fzw-callout-title">Hay artículos sin precio: el costo real es mayor</div>
+            <div className="fzw-callout-title">{t('costs.zeroTitle')}</div>
             <ul>
               {zeroPrice.map((z, i) => (
                 <li key={i}>
@@ -142,50 +152,51 @@ export function CostDocument({ data, paper, lowMarginPct = 20 }: CostDocumentPro
         ) : null}
 
         <h2 className="fzw-h">
-          Compra real de materiales <small>barras completas y envases, neto de descuentos{sale ? ', frente a lo que considera el precio' : ''}</small>
+          {t('costs.purchase')} <small>{sale ? t('costs.purchaseSectionHintSale') : t('costs.purchaseSectionHint')}</small>
         </h2>
         <table className="fzw-table">
           <thead>
             <tr>
-              <th>Familia</th>
-              <th style={{ width: sale ? '30%' : '45%' }}>Proporción de la compra</th>
-              <th className="num">%</th>
-              {sale ? <th className="num">En el precio</th> : null}
-              <th className="num">Compra real</th>
+              <th>{t('costs.family')}</th>
+              <th style={{ width: sale ? '30%' : '45%' }}>{t('costs.share')}</th>
+              <th className="num">{t('costs.pct')}</th>
+              {sale ? <th className="num">{t('costs.inPrice')}</th> : null}
+              <th className="num">{t('costs.realPurchase')}</th>
             </tr>
           </thead>
           <tbody>
-            {families.map((f) => {
-              const pct = purchase > 0 ? (f.purchase / purchase) * 100 : 0
+            {families.map((fam) => {
+              const pct = purchase > 0 ? (fam.purchase / purchase) * 100 : 0
+              const label = w.locale === 'es' ? fam.label : costFamilyLabel(fam.id, w)
               return (
-                <tr key={f.id}>
-                  <td>{f.label}</td>
+                <tr key={fam.id}>
+                  <td>{label}</td>
                   <td>
-                    <Meter pct={pct} label={`${f.label}: ${Math.round(pct)} %`} />
+                    <Meter pct={pct} label={`${label}: ${f.pct(pct, 0)}`} />
                   </td>
-                  <td className="num">{fmtPct(pct, 0)}</td>
-                  {sale ? <td className="num">{fmtMoney(f.priced ?? 0)}</td> : null}
-                  <td className="num">{fmtMoney(f.purchase)}</td>
+                  <td className="num">{f.pct(pct, 0)}</td>
+                  {sale ? <td className="num">{money(fam.priced ?? 0)}</td> : null}
+                  <td className="num">{money(fam.purchase)}</td>
                 </tr>
               )
             })}
             {sale && sale.waste > 0.5 ? (
               <tr>
-                <td>Merma</td>
+                <td>{t('costs.waste')}</td>
                 <td className="fzw-small fzw-muted" colSpan={2}>
-                  la pérdida que el precio suma a los materiales
+                  {t('costs.wasteHint')}
                 </td>
-                <td className="num">{fmtMoney(sale.waste)}</td>
-                <td className="num fzw-small fzw-muted">incluida arriba</td>
+                <td className="num">{money(sale.waste)}</td>
+                <td className="num fzw-small fzw-muted">{t('costs.wasteIncluded')}</td>
               </tr>
             ) : null}
           </tbody>
           <tfoot>
             <tr>
-              <td colSpan={3}>Total materiales</td>
-              {sale ? <td className="num">{fmtMoney(sum.pricedMaterials ?? 0)}</td> : null}
+              <td colSpan={3}>{t('costs.totalMaterials')}</td>
+              {sale ? <td className="num">{money(sum.pricedMaterials ?? 0)}</td> : null}
               <td className="num">
-                <span className="fzw-mid">{fmtMoney(purchase)}</span>
+                <span className="fzw-mid">{money(purchase)}</span>
               </td>
             </tr>
           </tfoot>
@@ -193,31 +204,29 @@ export function CostDocument({ data, paper, lowMarginPct = 20 }: CostDocumentPro
 
         {sale ? (
           <p className="fzw-small" style={{ marginTop: '2.5mm' }}>
-            Costo directo: materiales {fmtMoney(sum.pricedMaterials ?? 0)} + mano de obra {fmtMoney(sale.labor)}
-            {sale.install > 0 ? ` + instalación ${fmtMoney(sale.install)}` : ''} = <strong>{fmtMoney(directCost)}</strong>.
-            {sum.realCost !== null && delta !== 0 ? (
-              <>
-                {' '}
-                Con la compra real ({fmtDelta(delta)} por barras completas y envases) el costo queda en{' '}
-                <strong>{fmtMoney(sum.realCost)}</strong> y el margen en <strong>{sum.realMargin === null ? '—' : fmtPct(sum.realMargin)}</strong>.
-              </>
-            ) : null}
+            {w.rich('costs.directFormula', {
+              materials: money(sum.pricedMaterials ?? 0),
+              labor: money(sale.labor),
+              install: sale.install > 0 ? t('costs.installPart', { install: money(sale.install) }) : '',
+              total: money(directCost),
+            })}
+            {sum.realCost !== null && diff !== 0 ? w.rich('costs.realFormula', { delta: delta(diff), cost: money(sum.realCost), margin: pctOrDash(sum.realMargin) }) : null}
           </p>
         ) : null}
 
         <h2 className="fzw-h" style={{ marginTop: '6mm' }}>
-          Por ventana <small>costo directo unitario y precio neto de lista</small>
+          {t('costs.perWindow')} <small>{t('costs.perWindowHint')}</small>
         </h2>
         <table className="fzw-table">
           <thead>
             <tr>
-              <th>Ventana</th>
-              <th className="num">Cant.</th>
-              <th className="num">Costo unit.</th>
-              <th className="num">Precio unit.</th>
-              <th className="num">Margen</th>
-              <th className="num">Costo total</th>
-              <th className="num">Venta total</th>
+              <th>{t('costs.window')}</th>
+              <th className="num">{t('costs.qty')}</th>
+              <th className="num">{t('costs.unitCost')}</th>
+              <th className="num">{t('costs.unitPrice')}</th>
+              <th className="num">{t('costs.margin')}</th>
+              <th className="num">{t('costs.totalCost')}</th>
+              <th className="num">{t('costs.totalSales')}</th>
             </tr>
           </thead>
           <tbody>
@@ -228,58 +237,54 @@ export function CostDocument({ data, paper, lowMarginPct = 20 }: CostDocumentPro
                   <td style={{ maxWidth: '72mm' }}>
                     <div className="fzw-cell-title">
                       {r.ref}
-                      {r.window ? ` · ${windowTitle(r.window).title}` : ''}
+                      {r.window ? ` · ${windowTitle(r.window, w).title}` : ''}
                     </div>
                     {r.window ? <div className="fzw-cell-sub fzw-ellipsis">{r.window.description}</div> : null}
                   </td>
-                  <td className="num">{fmtInt(r.qty)}</td>
-                  <td className="num">{fmtMoney(r.unitCost)}</td>
-                  <td className="num">{fmtMoney(r.unitPrice)}</td>
-                  <td className="num">
-                    {r.margin === null ? '—' : low ? <span className="fzw-tag">{fmtPct(r.margin)}</span> : fmtPct(r.margin)}
-                  </td>
-                  <td className="num">{fmtMoney(r.totalCost)}</td>
-                  <td className="num">{fmtMoney(r.totalPrice)}</td>
+                  <td className="num">{f.int(r.qty)}</td>
+                  <td className="num">{money(r.unitCost)}</td>
+                  <td className="num">{money(r.unitPrice)}</td>
+                  <td className="num">{r.margin === null ? '—' : low ? <span className="fzw-tag">{f.pct(r.margin)}</span> : f.pct(r.margin)}</td>
+                  <td className="num">{money(r.totalCost)}</td>
+                  <td className="num">{money(r.totalPrice)}</td>
                 </tr>
               )
             })}
           </tbody>
           <tfoot>
             <tr>
-              <td>{hasDiscount ? 'Total de lista' : 'Total'}</td>
-              <td className="num">{fmtInt(rows.reduce((s, r) => s + r.qty, 0))}</td>
+              <td>{hasDiscount ? t('costs.listTotal') : t('costs.total')}</td>
+              <td className="num">{f.int(rows.reduce((s, r) => s + r.qty, 0))}</td>
               <td />
               <td />
-              <td className="num">{hasDiscount ? (sum.listMargin === null ? '—' : fmtPct(sum.listMargin)) : margin === null ? '—' : fmtPct(margin)}</td>
-              <td className="num">{fmtMoney(directCost)}</td>
-              <td className="num">{hasDiscount ? fmtMoney(sum.listSales) : <span className="fzw-mid">{fmtMoney(sold)}</span>}</td>
+              <td className="num">{hasDiscount ? pctOrDash(sum.listMargin) : pctOrDash(margin)}</td>
+              <td className="num">{money(directCost)}</td>
+              <td className="num">{hasDiscount ? money(sum.listSales) : <span className="fzw-mid">{money(sold)}</span>}</td>
             </tr>
             {hasDiscount ? (
               <tr>
                 <td colSpan={6} style={{ fontWeight: 400, borderTop: 0 }}>
-                  Descuento de la cotización ({fmtPct(sum.discountPct)})
+                  {t('costs.discount', { pct: f.pct(sum.discountPct) })}
                 </td>
                 <td className="num" style={{ fontWeight: 400, borderTop: 0 }}>
-                  {fmtMoney(-sum.discount)}
+                  {money(-sum.discount)}
                 </td>
               </tr>
             ) : null}
             {hasDiscount ? (
               <tr>
-                <td colSpan={4}>Venta neta</td>
-                <td className="num">{margin === null ? '—' : fmtPct(margin)}</td>
-                <td className="num">{fmtMoney(directCost)}</td>
+                <td colSpan={4}>{t('costs.netSales')}</td>
+                <td className="num">{pctOrDash(margin)}</td>
+                <td className="num">{money(directCost)}</td>
                 <td className="num">
-                  <span className="fzw-mid">{fmtMoney(sold)}</span>
+                  <span className="fzw-mid">{money(sold)}</span>
                 </td>
               </tr>
             ) : null}
           </tfoot>
         </table>
         <p className="fzw-small fzw-muted" style={{ marginTop: '3mm' }}>
-          Margen sobre venta: (precio − costo) ÷ precio. Por ventana se mide sobre el precio de lista y las que quedan bajo{' '}
-          {fmtPct(lowMarginPct, 0)} se marcan para revisar. El margen total se mide sobre la venta tras el descuento, sin IVA ni
-          extras{sum.extras > 0 ? ` (${fmtMoney(sum.extras)}: su costo no se conoce)` : ''}, igual que en el editor.
+          {t('costs.footnote', { low: f.pct(lowMarginPct, 0), tax: w.tax, extras: sum.extras > 0 ? t('costs.extrasPart', { money: money(sum.extras) }) : '' })}
         </p>
       </Sheet>
     </DocRoot>

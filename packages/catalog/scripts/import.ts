@@ -4,8 +4,10 @@
  *   npx tsx packages/catalog/scripts/import.ts [carpeta]
  *
  * Carpeta: primer argumento o CATALOG_SOURCE_DIR (los datos de marcas no se versionan).
+ * Evidencia técnica por fabricante: CATALOG_EVIDENCE_FILE (archivo local). Sin ella, ninguna línea se
+ * presenta como verificada por el fabricante.
  */
-import { DEFAULT_BASE_FILE, DEFAULT_SOURCE_DIR, formatImportReport, importBrandData, writeBaseCatalog, writeImportReport } from '../src/node'
+import { DEFAULT_BASE_FILE, DEFAULT_SOURCE_DIR, formatImportReport, importBrandData, readEvidence, writeBaseCatalog, writeImportReport } from '../src/node'
 
 const sourceDir = process.argv[2] ?? DEFAULT_SOURCE_DIR
 if (!sourceDir) {
@@ -13,8 +15,9 @@ if (!sourceDir) {
   process.exit(1)
 }
 const started = Date.now()
-const { catalog, report } = importBrandData(sourceDir)
+const { catalog, report } = importBrandData(sourceDir, { evidence: readEvidence() })
 console.log(formatImportReport(report))
+for (const note of report.evidence?.skipped ?? []) console.warn(`Evidencia sin aplicar: ${note}`)
 if (!catalog.lines.length) {
   console.error('\nNo se escribió el catálogo base porque no se importó ninguna línea.')
   process.exitCode = 1

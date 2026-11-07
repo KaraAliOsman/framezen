@@ -2,9 +2,9 @@
  * Único punto donde el servidor llama al motor para calcular cifras. El motor es la
  * única fuente de números (SPEC §1.5): aquí sólo se le entregan datos y se guarda lo que devuelve.
  */
-import { evaluateQuote } from '@framezen/engine'
-import type { Catalog, CutSettings, PricingSettings, QuoteTotals } from '@framezen/engine'
-import type { ItemPrices } from '@framezen/shared'
+import { evaluateQuote } from '@dekopen/engine'
+import type { Catalog, CutSettings, PricingSettings, QuoteTotals } from '@dekopen/engine'
+import type { ItemPrices } from '@dekopen/shared'
 import type { QuoteData } from '../db/schema'
 
 export type PricingInput = Pick<QuoteData, 'items' | 'extras' | 'discountPct' | 'pricing'>
@@ -24,7 +24,9 @@ export interface Evaluation {
 export function evaluate(quote: PricingInput, catalog: Catalog, orgPricing: PricingSettings, cut?: CutSettings): Evaluation {
   const result = evaluateQuote(quote, catalog, orgPricing, cut ? { cut } : undefined)
   const itemPrices: ItemPrices = {}
-  for (const item of result.items) itemPrices[item.id] = { unitNet: item.price.unitNet, totalNet: item.price.totalNet }
+  for (const item of result.items) {
+    itemPrices[item.id] = { unitNet: item.price.unitNet, totalNet: item.price.totalNet, included: item.included, ...(item.price.pending?.length ? { pending: true } : {}) }
+  }
   return { totals: result.totals, itemPrices }
 }
 

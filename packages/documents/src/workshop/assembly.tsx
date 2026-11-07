@@ -1,35 +1,37 @@
-import type { WorkshopWindow } from '@framezen/engine'
+import type { WorkshopWindow } from '@dekopen/engine'
 import { Box, DocHeader, DocRoot, Sheet, Signatures, WindowSketch, WriteField } from './common'
-import { fmtInt, fmtSize, plural } from './format'
-import { chunk, otLabel, windowIsSliding, windowOperable, windowTitle } from './helpers'
+import { chunk, otLabel, quoteTitle, uniqueFooter, windowIsSliding, windowOperable, windowTitle } from './helpers'
+import { resolveWorkshopLocale, workshopI18n, type WorkshopI18n } from './locale'
 import type { WorkshopDocumentData, WorkshopDocumentProps } from './types'
 
 export interface AssemblyCheck {
-  id: 'seal_in' | 'seal_out' | 'glass' | 'screws' | 'adjust' | 'handle' | 'drain' | 'square'
+  id: 'seal_in' | 'seal_out' | 'glass' | 'screws' | 'adjust' | 'handle' | 'drain' | 'square' | 'coupler'
   label: string
   hint?: string
   /** No aplica a esta ventana (p. ej. regulación en un paño fijo). */
   na?: boolean
 }
 
-/** Controles de montaje de una ventana, adaptados a su tipología. */
-export function assemblyChecks(window: WorkshopWindow): AssemblyCheck[] {
+/** Controles de montaje de una ventana, adaptados a su tipología (en el idioma pedido). */
+export function assemblyChecks(window: WorkshopWindow, w: WorkshopI18n = workshopI18n()): AssemblyCheck[] {
   const operable = windowOperable(window)
   const sliding = windowIsSliding(window)
+  const t = w.t
   return [
-    { id: 'seal_in', label: 'Sello interior', hint: 'burlete continuo, esquinas pegadas' },
-    { id: 'seal_out', label: 'Sello exterior', hint: 'burlete y silicona donde corresponde' },
-    { id: 'glass', label: 'Vidrio', hint: 'calzado, junquillos firmes' },
-    { id: 'screws', label: 'Tornillos', hint: 'refuerzos y herrajes apretados' },
+    { id: 'seal_in', label: t('assembly.check.seal_in'), hint: t('assembly.check.seal_in_hint') },
+    { id: 'seal_out', label: t('assembly.check.seal_out'), hint: t('assembly.check.seal_out_hint') },
+    { id: 'glass', label: t('assembly.check.glass'), hint: t('assembly.check.glass_hint') },
+    { id: 'screws', label: t('assembly.check.screws'), hint: t('assembly.check.screws_hint') },
     {
       id: 'adjust',
-      label: sliding ? 'Regulación de carros' : 'Regulación de hojas',
-      hint: sliding ? 'corre suave, sin roce' : 'cierra parejo, sin roce',
+      label: sliding ? t('assembly.check.adjust_sliding') : t('assembly.check.adjust'),
+      hint: sliding ? t('assembly.check.adjust_sliding_hint') : t('assembly.check.adjust_hint'),
       na: !operable,
     },
-    { id: 'handle', label: 'Manilla y cierre', hint: 'traba en todos los puntos', na: !operable },
-    { id: 'drain', label: 'Deflector y drenaje', hint: 'desagües destapados, tapas puestas' },
-    { id: 'square', label: 'Control de escuadra', hint: 'diagonales con diferencia de hasta 1,5 mm' },
+    { id: 'handle', label: t('assembly.check.handle'), hint: t('assembly.check.handle_hint'), na: !operable },
+    { id: 'drain', label: t('assembly.check.drain'), hint: t('assembly.check.drain_hint') },
+    { id: 'square', label: t('assembly.check.square'), hint: t('assembly.check.square_hint') },
+    ...(window.design.assembly ? [{ id: 'coupler' as const, label: t('assembly.check.coupler'), hint: t('assembly.check.coupler_hint') }] : []),
   ]
 }
 
@@ -80,45 +82,49 @@ export interface AssemblyChecklistDocumentProps extends WorkshopDocumentProps {
  * sello exterior, vidrio, tornillos, regulación, manilla, deflector/drenaje y escuadra,
  * medida real y firmas Armó / Controló.
  */
-export function AssemblyChecklistDocument({ data, paper, maxSheets }: AssemblyChecklistDocumentProps) {
-  const footer = `${otLabel(data)} · Listado de montaje · ${data.quote.title}`
+export function AssemblyChecklistDocument({ data, paper, maxSheets, locale, currency, taxLabel }: AssemblyChecklistDocumentProps) {
+  const w = resolveWorkshopLocale({ locale, currency, taxLabel }, data)
+  const t = w.t
+  const footer = uniqueFooter(t('assembly.footer', { ot: otLabel(data, w), title: quoteTitle(data, w) }))
   const allPages = chunk(buildCards(data.windows), CARDS_PER_SHEET)
   const pages = maxSheets === undefined ? allPages : allPages.slice(0, Math.max(1, Math.floor(maxSheets)))
-  const units = data.windows.reduce((s, w) => s + w.qty, 0)
+  const units = data.windows.reduce((s, x) => s + x.qty, 0)
   return (
-    <DocRoot data={data} paper={paper} footer={footer} kind="assembly">
+    <DocRoot data={data} paper={paper} footer={footer} kind="assembly" w={w}>
       {pages.map((cards, i) => (
-        <Sheet key={i} footer={footer} footRight={`Hoja ${i + 1} de ${allPages.length}`}>
+        <Sheet key={i} footer={footer} footRight={t('assembly.sheet', { index: i + 1, total: allPages.length })}>
           <DocHeader
             data={data}
-            kicker="Listado de montaje"
+            kicker={t('assembly.kicker')}
             meta={
               <>
-                {plural(data.windows.length, 'ventana')} · {plural(units, 'unidad', 'unidades')}
+                {t('common.windows', { count: data.windows.length })} · {t('common.units', { count: units })}
               </>
             }
+            w={w}
           />
           <div className="fzw-cards">
             {cards.map((card) => (
-              <AssemblyCard key={`${card.window.ref}-${card.part}`} card={card} data={data} />
+              <AssemblyCard key={`${card.window.ref}-${card.part}`} card={card} data={data} w={w} />
             ))}
           </div>
         </Sheet>
       ))}
       {pages.length === 0 ? (
         <Sheet footer={footer}>
-          <DocHeader data={data} kicker="Listado de montaje" />
-          <p className="fzw-muted">No hay ventanas en esta OT.</p>
+          <DocHeader data={data} kicker={t('assembly.kicker')} w={w} />
+          <p className="fzw-muted">{t('assembly.empty')}</p>
         </Sheet>
       ) : null}
     </DocRoot>
   )
 }
 
-function AssemblyCard({ card, data }: { card: Card; data: WorkshopDocumentData }) {
+function AssemblyCard({ card, data, w }: { card: Card; data: WorkshopDocumentData; w: WorkshopI18n }) {
+  const t = w.t
   const { window } = card
-  const { title, subtitle } = windowTitle(window)
-  const checks = assemblyChecks(window)
+  const { title, subtitle } = windowTitle(window, w)
+  const checks = assemblyChecks(window, w)
   const notes = data.windowNotes?.[window.ref]
   return (
     <article className="fzw-card">
@@ -129,11 +135,10 @@ function AssemblyCard({ card, data }: { card: Card; data: WorkshopDocumentData }
           </div>
           <div style={{ marginTop: '2.5mm', display: 'grid', gap: '2.5mm' }}>
             <div className="fzw-small">
-              Medida pedida <strong className="fzw-nowrap">{fmtSize(window.design.width, window.design.height)}</strong>
+              {t('assembly.ordered')} <strong className="fzw-nowrap">{w.f.size(window.design.width, window.design.height)}</strong>
             </div>
-            <WriteField label="Ancho real" />
-            <WriteField label="Alto real" />
-            <span className="fzw-small fzw-muted">Tolerancia ± 2 mm</span>
+            <WriteField label={t('assembly.realWidth')} />
+            <WriteField label={t('assembly.realHeight')} />
           </div>
         </div>
         <div>
@@ -146,18 +151,18 @@ function AssemblyCard({ card, data }: { card: Card; data: WorkshopDocumentData }
             <div className="fzw-win-size">
               <span className="fzw-qty-chip">
                 {card.parts > 1
-                  ? `Unidades ${card.units[0]}–${card.units[card.units.length - 1]} de ${fmtInt(window.qty)}`
-                  : plural(window.qty, 'unidad', 'unidades')}
+                  ? t('assembly.unitsRange', { from: card.units[0], to: card.units[card.units.length - 1], total: w.f.int(window.qty) })
+                  : t('common.units', { count: window.qty })}
               </span>
             </div>
           </div>
           <table className="fzw-table fzw-check">
             <thead>
               <tr>
-                <th>Control</th>
+                <th>{t('assembly.control')}</th>
                 {card.units.map((u) => (
                   <th key={u} className="unit">
-                    {card.units.length === 1 && window.qty === 1 ? 'Listo' : `U${u}`}
+                    {card.units.length === 1 && window.qty === 1 ? t('assembly.done') : t('assembly.unit', { n: u })}
                   </th>
                 ))}
               </tr>
@@ -167,19 +172,23 @@ function AssemblyCard({ card, data }: { card: Card; data: WorkshopDocumentData }
                 <tr key={c.id}>
                   <td>
                     <span className={`fzw-cell-title${c.na ? ' fzw-na' : ''}`}>{c.label}</span>
-                    <span className="fzw-muted fzw-small"> · {c.na ? 'no aplica: no tiene hojas que abran' : c.hint}</span>
+                    <span className="fzw-muted fzw-small"> · {c.na ? t('assembly.na') : c.hint}</span>
                   </td>
                   {card.units.map((u) => (
                     <td key={u} className="unit">
-                      <Box large na={c.na} label={c.na ? `${c.label}: no aplica` : `${c.label}, unidad ${u}`} />
+                      <Box large na={c.na} label={c.na ? t('assembly.naAria', { label: c.label }) : t('assembly.unitAria', { label: c.label, unit: u })} w={w} />
                     </td>
                   ))}
                 </tr>
               ))}
             </tbody>
           </table>
-          {notes ? <p className="fzw-small" style={{ marginTop: '2mm' }}>Nota: {notes}</p> : null}
-          <Signatures labels={['Armó', 'Controló']} />
+          {notes ? (
+            <p className="fzw-small" style={{ marginTop: '2mm' }}>
+              {t('assembly.note', { note: notes })}
+            </p>
+          ) : null}
+          <Signatures labels={[t('assembly.signBuilt'), t('assembly.signChecked')]} w={w} />
         </div>
       </div>
     </article>

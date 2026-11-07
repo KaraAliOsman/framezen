@@ -1,6 +1,5 @@
-import { PLANS } from '@framezen/shared'
+import { PLANS } from '@dekopen/shared'
 import { describe, expect, it } from 'vitest'
-import { BAR_LENGTH, DEMO_GROUPS, demoStats, KERF, layoutBar } from './cutDemo'
 import { formatClp, formatDecimal, formatInt, formatMm, formatPct, parseMeasure } from './format'
 import { landingPlans, maxSavingsPct, quotePlan, seatsLabel } from './plans'
 
@@ -45,41 +44,5 @@ describe('planes', () => {
     expect(seatsLabel(1)).toBe('1 persona')
     expect(seatsLabel(3)).toBe('Hasta 3 personas')
     expect(seatsLabel(null)).toBe('Personas ilimitadas')
-  })
-})
-
-describe('ejemplo de optimización', () => {
-  const multiset = (mode: 'perWindow' | 'optimized') =>
-    DEMO_GROUPS.map((group) =>
-      group.bars[mode]
-        .flat()
-        .map((cut) => `${cut.ref}-${cut.length}`)
-        .sort()
-        .join('|'),
-    )
-
-  it('cada barra cabe en 5.800 mm con el disco descontado', () => {
-    for (const group of DEMO_GROUPS) {
-      for (const mode of ['perWindow', 'optimized'] as const) {
-        for (const cuts of group.bars[mode]) {
-          const bar = layoutBar(cuts)
-          expect(bar.used + bar.kerfLoss).toBeLessThanOrEqual(BAR_LENGTH)
-          expect(bar.kerfLoss).toBe(cuts.length * KERF)
-        }
-      }
-    }
-  })
-
-  it('ambas formas de cortar tienen exactamente las mismas piezas', () => {
-    expect(multiset('optimized')).toEqual(multiset('perWindow'))
-  })
-
-  it('optimizar ahorra barras y mejora el aprovechamiento', () => {
-    const perWindow = demoStats('perWindow')
-    const optimized = demoStats('optimized')
-    expect(perWindow.bars).toBe(7)
-    expect(optimized.bars).toBe(5)
-    expect(optimized.pieces).toBe(perWindow.pieces)
-    expect(formatPct(optimized.yieldPct)).toBe('96,1 %')
   })
 })

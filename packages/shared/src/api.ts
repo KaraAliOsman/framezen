@@ -16,10 +16,14 @@ import type {
   PricingSettings,
   CutSettings,
   QuoteExtra,
+  QuoteLineRole,
   QuoteTotals,
   WindowDesign,
-} from '@framezen/engine'
+} from '@dekopen/engine'
 import type { Feature, PlanCode, Role } from './plans'
+import type { PaymentSettings, PublicExperience, PublicPayment, SendFormat, SendingPrefs } from './sending'
+import type { Locale } from './i18n/locales'
+import type { DocIssue, DocLocale, DocPresetId, DocSettings, DocTemplate, DocTemplateKind, QuoteDocOverridesV2, ResolvedQuoteDocument } from './templates'
 
 export interface ApiError {
   error: { code: string; message: string; field?: string }
@@ -41,7 +45,21 @@ export interface User {
   id: Id
   name: string
   email: string
+  /** Idioma de la interfaz elegido por la persona (ausente = navegador o idioma de la empresa). */
+  locale?: Locale
   createdAt: string
+}
+
+/** PATCH /api/me — nombre y/o idioma de la interfaz (null = volver al automático). */
+/**
+ * Tope de la ganancia según cómo se calcula. El margen es sobre la venta y no puede llegar a 100 %;
+ * el recargo es sobre el costo: 120 % de recargo es vender a 2,2 veces el costo.
+ */
+export const MARGIN_LIMITS = { margin: 95, markup: 500 } as const
+
+export interface MePatchBody {
+  name?: string
+  locale?: Locale | null
 }
 
 export interface Org {
@@ -58,6 +76,10 @@ export interface Org {
   logo?: string
   /** Color de marca para documentos (#RRGGBB). */
   accent?: string
+  /** Idioma por defecto de los documentos (PDF, portal, correos al cliente). */
+  locale?: Locale
+  /** Moneda ISO 4217 de los precios (CLP por defecto). */
+  currency?: string
   createdAt: string
 }
 
@@ -175,11 +197,18 @@ export interface Me {
   /** Una persona sola: la interfaz oculta roles y equipo. */
   solo: boolean
   onboarded: boolean
+  /** Idioma efectivo de la interfaz: user.locale ?? Accept-Language ?? org.locale ?? 'es'. */
+  locale?: Locale
 }
 
 // ── Ajustes de la organización ────────────────────────────────────────────────
-export type QuoteTemplateId = 'esencial' | 'galeria' | 'compacta' | 'editorial'
-export type CatalogTemplateId = 'vitrina' | 'ficha' | 'lookbook'
+/**
+ * Plantilla elegida (v5): id de diseño predefinido (`luz`, `coleccion-modular`…), id de diseño v4
+ * (`esencial`, `vitrina`… → se traducen con `resolveDocTemplateRef`) o id de una plantilla propia de
+ * la organización (`/api/templates`). Se valida con `DocTemplateRefSchema`.
+ */
+export type QuoteTemplateId = string
+export type CatalogTemplateId = string
 
 export interface DocumentPrefs {
   quoteTemplate: QuoteTemplateId
@@ -193,14 +222,29 @@ export interface DocumentPrefs {
   showColorSwatch: boolean
   showExteriorView: boolean
   paper: 'letter' | 'a4'
-  intro: string // texto de saludo/presentación
+  /** Carta de presentación: opcional y vacía. El saludo va en el mensaje de envío, nunca aquí. */
+  intro: string
   conditions: string // condiciones comerciales (markdown simple)
-  paymentTerms: string // "50% al aceptar, 50% contra entrega"
+  /** Compromisos del taller: arrancan vacíos y una sección vacía no se imprime. */
+  paymentTerms: string
   warranty: string
-  validityDays: number // 15
-  leadTimeText: string // "Fabricación e instalación en 15 días hábiles"
+  /** Días de vigencia; 0 = sin definir. */
+  validityDays: number
+  leadTimeText: string
+  /** Qué incluye y qué no incluye el precio. */
+  includes?: string
+  excludes?: string
   signatureName?: string
   footer?: string
+  /** Decisiones del taller para todos sus documentos (marcas, detalle de línea, numeración…). */
+  settings?: DocSettings
+  /**
+   * Logos de marcas de perfil subidos por el taller: id de la marca del catálogo → id de la imagen.
+   * Nunca se versionan logos de terceros: cada taller sube los que tiene derecho a mostrar.
+   */
+  brandLogos?: Record<string, string>
+  /** Logos de las marcas de herrajes que usa el taller (el catálogo no siempre las distingue). */
+  hardwareLogos?: { id: string; name: string; assetId: string }[]
 }
 
 export interface Defaults {
@@ -217,6 +261,21 @@ export interface OrgSettings {
   /** Próximo número de cotización y de OT (para continuar la numeración anterior). */
   nextQuoteNumber: number
   nextWorkOrderNumber: number
+  /** Idioma por defecto de los documentos (= orgs.locale). PATCH /api/settings { locale }. */
+  locale?: Locale
+  /** Moneda ISO 4217 (= orgs.currency, CLP por defecto). PATCH /api/settings { currency }. */
+  currency?: string
+  /**
+   * Nombre del impuesto en documentos («IVA», «VAT», «MwSt.»…). La tasa es `pricing.ivaPct`
+   * (19 % por defecto). PATCH /api/settings { taxLabel }.
+   */
+  taxLabel?: string
+  /** Formato de envío predeterminado, plantillas del mensaje y extras del portal. */
+  sending?: SendingPrefs
+  /** Cómo le pagan al taller. Sin nada prellenado. */
+  payments?: PaymentSettings
+  /** Este servidor tiene proveedor de correo: puede enviar el PDF adjunto. Solo lectura. */
+  mailProvider?: boolean
 }
 
 // ── Catálogo de la organización ──────────────────────────────────────────────
@@ -368,12 +427,26 @@ export interface QuoteItem {
   notes?: string
   /** Precio unitario neto manual (reemplaza al calculado; se marca como manual). */
   manualUnitPrice?: number
+  /** Piso o nivel (agrupa el documento). */
+  floor?: string
+  /** Medida de vano en mm, si el taller la midió. Nunca se supone. */
+  rough?: { width?: number; height?: number }
+  /** `optional`: fuera del total salvo que se marque. `alternative`: cuenta una por grupo. */
+  role?: QuoteLineRole
+  /** Nombre del grupo de alternativas. */
+  altGroup?: string
+  /** Opcional marcado o alternativa elegida. */
+  included?: boolean
+  /** Descuento de esta línea en %. */
+  discountPct?: number
 }
 
 export interface Quote {
   id: Id
   number: number
   title: string // nombre de la obra: "Casa Pérez · Concepción"
+  /** Dirección de instalación, si difiere de la del cliente. */
+  siteAddress?: string
   clientId?: Id
   client?: Client
   status: QuoteStatus
@@ -383,8 +456,12 @@ export interface Quote {
   /** Ajustes de precio de esta cotización (si no, los de la organización). */
   pricing?: Partial<PricingSettings>
   notes?: string // internas
-  /** Textos del documento sobrescritos para esta cotización. */
-  documentOverrides?: Partial<DocumentPrefs>
+  /**
+   * Ajustes del documento de esta cotización (v2: plantilla, idioma, textos, secciones, tema,
+   * notas por ítem). El servidor acepta v1 plano al escribir y siempre responde v2
+   * (`migrateQuoteDocOverrides`); se editan con `applyDocOps(overrides, ops, { template })`.
+   */
+  documentOverrides?: QuoteDocOverridesV2
   validUntil?: string
   revision: number // 0 = sin enviar, 1 = primera versión enviada…
   shareToken?: string
@@ -393,6 +470,8 @@ export interface Quote {
   createdAt: string
   updatedAt: string
   sentAt?: string
+  /** Cómo salió la última versión enviada. */
+  sentFormat?: SendFormat
   acceptedAt?: string
   acceptedBy?: { name: string; rut?: string; at: string }
 }
@@ -400,7 +479,14 @@ export interface Quote {
 export type QuoteSummary = Pick<
   Quote,
   'id' | 'number' | 'title' | 'status' | 'revision' | 'createdAt' | 'updatedAt' | 'sentAt' | 'acceptedAt'
-> & { clientName?: string; total: number; units: number; firstItem?: QuoteItem }
+> & {
+  clientName?: string
+  total: number
+  units: number
+  firstItem?: QuoteItem
+  /** Motivo corto de «Perdida». Interno: no existe en `Quote` para que nunca llegue al portal. */
+  lostReason?: string
+}
 
 /** PUT /api/quotes/:id — autoguardado del documento completo. 409 si version no coincide. */
 export type QuoteSaveBody = Omit<Quote, 'id' | 'number' | 'createdAt' | 'updatedAt' | 'totals' | 'client' | 'shareToken' | 'revision'>
@@ -414,36 +500,97 @@ export interface QuoteConflictBody extends ApiError {
 /** POST /api/quotes/:id/send — crea la revisión siguiente y deja el enlace público listo. */
 export interface SendQuoteBody {
   channel?: 'link' | 'email' | 'whatsapp'
+  /** Qué recibe el cliente: PDF, enlace web o ambos. Sin indicarlo, enlace (el contrato anterior). */
+  format?: SendFormat
   /** Correo del destinatario (canal 'email'). */
   to?: string
   message?: string
 }
+
+/** POST /api/quotes/:id/shared: la misma versión salió por otra vía, sin crear una versión nueva. */
+export interface QuoteSharedBody {
+  format: SendFormat
+  /** Correo del destinatario, si debe salir desde el servidor. */
+  to?: string
+  message?: string
+}
+export interface QuoteSharedResponse {
+  sentFormat: SendFormat
+  emailed?: SendMailResult
+  attached?: boolean
+}
+/** Qué pasó con el correo del servidor. Sin proveedor, no salió nada real. */
+export type SendMailResult = 'sent' | 'failed' | 'no_provider'
+
 export interface SendQuoteResponse {
   quote: Quote
+  /** Solo si se pidió enviar por correo desde el servidor. */
+  emailed?: SendMailResult
+  /** El correo salió con el PDF adjunto. */
+  attached?: boolean
   /** Enlace del portal: APP_URL/c/:token */
   url: string
   revision: number
   /** «A», «B»… */
   revisionLabel: string
+  /** Cuándo se recordará escribirle al cliente (por defecto, en 3 días). */
+  followUpAt?: string
+}
+
+/** POST /api/quotes/:id/follow-up — posponer o recordar en N días; `at` deja una fecha exacta (deshacer). */
+export type QuoteFollowUpBody = { days: number } | { at: string | null }
+export interface QuoteFollowUpResponse {
+  followUpAt: string | null
+  previous: string | null
 }
 
 /** Precio neto por ítem calculado por el motor (clave: id del ítem). */
 export interface ItemPrice {
   unitNet: number
   totalNet: number
+  /** Cuenta en el total (opcionales y alternativas). */
+  included?: boolean
+  /** Le falta precio: lo que falta queda fuera del total. */
+  pending?: boolean
 }
 export type ItemPrices = Record<string, ItemPrice>
 
-/** Cotización enviada sin respuesta, con lo necesario para escribirle al cliente. */
-export type QuoteFollowUp = QuoteSummary & { clientPhone?: string; shareToken?: string }
+/** Aviso sin atender de una cotización: el cliente pidió cambios o aceptó. */
+export interface QuoteNotice {
+  /** Id del evento de actividad (PATCH /api/activity/:id para darlo por hecho). */
+  id: Id
+  kind: 'changes' | 'accepted'
+  at: string
+  /** Quién respondió, tal como lo escribió en el portal. */
+  who?: string
+  /** Mensaje completo del cliente, sin cortar. */
+  message?: string
+}
+
+/** Cotización que espera una acción, con lo necesario para escribirle al cliente. */
+export type QuoteFollowUp = QuoteSummary & {
+  clientPhone?: string
+  shareToken?: string
+  /** Cuándo abrió el cliente la última versión enviada. */
+  viewedAt?: string
+  /** Cómo salió la última versión: con solo PDF no se puede saber si la abrió. */
+  sentFormat?: SendFormat
+  followUpAt?: string
+  /** Avisos sin atender, el más nuevo primero. */
+  notices?: QuoteNotice[]
+}
 
 /** GET /api/quotes/stats — embudo por estado, vendido del mes (y del anterior) y seguimientos. */
 export interface QuoteStats {
   byStatus: Record<QuoteStatus, { count: number; total: number }>
-  /** Aceptadas este mes calendario (hora de Chile); total neto. */
-  soldThisMonth: { count: number; total: number }
+  /**
+   * Vendido este mes calendario (hora de Chile), con su paso posterior incluido: una aceptada que ya
+   * pasó a taller sigue siendo venta del mes, aunque `byStatus.accepted` ya no la cuente.
+   * `inProduction` dice cuántas de ellas siguieron a taller, instalación o cierre.
+   */
+  soldThisMonth: { count: number; total: number; inProduction: number }
   soldLastMonth: { count: number; total: number }
-  /** Enviadas hace más de 3 días sin respuesta (las más antiguas primero). */
+  /** Por seguir: primero las que tienen avisos, luego las abiertas sin respuesta, luego las sin abrir. */
   followUps: QuoteFollowUp[]
 }
 
@@ -461,6 +608,35 @@ export type PublicQuoteResponse = PublicQuote & {
   prices: ItemPrices
   /** Letra de la revisión que ve el cliente («A», «B»…). */
   revisionLabel: string
+  /**
+   * Documento v5 resuelto en el servidor (`resolveQuoteDocument`): plantilla elegida ⊕ empresa ⊕
+   * cotización, textos efectivos, validez, idioma del documento y notas por ítem.
+   */
+  document?: PublicQuoteDocument
+  /** Impuesto de la revisión enviada: con él se recalcula al elegir opcionales. */
+  ivaPct?: number
+  /** Cómo pagar. No viene si el taller no configuró nada. */
+  payment?: PublicPayment
+  /** Extras que este taller muestra en el portal. */
+  experience?: PublicExperience
+}
+
+/** Documento resuelto que ve el cliente en el portal (sin los ajustes crudos). */
+export type PublicQuoteDocument = Pick<ResolvedQuoteDocument, 'template' | 'texts' | 'validityDays' | 'locale' | 'itemNotes'> & {
+  /** Fotos que usa la plantilla (id de recurso → data URL), sólo las de la empresa. */
+  assets?: Record<string, string>
+  /** Logos de marca y herrajes que el taller eligió mostrar. Sin logo, la marca no aparece. */
+  marks?: PublicQuoteMark[]
+  /** Dónde van: una vez arriba, en cada ventana o ambos. */
+  markPlacement?: 'strip' | 'items' | 'both'
+}
+
+export interface PublicQuoteMark {
+  kind: 'profile' | 'hardware'
+  /** En un logo de perfil, la marca a la que pertenece. */
+  brandId?: string
+  name: string
+  src: string
 }
 
 /** POST /api/public/quotes/:token/accept */
@@ -577,4 +753,110 @@ export interface ActivityEvent {
 export interface Paged<T> {
   items: T[]
   total: number
+}
+
+// ── Plantillas de documentos (v5, /api/templates) ─────────────────────────────
+/** Plantilla propia de la organización o diseño predefinido (`builtin`). */
+export interface DocTemplateRecord {
+  id: string
+  kind: DocTemplateKind
+  name: string
+  /** Diseño predefinido del que viene (para «Restablecer»); null si nació de cero o de la IA. */
+  presetId: DocPresetId | null
+  /** true = diseño predefinido (no se edita: se duplica). */
+  builtin: boolean
+  /** Control optimista (0 en los diseños predefinidos). */
+  version: number
+  template: DocTemplate
+  /** Es la plantilla predeterminada de su tipo en la organización. */
+  isDefault: boolean
+  createdAt?: string
+  updatedAt?: string
+  /** Avisos de la lectura (algo se reparó al cargar una versión anterior). */
+  issues?: DocIssue[]
+}
+
+/** GET /api/templates?kind= */
+export interface DocTemplateListResponse {
+  /** Plantillas propias vigentes (las más recientes primero). */
+  templates: DocTemplateRecord[]
+  /** Id efectivo de la predeterminada por tipo (diseño o plantilla propia). */
+  defaults: Record<DocTemplateKind, string>
+  /** El plan permite crear y editar plantillas propias (`custom_templates`). */
+  canEdit: boolean
+  /** Además hay IA disponible para generarlas (plan + clave configurada). */
+  canGenerate: boolean
+  maxPerKind: number
+}
+
+/** POST /api/templates — desde un diseño, desde otra plantilla o con una plantilla completa. */
+export interface DocTemplateCreateBody {
+  kind: DocTemplateKind
+  name?: string
+  fromPresetId?: DocPresetId
+  fromTemplateId?: string
+  /** Plantilla completa (p. ej. la que propuso la IA); se valida con el esquema compartido. */
+  template?: unknown
+}
+
+/** PUT /api/templates/:id */
+export interface DocTemplateSaveBody {
+  template: unknown
+  version: number
+}
+
+/** POST /api/templates/:id/ops (editor, comandos locales y asistente). */
+export interface DocTemplateOpsBody {
+  ops: unknown[]
+  /** Versión leída; si falta se aplica sobre la vigente. */
+  version?: number
+}
+
+export interface DocTemplateOpsResponse {
+  template: DocTemplateRecord
+  applied: number[]
+  changed: boolean
+  issues: DocIssue[]
+  /** Resumen legible de los cambios en el idioma de la petición. */
+  summary: string
+}
+
+/** 409 de PUT/ops: la versión vigente para retomar sin perder nada. */
+export interface DocTemplateConflictBody extends ApiError {
+  version: number
+  template: DocTemplateRecord
+}
+
+/** DELETE /api/templates/:id (se deshace con POST /api/templates/:id/restore). */
+export interface DocTemplateDeleteResponse {
+  template: DocTemplateRecord
+  /** Era la predeterminada: la predeterminada volvió a este diseño. */
+  defaultReset?: { kind: DocTemplateKind; next: string }
+}
+
+/** POST /api/templates/generate — la IA propone; nada se guarda hasta que la persona lo acepta. */
+export interface DocTemplateGenerateBody {
+  kind: DocTemplateKind
+  prompt: string
+  /** Plantilla de partida (propia o diseño); por defecto la predeterminada del tipo. */
+  baseTemplateId?: string
+  /** Idioma de los textos que escriba la IA (por defecto el de la interfaz). */
+  locale?: DocLocale
+}
+
+export type DocTemplateGenerateResponse =
+  | { ok: true; template: DocTemplate; baseTemplateId: string; issues: DocIssue[]; credits: number; creditsLeft: number }
+  | { ok: false; reason: 'invalid_output' | 'truncated'; issues: DocIssue[]; credits: number; creditsLeft: number }
+
+/** Imagen de documento (portada, galería, quiénes somos) — /api/templates/images. */
+export interface DocumentImageRecord {
+  id: string
+  name: string | null
+  width: number | null
+  height: number | null
+  byteSize: number
+  mime: string
+  /** Miniatura JPEG (data URL) para elegirla en el editor. */
+  thumb?: string
+  createdAt: string
 }

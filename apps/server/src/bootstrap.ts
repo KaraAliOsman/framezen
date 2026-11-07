@@ -3,8 +3,8 @@
  * index.ts (servidor real) y las pruebas (PGlite en memoria).
  */
 import { join } from 'node:path'
-import { SAMPLE_CATALOG } from '@framezen/catalog'
-import type { Catalog } from '@framezen/engine'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
+import type { Catalog } from '@dekopen/engine'
 import type { Hono } from 'hono'
 import { buildDeps, createApp, type CreateAppOptions } from './app'
 import { findRepoRoot, type AppConfig } from './config'

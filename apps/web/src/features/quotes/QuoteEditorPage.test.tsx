@@ -3,15 +3,16 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryRouter, RouterProvider } from 'react-router'
-import { createDesign, DEFAULT_CUT, DEFAULT_PRICING, evaluateQuote, type Catalog } from '@framezen/engine'
-import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@framezen/catalog'
-import type { Me, OrgSettings, Quote } from '@framezen/shared'
+import { createDesign, DEFAULT_CUT, DEFAULT_PRICING, evaluateQuote, type Catalog } from '@dekopen/engine'
+import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@dekopen/catalog'
+import type { Me, OrgSettings, Quote } from '@dekopen/shared'
 import { api } from '../../lib/api'
 import { RequireAuth } from '../../lib/auth'
 import { createQueryClient, qk } from '../../lib/queryClient'
 import { TooltipProvider } from '../../ui'
 import { getQuoteEditor } from '../assistant/bridge'
 import { docFromQuote } from './model/doc'
+import { acquireEditor } from './model/registry'
 import QuoteEditorPage from './QuoteEditorPage'
 
 beforeAll(() => {
@@ -116,7 +117,9 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-function renderPage(quote: Quote, prime: (client: ReturnType<typeof createQueryClient>) => void) {
+let lastRouter: ReturnType<typeof createMemoryRouter> | null = null
+
+function renderPage(quote: Quote, prime: (client: ReturnType<typeof createQueryClient>) => void, search = '') {
   // El resto de la API (OT, clientes…) no importa aquí.
   vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }))
   vi.spyOn(api.quotes, 'get').mockResolvedValue(quote)
@@ -126,8 +129,9 @@ function renderPage(quote: Quote, prime: (client: ReturnType<typeof createQueryC
   client.setQueryData(qk.quote(quote.id), quote)
   prime(client)
   const router = createMemoryRouter([{ element: <RequireAuth />, children: [{ path: '/cotizaciones/:id', element: <QuoteEditorPage /> }] }], {
-    initialEntries: [`/cotizaciones/${quote.id}`],
+    initialEntries: [`/cotizaciones/${quote.id}${search}`],
   })
+  lastRouter = router
   render(
     <QueryClientProvider client={client}>
       <TooltipProvider>
@@ -188,5 +192,32 @@ describe('editor: catálogo y ajustes al día', () => {
       client.setQueryData(qk.settings, higher)
     })
     await waitFor(() => expect(bridge?.getQuote().totals?.total).toBe(totalWith(quote, DISCOUNTED, higher)))
+  })
+})
+
+describe('editor: la vista Diseño / Documento sobrevive a recargar', () => {
+  it('?vista=documento abre en Documento y cambiar de vista actualiza la URL', async () => {
+    const quote = quoteFor('q-view-url')
+    vi.spyOn(api.catalog, 'get').mockResolvedValue(SAMPLE_CATALOG as never)
+    vi.spyOn(api.settings, 'get').mockResolvedValue(SETTINGS)
+    renderPage(
+      quote,
+      (c) => {
+        c.setQueryData(qk.catalog, SAMPLE_CATALOG)
+        c.setQueryData(qk.settings, SETTINGS)
+      },
+      '?vista=documento',
+    )
+    await screen.findByRole('list', { name: 'Ventanas de la cotización' })
+    const bridge = getQuoteEditor()!
+    // El mismo editor que ya está abierto (el registro lo reutiliza por id).
+    const editor = acquireEditor(quote.id, () => {
+      throw new Error('el editor debería existir')
+    })
+    expect(editor.get().view).toBe('document')
+    act(() => bridge.showDesign())
+    await waitFor(() => expect(lastRouter!.state.location.search).toBe(''))
+    act(() => bridge.showDocument())
+    await waitFor(() => expect(lastRouter!.state.location.search).toBe('?vista=documento'))
   })
 })

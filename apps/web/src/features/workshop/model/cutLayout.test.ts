@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Bar, OptimizationGroup } from '@framezen/engine'
+import type { Bar, OptimizationGroup } from '@dekopen/engine'
 import { barKey, groupRefs, mm, piecePolygon, placeBar, planSignature, sideOf, textWidth } from './cutLayout'
 
 const cut = { trimStart: 0, trimEnd: 0, minReusable: 500 }
@@ -75,7 +75,8 @@ describe('placeBar', () => {
     expect(p.trimEnd?.w).toBeCloseTo(1)
     expect(p.remainder?.reusable).toBe(false)
     const offcut = { ...b, fromOffcut: true }
-    expect(placeBar(offcut, { trimStart: 20, trimEnd: 10, minReusable: 500 }, 580).trimStart).toBeNull()
+    // El optimizador también despunta los retazos: el dibujo muestra lo que de verdad se pierde.
+    expect(placeBar(offcut, { trimStart: 20, trimEnd: 10, minReusable: 500 }, 580).trimStart).toEqual({ x: 0, w: 2 })
     const full = bar([[5796, 'arr', 'V1']])
     expect(placeBar(full, cut, 580).remainder).toBeNull()
   })

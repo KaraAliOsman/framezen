@@ -1,11 +1,13 @@
 import { Link } from 'react-router'
 import { ChevronRight } from 'lucide-react'
-import type { Catalog } from '@framezen/engine'
-import type { QuoteItem, WorkOrder } from '@framezen/shared'
+import type { Catalog } from '@dekopen/engine'
+import type { QuoteItem, WorkOrder } from '@dekopen/shared'
 import { cn } from '../../../lib/cn'
-import { dueInfo, windowsLabel } from '../model/orders'
-import { orderProgress, progressText, ORDER_STATUS_COPY } from '../model/stations'
-import { DueText, OrderTicket, percent, ProgressBar } from './bits'
+import { useFormat, useGlossary, useT } from '../../../lib/i18n'
+import es from '../i18n/es'
+import { dueInfo } from '../model/orders'
+import { orderProgress, progressText } from '../model/stations'
+import { DueText, ProgressBar, useOrderLabel, usePercent } from './bits'
 import { DesignThumb } from './DesignThumb'
 
 export interface OrderPreview {
@@ -18,14 +20,14 @@ export interface OrderPreview {
 /*
  * El ancho de la lista depende de la barra lateral (abierta, angosta o ausente), así que el
  * diseño se decide por el ancho del contenedor y no de la ventana:
- * - menos de 672 px: tarjeta (como en el teléfono);
+ * - menos de 672 px: obra arriba, avance y entrega debajo (como en el teléfono);
  * - 672 a 1024 px: fila sin la columna «Ventanas» (el avance ya dice «x de N listas»);
- * - desde 1024 px: fila completa con miniatura.
- * La obra y el cliente nunca bajan de ~200 px (~250 px en una pantalla de 1024 con la barra lateral abierta).
+ * - desde 1024 px: fila completa.
+ * La obra y el cliente nunca bajan de ~200 px.
  */
 const GRID =
-  '@2xl:grid @2xl:grid-cols-[auto_minmax(0,1fr)_minmax(140px,170px)_140px_16px] @2xl:items-center @2xl:gap-4 ' +
-  '@5xl:grid-cols-[auto_minmax(0,1fr)_170px_minmax(170px,220px)_170px_16px] @5xl:gap-5'
+  '@2xl:grid @2xl:grid-cols-[minmax(0,1fr)_minmax(150px,180px)_150px] @2xl:items-center @2xl:gap-5 ' +
+  '@5xl:grid-cols-[minmax(0,1fr)_110px_minmax(180px,230px)_160px] @5xl:gap-6'
 
 export function OrdersList({
   orders,
@@ -38,17 +40,16 @@ export function OrdersList({
   catalog?: Catalog
   now: Date
 }) {
+  const t = useT(es)
   return (
-    <div className="@container overflow-hidden rounded-lg border border-paper-200 bg-paper-0">
-      <div className={cn('hidden border-b border-paper-200 bg-paper-50 px-4 py-2 text-meta whitespace-nowrap text-paper-600', GRID)} aria-hidden>
-        <span className="w-14">OT</span>
-        <span>Obra y cliente</span>
-        <span className="hidden @5xl:block">Ventanas</span>
-        <span>Avance</span>
-        <span>Entrega</span>
-        <span />
+    <div className="@container -mx-3 rounded-panel bg-plate px-3 shadow-plate">
+      <div className={cn('hidden h-9 border-b border-divider text-table whitespace-nowrap text-fg-muted', GRID)} aria-hidden>
+        <span>{t('list.columns.job')}</span>
+        <span className="hidden @5xl:block">{t('list.columns.windows')}</span>
+        <span>{t('list.columns.progress')}</span>
+        <span>{t('list.columns.due')}</span>
       </div>
-      <ul className="divide-y divide-paper-200">
+      <ul aria-label={t('list.caption')} className="divide-y divide-divider">
         {orders.map((order) => (
           <OrderRow key={order.id} order={order} preview={previews.get(order.quoteId)} catalog={catalog} now={now} />
         ))}
@@ -58,55 +59,60 @@ export function OrdersList({
 }
 
 function OrderRow({ order, preview, catalog, now }: { order: WorkOrder; preview?: OrderPreview; catalog?: Catalog; now: Date }) {
+  const t = useT(es)
+  const fmt = useFormat()
+  const g = useGlossary()
+  const percent = usePercent()
+  const orderLabel = useOrderLabel()
   const progress = orderProgress(order.progress)
-  const due = dueInfo(order.dueDate, { now, done: order.status === 'done' })
-  const status = ORDER_STATUS_COPY[order.status]
+  const due = dueInfo(order.dueDate, { now, done: order.status === 'done', locale: t.locale })
   const units = preview?.units
+  const quoteLabel = t('common.quoteNumber', { number: fmt.docNumber(order.quoteNumber) })
+  const windows = t('common.windows', { count: progress.total })
+  const unitsText = units && units !== progress.total ? t('common.units', { count: units }) : null
   return (
     <li>
       <Link
         to={`/taller/${order.id}`}
         className={cn(
-          'group flex flex-col gap-3 px-4 py-3.5 transition-colors duration-120 ease-out hover:bg-paper-50 focus-visible:bg-paper-50 focus-visible:outline-offset-[-2px]',
+          '-mx-3 flex min-h-14 flex-col gap-3 rounded-sm px-3 py-2.5 transition-colors duration-100 ease-out hover:bg-hover focus-visible:bg-hover focus-visible:outline-offset-[-2px]',
           GRID,
         )}
       >
-        <div className="flex min-w-0 items-center gap-3 @2xl:contents">
-          <OrderTicket number={order.number} />
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-sm bg-sunken">
+            {preview?.item ? <DesignThumb design={preview.item.design} catalog={catalog} size={32} /> : null}
+          </span>
           <div className="min-w-0 flex-1">
-            <div className="truncate font-medium text-paper-900">{order.title || `Cotización N° ${order.quoteNumber}`}</div>
-            <div className="mt-0.5 truncate text-[13px] text-paper-600">
-              {[order.clientName, `Cotización N° ${order.quoteNumber}`].filter(Boolean).join(' · ')}
+            <div className="flex min-w-0 items-baseline gap-2">
+              <span className="shrink-0 text-table text-fg-muted tabular">{orderLabel(order.number)}</span>
+              <span className="truncate font-medium text-fg-strong">{order.title || quoteLabel}</span>
             </div>
+            <div className="truncate text-table text-fg-muted">{[order.clientName, quoteLabel].filter(Boolean).join(' · ')}</div>
           </div>
-          <ChevronRight aria-hidden strokeWidth={1.75} className="size-4 shrink-0 text-paper-350 @2xl:hidden" />
+          <ChevronRight aria-hidden strokeWidth={1.75} className="size-4 shrink-0 text-fg-faint @2xl:hidden" />
         </div>
 
-        <div className="hidden min-w-0 items-center gap-2.5 @5xl:flex">
-          {preview?.item ? (
-            <DesignThumb design={preview.item.design} catalog={catalog} size={36} className="rounded-xs bg-paper-50" />
-          ) : null}
-          <div className="min-w-0 text-[13px] leading-[18px]">
-            <div className="text-paper-900 tabular">{windowsLabel(progress.total)}</div>
-            {units && units !== progress.total ? <div className="text-paper-600 tabular">{units} unidades</div> : null}
-          </div>
+        <div className="hidden min-w-0 text-table @5xl:block">
+          <div className="text-fg tabular">{windows}</div>
+          {unitsText ? <div className="text-fg-muted tabular">{unitsText}</div> : null}
         </div>
 
         <div className="flex min-w-0 flex-col gap-1.5">
-          <div className="flex items-baseline justify-between gap-3 text-[13px]">
-            <span className="truncate text-paper-600">
-              {order.status === 'in_progress' ? progressText(progress) : status.label}
+          <div className="flex items-baseline justify-between gap-3 text-table">
+            <span className="truncate text-fg-muted">
+              {order.status === 'in_progress' ? progressText(progress, t.locale) : g.workOrderStatus(order.status)}
             </span>
-            <span className="shrink-0 font-medium text-paper-900 tabular">{percent(progress.ratio)}</span>
+            <span className="shrink-0 font-medium text-fg tabular">{percent(progress.ratio)}</span>
           </div>
-          <ProgressBar ratio={progress.ratio} label={`Avance de la OT N° ${order.number}: ${percent(progress.ratio)}`} />
+          <ProgressBar ratio={progress.ratio} label={t('list.progressLabel', { order: orderLabel(order.number), pct: percent(progress.ratio) })} />
         </div>
 
-        <div className="flex min-w-0 items-center justify-between gap-3 text-[13px] @2xl:block">
+        <div className="flex min-w-0 items-center justify-between gap-3 text-table @2xl:block">
           {/* Tarjeta: el conteo a la izquierda y la entrega a la derecha (ella ya dice «Entrega…»). */}
-          <span className="text-paper-600 tabular @2xl:hidden">
-            {windowsLabel(progress.total)}
-            {units && units !== progress.total ? ` · ${units} unidades` : null}
+          <span className="text-fg-muted tabular @2xl:hidden">
+            {windows}
+            {unitsText ? ` · ${unitsText}` : null}
           </span>
           <span className="flex min-w-0 flex-col items-end @2xl:items-start">
             <span className="flex max-w-full min-w-0 @2xl:hidden">
@@ -115,15 +121,9 @@ function OrderRow({ order, preview, catalog, now }: { order: WorkOrder; preview?
             <span className="hidden max-w-full min-w-0 @2xl:flex">
               <DueText due={due} compact />
             </span>
-            {due.date && due.tone !== 'done' ? <span className="hidden text-meta text-paper-600 tabular @2xl:block">{due.date}</span> : null}
+            {due.date && due.tone !== 'done' ? <span className="hidden text-meta text-fg-muted tabular @2xl:block">{due.date}</span> : null}
           </span>
         </div>
-
-        <ChevronRight
-          aria-hidden
-          strokeWidth={1.75}
-          className="hidden size-4 text-paper-350 transition-transform duration-160 ease-out group-hover:translate-x-0.5 group-hover:text-paper-600 @2xl:block"
-        />
       </Link>
     </li>
   )

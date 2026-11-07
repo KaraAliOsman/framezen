@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { and, asc, count, eq, gt, isNull } from 'drizzle-orm'
 import { z } from 'zod'
-import { PLANS, ROLE_COPY, planSeats, type InvitationInfo, type InviteResponse, type PendingInvitation, type Role, type TeamMember, type TeamResponse } from '@framezen/shared'
+import { PLANS, ROLE_COPY, planSeats, type InvitationInfo, type InviteResponse, type PendingInvitation, type Role, type TeamMember, type TeamResponse } from '@dekopen/shared'
 import type { AppDeps, AppEnv } from '../context'
 import type { Db } from '../db/client'
 import { invitations, memberships, orgs, sessions, subscriptions, users } from '../db/schema'
@@ -13,6 +13,7 @@ import { requireOwner, requireWritable } from '../middleware/auth'
 import { firstName, logActivity } from '../services/activity'
 import { mailQuotaError, takeMailQuota } from '../services/outbound'
 import { buildMe, clientIp, createSession, resolveSession } from '../services/session'
+import { invitationMail, mailLocale } from '../services/mail'
 import { loadAuth } from './auth'
 
 const INVITE_TTL_MS = 7 * 86_400_000
@@ -111,11 +112,8 @@ export function teamRoutes(deps: AppDeps) {
     const link = `${deps.config.appUrl}/invitacion/${token}`
     if (body.email) {
       try {
-        await deps.mailer.send({
-          to: body.email,
-          subject: `${user.name} te invitó a ${org.name} en Framezen`,
-          text: `Hola:\n\n${user.name} te invitó a sumarte a ${org.name} en Framezen como ${ROLE_COPY[body.role].name.toLowerCase()}.\n\nAbre este enlace para entrar (vale por 7 días):\n${link}`,
-        })
+        // Quien recibe aún no tiene cuenta: va en el idioma de la empresa (services/mail).
+        await deps.mailer.send({ to: body.email, ...invitationMail(mailLocale(org.locale), { inviterName: user.name, orgName: org.name, role: body.role, link }) })
       } catch (error) {
         deps.logger.warn('No se pudo enviar el correo de invitación; el enlace igual sirve.', error)
       }

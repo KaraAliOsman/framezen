@@ -1,10 +1,18 @@
-// Documentos de taller de Framezen: componentes React imprimibles (Carta/A4).
+// Documentos de taller de DEKOPEN: componentes React imprimibles (Carta/A4).
 export type { WorkshopDocumentData, WorkshopDocumentProps, WorkshopPaper, WorkshopSale } from './types'
 
 export { WorkOrderDocument, WORKSHOP_STATIONS } from './work-order'
 export type { WorkOrderDocumentProps } from './work-order'
-export { CutOptimizationDocument } from './optimization'
+export { CutOptimizationDocument, cutIssueText, planWarnings } from './optimization'
 export type { CutOptimizationDocumentProps } from './optimization'
+export { CutOrderDocument } from './cut-order'
+export type { CutOrderDocumentProps } from './cut-order'
+export { GlassPlanDocument, glassTemplates } from './glass-plan'
+export type { GlassTemplate } from './glass-plan'
+export { CouplersDocument, HardwarePlanDocument, ReinforcementDocument, ScreensDocument, hasCouplers, hasScreens } from './plans'
+export { CoverDocument, InstallationDocument, SurveyDocument } from './site'
+export { auditCutPlan, barGeometry, barPieceIds, groupSaw, groupWeld, isSpecialBar, kerfAlongBar, shortFace, unbackedLines } from './bars'
+export type { BarGeometry, BarPieceId, BarPieceRow, CutIssue, CutIssueCode, CutOrigin, UnbackedLine } from './bars'
 export { GlassListDocument, groupGlassLines } from './glass'
 export type { GlassGroup } from './glass'
 export { MaterialsDocument, WORKSHOP_MATERIAL_GROUPS } from './materials'
@@ -18,12 +26,16 @@ export type { LabelsDocumentProps, WorkshopLabel, WorkshopLabelOptions } from '.
 export { PurchaseOrderDocument } from './purchase-order'
 export type { PurchaseOrderDocumentProps } from './purchase-order'
 
+export { availableCutParts, CUT_PART_KINDS, cutPartOf, filterCutParts, parseCutParts } from './parts'
+export type { CutPartKind } from './parts'
 export { WorkshopDocument, WORKSHOP_DOCUMENTS } from './registry'
 export type { WorkshopDocumentInfo, WorkshopDocumentKind, WorkshopDocumentSwitchProps } from './registry'
 
 export { WorkshopQr, workshopQrMatrix, workshopQrPath } from './qr'
 export type { WorkshopQrLevel, WorkshopQrProps } from './qr'
 export { workshopPieceCodes } from './helpers'
+export { workshopI18n } from './locale'
+export type { WorkshopI18n } from './locale'
 export type { WorkshopPieceUnit } from './helpers'
 export { workshopCss, workshopPageRule, WORKSHOP_CSS, WORKSHOP_PAPER_SIZES } from './styles'
 export { fitWorkshopSheets, WORKSHOP_FIT_SCRIPT } from './fit'

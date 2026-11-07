@@ -5,7 +5,7 @@ const CSV =
   '﻿ID;Marca;Tipo;Código;Descripción;Linea;Color;;;Precio\r\n' +
   '1;Perfiles de ejemplo;Perfil · Marco;S60-01NO;Marco 60;Serie 60 Practicable;NOGAL;$;CLP;41000,00\r\n' +
   '2;Perfiles de ejemplo;Perfil · Refuerzo;S60-R1;Refuerzo de marco;;;$;CLP;12000,00\r\n' +
-  '3;Genéricos Framezen;Herraje;FZ-BISAGRA-VENTANA;Bisagra de ventana 2D;;;$;CLP;2500,00\r\n' +
+  '3;Genéricos DEKOPEN;Herraje;FZ-BISAGRA-VENTANA;Bisagra de ventana 2D;;;$;CLP;2500,00\r\n' +
   '4;Vidrios de ejemplo;Vidrio;;DVH 4+12+4;;;$;CLP;35000,00\r\n' +
   '5;Perfiles de ejemplo;Perfil · Hoja;S60-02BL;Hoja de ventana 78;;BLANCO;$;CLP;1,00\r\n' +
   '6;Perfiles de ejemplo;Perfil · Hoja;ZZ-99;Perfil que no existe;;BLANCO;$;CLP;5000,00\r\n'
@@ -42,7 +42,7 @@ describe('matchMisPrecios calza por tipo de fila', () => {
   it('una fila de vidrio calza con vidrios y una de herraje con su artículo', () => {
     const csv =
       '\uFEFFID;Marca;Tipo;Código;Descripción;Linea;Color;;;Precio\r\n' +
-      '1;Genéricos Framezen;Herraje · Herraje;FZ-MANILLA-VENTANA;Manilla de ventana;;;$;CLP;3100,00\r\n' +
+      '1;Genéricos DEKOPEN;Herraje · Herraje;FZ-MANILLA-VENTANA;Manilla de ventana;;;$;CLP;3100,00\r\n' +
       '2;Vidrios de ejemplo;Vidrio · V.DVH;;DVH 5+12+5;;;$;CLP;41000,00\r\n'
     const result = matchMisPrecios(SAMPLE_CATALOG, parseMisPreciosCsv(csv))
     expect(result.overrides).toEqual(

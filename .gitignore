@@ -7,6 +7,8 @@ coverage/
 test-results/
 playwright-report/
 .DS_Store
+.claude/settings.local.json
+CLAUDE.local.md
 
 # Variables de entorno: ningún .env* se versiona, en ninguna carpeta (Vite también lee .env.[modo] y
 # .env.[modo].local dentro de apps/web). Las variables están documentadas en README.md. Si algún día se

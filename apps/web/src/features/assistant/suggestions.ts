@@ -1,25 +1,30 @@
 /**
- * Ideas para Marco según la pantalla: en el editor, sobre la cotización abierta; fuera de él,
- * para empezar una obra o moverse por la app. Son frases que el modo local también entiende.
+ * Ideas para el asistente según la pantalla: en el editor, sobre la cotización abierta; fuera de él,
+ * para empezar una obra o moverse por la app. Son frases que el intérprete local entiende (en el
+ * idioma de la interfaz).
  */
+import type { MessageKey } from '@dekopen/shared'
+import { translate } from '../../lib/i18n'
 import type { QuoteEditorBridge } from './bridge'
+import es from './i18n/es'
 
 export function suggestionsFor(route: string, bridge: QuoteEditorBridge | null): string[] {
+  const t = (key: MessageKey<typeof es>, params?: Record<string, string>) => translate(es, key, params)
   if (bridge) {
     const quote = bridge.getQuote()
     const items = quote.items
-    if (!items.length) return ['Agrega una corredera de 1.500 × 1.200', 'Dos oscilobatientes de 60 × 120', 'Una puerta de 900 × 2.100 para la entrada']
+    if (!items.length) return [t('ideas.emptyQuote.a'), t('ideas.emptyQuote.b'), t('ideas.emptyQuote.c')]
     const selected = items.find((i) => i.id === bridge.selectedItemId()) ?? items[items.length - 1]
     const ref = selected?.ref || 'V1'
-    const list = [`Explica el precio de la ${ref}`, quote.discountPct ? 'Quita el descuento' : 'Aplica 5 % de descuento', `Duplica la ${ref}`]
-    if (items.length > 1) list.splice(2, 0, 'Cambia todo a nogal')
-    else list.push('Ponle termopanel')
-    if (!quote.clientId) list.push('Cliente Juan Pérez')
-    list.push('Muéstrame el documento')
+    const list = [t('ideas.explain', { ref }), quote.discountPct ? t('ideas.removeDiscount') : t('ideas.addDiscount'), t('ideas.duplicate', { ref })]
+    if (items.length > 1) list.splice(2, 0, t('ideas.colorAll'))
+    else list.push(t('ideas.glass'))
+    list.push(t('ideas.document'))
     return list.slice(0, 4)
   }
-  if (route.startsWith('/cotizaciones')) return ['Nueva cotización con una corredera de 1.500 × 1.200', 'Busca a Pérez', 'Abre la cotización 1']
-  if (route.startsWith('/clientes')) return ['Busca el cliente Soto', 'Nueva cotización para Juan Pérez', 'Ve a cotizaciones']
-  if (route.startsWith('/taller')) return ['Ve a cotizaciones', 'Busca a Pérez', 'Nueva cotización']
-  return ['Cotiza una corredera de 1.500 × 1.200', 'Busca a Pérez', 'Llévame al taller']
+  const pick = (key: 'quotes' | 'clients' | 'workshop' | 'general') => Object.keys(es.ideas[key]).map((k) => t(`ideas.${key}.${k}` as MessageKey<typeof es>))
+  if (route.startsWith('/cotizaciones')) return pick('quotes')
+  if (route.startsWith('/clientes')) return pick('clients')
+  if (route.startsWith('/taller')) return pick('workshop')
+  return pick('general')
 }

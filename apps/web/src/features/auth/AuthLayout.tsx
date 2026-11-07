@@ -1,18 +1,31 @@
-import { useId, type ReactNode } from 'react'
+import { lazy, Suspense, useSyncExternalStore, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import { FramezenLogo, WindowSketch, type SketchKind } from '../../ui'
-import { formatSize } from '../../lib/format'
+import { CircleAlert } from 'lucide-react'
+import { LanguageSelect } from '../../app/shell/LanguageMenu'
+import { useT } from '../../lib/i18n'
 import { usePageTitle } from '../../lib/usePageTitle'
+import { DekopenLogo } from '../../ui'
+import type { AuthArtSpec } from './AuthArt'
+import es from './i18n/es'
 
-export interface AuthArt {
-  kind: SketchKind
-  width: number
-  height: number
-  /** Nombre de la tipología para el rótulo del plano. */
-  label: string
-  /** Frase protagonista del panel. */
-  phrase: ReactNode
-  caption: ReactNode
+export type { AuthArtSpec } from './AuthArt'
+
+const AuthArt = lazy(() => import('./AuthArt'))
+
+const WIDE_QUERY = '(min-width: 1024px)'
+
+/** ¿Pantalla ancha (≥ 1024 px)? El panel con el dibujo solo se descarga y dibuja ahí. */
+function useWide(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return () => {}
+      const query = window.matchMedia(WIDE_QUERY)
+      query.addEventListener('change', onChange)
+      return () => query.removeEventListener('change', onChange)
+    },
+    () => (typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(WIDE_QUERY).matches : false),
+    () => false,
+  )
 }
 
 export interface AuthLayoutProps {
@@ -20,97 +33,60 @@ export interface AuthLayoutProps {
   pageTitle: string
   title: ReactNode
   subtitle?: ReactNode
-  /** Enlace arriba a la derecha («¿No tienes cuenta? Crear cuenta»). */
+  /** Enlace bajo el formulario («¿No tienes cuenta? Crear cuenta»). */
   aside?: ReactNode
-  art: AuthArt
+  art: AuthArtSpec
   children: ReactNode
 }
 
-/** Papel milimetrado muy tenue, dibujado con un patrón SVG (sin degradados). */
-function DraftingGrid() {
-  const id = useId()
-  return (
-    <svg aria-hidden className="absolute inset-0 size-full text-paper-200" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <pattern id={`${id}-minor`} width="12" height="12" patternUnits="userSpaceOnUse">
-          <path d="M12 0H0V12" fill="none" stroke="currentColor" strokeWidth="0.5" opacity="0.55" />
-        </pattern>
-        <pattern id={`${id}-major`} width="60" height="60" patternUnits="userSpaceOnUse">
-          <rect width="60" height="60" fill={`url(#${id}-minor)`} />
-          <path d="M60 0H0V60" fill="none" stroke="currentColor" strokeWidth="0.75" />
-        </pattern>
-      </defs>
-      <rect width="100%" height="100%" fill={`url(#${id}-major)`} />
-    </svg>
-  )
-}
-
-/** Acceso: formulario a la izquierda, plano de una ventana con una frase a la derecha. */
+/**
+ * Acceso: formulario angosto y centrado a la izquierda, con una sola primaria de ancho completo; a
+ * la derecha, sobre el marco, una ventana real a gran tamaño y nada más. Teléfono: una columna.
+ */
 export function AuthLayout({ pageTitle, title, subtitle, aside, art, children }: AuthLayoutProps) {
+  const t = useT(es)
+  const wide = useWide()
   usePageTitle(pageTitle)
   return (
-    <div className="grid min-h-dvh bg-paper-50 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+    <div className="grid min-h-dvh bg-canvas text-fg lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
       <div className="flex min-h-dvh flex-col px-6 py-5 sm:px-10">
         <header className="flex items-center justify-between gap-4">
-          <Link to="/" className="rounded-sm text-paper-900" aria-label="Framezen, página principal">
-            <FramezenLogo size="md" />
+          <Link to="/" className="rounded-sm text-fg-strong" aria-label={t('layout.home')}>
+            <DekopenLogo size="md" />
           </Link>
-          {aside ? <div className="text-[13px] text-paper-600">{aside}</div> : null}
+          <LanguageSelect />
         </header>
 
         <main className="flex flex-1 items-center justify-center py-12">
-          <div className="w-full max-w-[380px]">
-            <h1 className="text-h2 font-semibold tracking-[-0.015em] text-paper-900">{title}</h1>
-            {subtitle ? <p className="mt-1.5 text-paper-600">{subtitle}</p> : null}
+          <div className="w-full max-w-[360px]">
+            <h1 className="font-display text-h1 font-medium text-fg-strong">{title}</h1>
+            {subtitle ? <p className="mt-2 text-base text-fg-muted">{subtitle}</p> : null}
             <div className="mt-8">{children}</div>
+            {aside ? <p className="mt-6 text-table text-fg-muted">{aside}</p> : null}
           </div>
         </main>
 
-        <footer className="flex flex-wrap items-center justify-between gap-2 text-meta text-paper-600">
-          <span>Hecho en Chile para talleres de ventanas.</span>
-          <span>© {new Date().getFullYear()} Framezen</span>
-        </footer>
+        <footer className="text-meta text-fg-muted">{t('layout.copyright', { year: new Date().getFullYear() })}</footer>
       </div>
 
-      <aside aria-hidden className="relative hidden overflow-hidden border-l border-paper-200 bg-paper-100 lg:block">
-        <DraftingGrid />
-        <div className="relative flex h-full flex-col justify-between p-12 xl:p-16">
-          <div className="flex flex-1 items-center justify-center py-8">
-            <WindowSketch kind={art.kind} width={art.width} height={art.height} dimensions size={360} className="text-paper-600" />
-          </div>
-          <div className="flex items-end justify-between gap-10">
-            <div className="max-w-md">
-              <p className="text-[28px] leading-[36px] font-semibold tracking-[-0.02em] text-paper-900">{art.phrase}</p>
-              <p className="mt-3 text-lead text-paper-600">{art.caption}</p>
-            </div>
-            {/* Rótulo de plano, como en una lámina técnica. */}
-            <dl className="hidden shrink-0 border border-paper-350/50 bg-paper-50/80 text-meta text-paper-600 xl:block">
-              <div className="flex gap-6 border-b border-paper-350/50 px-3 py-1.5">
-                <dt>Lámina</dt>
-                <dd className="ml-auto font-medium text-paper-900">V1</dd>
-              </div>
-              <div className="flex gap-6 border-b border-paper-350/50 px-3 py-1.5">
-                <dt>Tipología</dt>
-                <dd className="ml-auto font-medium text-paper-900">{art.label}</dd>
-              </div>
-              <div className="flex gap-6 px-3 py-1.5">
-                <dt>Medidas</dt>
-                <dd className="ml-auto font-medium text-paper-900 tabular">{formatSize(art.width, art.height)}</dd>
-              </div>
-            </dl>
-          </div>
-        </div>
+      <aside data-frame aria-hidden className="relative hidden overflow-hidden bg-frame lg:block">
+        {wide ? (
+          <Suspense fallback={null}>
+            <AuthArt art={art} />
+          </Suspense>
+        ) : null}
       </aside>
     </div>
   )
 }
 
-/** Mensaje de error de formulario (no de un campo). */
+/** Mensaje de error de formulario (no de un campo): qué pasó y cómo seguir. */
 export function FormError({ children }: { children: ReactNode }) {
   if (!children) return null
   return (
-    <div role="alert" className="rounded-sm border border-bad-600/25 bg-bad-50 px-3 py-2.5 text-[13px] leading-[18px] text-bad-800">
-      {children}
+    <div role="alert" className="flex items-start gap-2.5 rounded-control bg-danger-bg px-3 py-2.5 text-table text-fg">
+      <CircleAlert aria-hidden strokeWidth={2} className="mt-0.5 size-3.5 shrink-0 text-danger" />
+      <span className="min-w-0">{children}</span>
     </div>
   )
 }

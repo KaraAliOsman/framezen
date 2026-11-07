@@ -1,39 +1,32 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { DEFAULT_CUT, formatMM, optimizeCuts, sanitizeCut, type Bar, type CutSettings } from '@framezen/engine'
-import type { OrgSettings } from '@framezen/shared'
-import { cn } from '../../../lib/cn'
-import { useSettings, useUpdateSettings } from '../../../lib/hooks'
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Link } from 'react-router'
+import { DEFAULT_CUT, sanitizeCut, type CutSettings } from '@dekopen/engine'
+import type { OrgSettings } from '@dekopen/shared'
+import { useCatalog, useSettings, useUpdateSettings } from '../../../lib/hooks'
+import { useFormat, useT } from '../../../lib/i18n'
 import { NumberField, Skeleton } from '../../../ui'
+import { SawDiagram, SawLetter } from '../../workshop/diagram/SawDiagram'
+import { sawPlan, sawSampleOf, type SawParam, type SawSample } from '../../workshop/diagram/sawModel'
 import { LoadError } from '../components/LoadError'
-import { SectionHeader } from '../components/SectionHeader'
+import { FieldGroup, SaveError, SectionHeader } from '../components/SectionHeader'
 import { SettingRow } from '../components/SettingRow'
+import es from '../i18n/es'
 import { combineStatus, useAutosave } from '../lib/useAutosave'
-
-/** Piezas de muestra: marco de una corredera 1.500 × 1.200 y de una ventana 900 de ancho. */
-const SAMPLE_PIECES = [
-  { key: 'marco', length: 1506, qty: 2, label: 'V1 · arr/aba', ref: 'V1' },
-  { key: 'marco', length: 1206, qty: 2, label: 'V1 · izq/der', ref: 'V1' },
-  { key: 'marco', length: 906, qty: 2, label: 'V2 · arr/aba', ref: 'V2' },
-]
-
-export function sampleBars(cut: CutSettings): Bar[] {
-  try {
-    return optimizeCuts(SAMPLE_PIECES, cut).groups[0]?.bars.slice(0, 2) ?? []
-  } catch {
-    return []
-  }
-}
 
 type NumberingPatch = Pick<OrgSettings, 'nextQuoteNumber' | 'nextWorkOrderNumber'>
 
-/** Taller: barra, sierra, despuntes, retazos y numeración. */
+/** Taller: barra, sierra, despuntes, retazos y numeración, con el banco de corte dibujado. */
 export function WorkshopSection() {
+  const t = useT(es)
+  const fmt = useFormat()
   const settings = useSettings()
+  const catalog = useCatalog()
   const update = useUpdateSettings()
   const cutSave = useAutosave<{ cut: CutSettings }>((patch) => update.mutateAsync(patch), { key: 'settings:cut' })
   const numberSave = useAutosave<Partial<NumberingPatch>>((patch) => update.mutateAsync(patch), { delay: 900, key: 'settings:numbers' })
   const [cut, setCut] = useState<CutSettings | null>(null)
   const [numbers, setNumbers] = useState<NumberingPatch | null>(null)
+  const [active, setActive] = useState<SawParam | null>(null)
   const latest = useRef<CutSettings | null>(null)
 
   useEffect(() => {
@@ -63,17 +56,18 @@ export function WorkshopSection() {
   }
 
   const deferred = useDeferredValue(cut)
-  const bars = useMemo(() => (deferred ? sampleBars(deferred) : []), [deferred])
+  const sample = useMemo(() => sawSampleOf(catalog.data, settings.data?.defaults?.lineId), [catalog.data, settings.data?.defaults?.lineId])
+  const plan = useMemo(() => (sample && deferred ? sawPlan(sample, deferred) : null), [sample, deferred])
 
   if (!cut || !numbers) {
     return (
       <div>
-        <SectionHeader title="Taller" description="Cómo cortas: barra, sierra, despuntes y retazos." />
+        <SectionHeader title={t('workshop.title')} description={t('workshop.descriptionShort')} />
         {settings.isError && !settings.data ? (
-          <LoadError title="No pudimos cargar los ajustes del taller" error={settings.error} onRetry={() => void settings.refetch()} />
+          <LoadError title={t('workshop.loadError')} error={settings.error} onRetry={() => void settings.refetch()} />
         ) : (
           <>
-            <Skeleton className="mb-6 h-40" />
+            <Skeleton className="mb-8 h-40" />
             <div className="space-y-4">
               {Array.from({ length: 4 }, (_, i) => (
                 <Skeleton key={i} className="h-14" />
@@ -85,61 +79,91 @@ export function WorkshopSection() {
     )
   }
 
+  const row = (param: SawParam, title: string, description: ReactNode, control: ReactNode, htmlFor?: string) => (
+    <div className="py-3 first:pt-0 last:pb-0" onFocus={() => setActive(param)} onBlur={() => setActive(null)} onPointerEnter={() => setActive(param)} onPointerLeave={() => setActive(null)}>
+      <SettingRow
+        className="!py-0"
+        htmlFor={htmlFor}
+        title={
+          <span className="inline-flex items-center gap-2">
+            <SawLetter param={param} active={active === param} />
+            {title}
+          </span>
+        }
+        description={description}
+      >
+        {control}
+      </SettingRow>
+    </div>
+  )
+
+  const stock = sample?.stockLength ?? null
+  const stockDiffers = stock !== null && cut.barLength !== stock
+
   return (
     <div>
       <SectionHeader
-        title="Taller"
-        description="Cómo cortas en tu taller. Con esto optimizamos las barras de cada OT y calculamos lo que sobra."
+        title={t('workshop.title')}
+        description={t('workshop.description')}
         status={combineStatus(cutSave.status, numberSave.status)}
         savedAt={numberSave.savedAt ?? cutSave.savedAt}
       />
-      {cutSave.error || numberSave.error ? (
-        <p role="alert" className="mb-5 rounded-md border border-bad-600/20 bg-bad-50 px-3 py-2 text-[13px] text-bad-800">
-          {cutSave.error ?? numberSave.error}
-        </p>
-      ) : null}
+      <SaveError message={cutSave.error ?? numberSave.error} />
 
-      <BarPreview bars={bars} cut={cut} />
-
-      <div className="@container mt-8">
-        <SettingRow title="Largo de barra" htmlFor="cut-bar" description="El largo de las barras que compras. Casi todas las marcas venden de 5.800 mm.">
-          <NumberField id="cut-bar" value={cut.barLength} onChange={(v) => v !== null && change({ barLength: v })} min={1000} max={12000} step={100} bigStep={500} decimals={0} className="w-40" />
-        </SettingRow>
-        <SettingRow title="Corte de sierra" htmlFor="cut-kerf" description="Lo que se come el disco en cada corte. Si no lo sabes, deja 4 mm.">
-          <NumberField id="cut-kerf" value={cut.kerf} onChange={(v) => v !== null && change({ kerf: v })} min={0} max={20} step={0.5} bigStep={1} className="w-40" />
-        </SettingRow>
-        <SettingRow
-          title="Despunte"
-          description="Lo que cortas al inicio y al final de cada barra para dejar los extremos limpios. Muchos talleres usan 0 al final."
-        >
-          <div className="grid grid-cols-2 gap-3">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-meta text-paper-600">Al inicio</span>
-              <NumberField aria-label="Despunte al inicio" value={cut.trimStart} onChange={(v) => v !== null && change({ trimStart: v })} min={0} max={500} step={5} bigStep={50} />
-            </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-meta text-paper-600">Al final</span>
-              <NumberField aria-label="Despunte al final" value={cut.trimEnd} onChange={(v) => v !== null && change({ trimEnd: v })} min={0} max={500} step={5} bigStep={50} />
-            </label>
+      <div className="flex flex-col gap-10">
+        {sample ? (
+          <div className="@container flex flex-col gap-5">
+            <SawDiagram cut={deferred ?? cut} sample={sample} active={active} onActive={setActive} />
+            {plan ? <LiveResult sample={sample} plan={plan} cut={cut} /> : null}
           </div>
-        </SettingRow>
-        <SettingRow
-          title="Retazo reutilizable"
-          htmlFor="cut-reuse"
-          description="Desde este largo, lo que sobra se guarda como retazo para usarlo en la próxima obra. Lo más corto se considera pérdida."
-        >
-          <NumberField id="cut-reuse" value={cut.minReusable} onChange={(v) => v !== null && change({ minReusable: v })} min={0} max={6000} step={50} bigStep={250} decimals={0} className="w-40" />
-        </SettingRow>
-      </div>
+        ) : catalog.isPending ? (
+          <Skeleton className="h-72" />
+        ) : (
+          <p className="rounded-sm bg-sunken px-4 py-3 text-table text-fg-muted">{t('workshop.saw.noLine')}</p>
+        )}
 
-      <div className="mt-10">
-        <h3 className="border-b border-paper-200 pb-2 text-[13px] font-semibold tracking-[0.01em] text-paper-900">Numeración</h3>
-        <p className="mt-2 max-w-2xl text-[13px] leading-[19px] text-paper-600">
-          ¿Vienes de otro sistema o de una planilla? Escribe el número que sigue al último que usaste y continuamos desde ahí. Si ese número
-          ya está ocupado, saltamos solos al siguiente libre.
-        </p>
-        <div className="@container mt-5">
-          <SettingRow title="Próxima cotización" htmlFor="next-quote" description={`La siguiente que crees será la N° ${numbers.nextQuoteNumber}.`}>
+        <FieldGroup title={t('workshop.cut.title')} description={t('workshop.cut.description')} bodyClassName="@container">
+          {row(
+            'barLength',
+            t('workshop.barLength.title'),
+            stockDiffers && sample ? t('workshop.barLength.differs', { code: sample.code, stock: fmt.mm(stock, { unit: true }) }) : t('workshop.barLength.catalog'),
+            <NumberField id="cut-bar" value={cut.barLength} onChange={(v) => v !== null && change({ barLength: v })} min={1000} max={12000} step={100} bigStep={500} decimals={0} className="w-40" />,
+            'cut-bar',
+          )}
+          {row(
+            'kerf',
+            t('workshop.kerf.title'),
+            t('workshop.kerf.description'),
+            <NumberField id="cut-kerf" value={cut.kerf} onChange={(v) => v !== null && change({ kerf: v })} min={0} max={20} step={0.5} bigStep={1} className="w-40" />,
+            'cut-kerf',
+          )}
+          {row(
+            'trimStart',
+            t('workshop.trim.startTitle'),
+            t('workshop.trim.description'),
+            <NumberField id="cut-trim-start" aria-label={t('workshop.trim.startAria')} value={cut.trimStart} onChange={(v) => v !== null && change({ trimStart: v })} min={0} max={500} step={5} bigStep={50} className="w-40" />,
+            'cut-trim-start',
+          )}
+          {row(
+            'trimEnd',
+            t('workshop.trim.endTitle'),
+            t('workshop.trim.endDescription'),
+            <NumberField id="cut-trim-end" aria-label={t('workshop.trim.endAria')} value={cut.trimEnd} onChange={(v) => v !== null && change({ trimEnd: v })} min={0} max={500} step={5} bigStep={50} className="w-40" />,
+            'cut-trim-end',
+          )}
+          {row(
+            'minReusable',
+            t('workshop.reuse.title'),
+            t('workshop.reuse.description'),
+            <NumberField id="cut-reuse" value={cut.minReusable} onChange={(v) => v !== null && change({ minReusable: v })} min={0} max={6000} step={50} bigStep={250} decimals={0} className="w-40" />,
+            'cut-reuse',
+          )}
+        </FieldGroup>
+
+        {sample ? <FromLine sample={sample} row={row} /> : null}
+
+        <FieldGroup title={t('workshop.numbering.title')} description={t('workshop.numbering.description')} bodyClassName="@container">
+          <SettingRow title={t('workshop.numbering.nextQuote')} htmlFor="next-quote" description={t('workshop.numbering.nextQuoteHint', { number: fmt.docNumber(numbers.nextQuoteNumber) })}>
             <NumberField
               id="next-quote"
               value={numbers.nextQuoteNumber}
@@ -154,7 +178,7 @@ export function WorkshopSection() {
               inputClassName="text-left"
             />
           </SettingRow>
-          <SettingRow title="Próxima orden de trabajo" htmlFor="next-ot" description={`La siguiente OT será la N° ${numbers.nextWorkOrderNumber}.`}>
+          <SettingRow title={t('workshop.numbering.nextOt')} htmlFor="next-ot" description={t('workshop.numbering.nextOtHint', { number: fmt.docNumber(numbers.nextWorkOrderNumber) })}>
             <NumberField
               id="next-ot"
               value={numbers.nextWorkOrderNumber}
@@ -169,96 +193,62 @@ export function WorkshopSection() {
               inputClassName="text-left"
             />
           </SettingRow>
+        </FieldGroup>
+      </div>
+    </div>
+  )
+}
+
+/** Efecto en vivo de los ajustes sobre el marco de muestra. */
+function LiveResult({ sample, plan, cut }: { sample: SawSample; plan: ReturnType<typeof sawPlan>; cut: CutSettings }) {
+  const t = useT(es)
+  const fmt = useFormat()
+  const rest = plan.geo?.remainder ?? 0
+  const cells: [string, string][] = [
+    [t('workshop.saw.bars'), fmt.number(plan.count)],
+    [t('workshop.saw.yield'), fmt.pct(plan.yieldPct, 1)],
+    [plan.geo?.reusable ? t('workshop.saw.offcut') : t('workshop.saw.rest'), fmt.mm(rest, { unit: true })],
+    [t('workshop.saw.along', { angle: fmt.number(sample.miter, { maxDecimals: 1 }) }), fmt.mm(Math.round(plan.kerfAlong * 10) / 10, { unit: true })],
+  ]
+  return (
+    <dl className="grid grid-cols-2 gap-x-8 gap-y-3 border-t border-divider pt-4 @2xl:grid-cols-4" aria-live="polite" aria-label={t('workshop.saw.liveAria', { kerf: fmt.mm(cut.kerf, { unit: true }) })}>
+      {cells.map(([label, value]) => (
+        <div key={label} className="min-w-0">
+          <dt className="text-table text-fg-muted">{label}</dt>
+          <dd className="figure m-0 text-h3 font-medium text-fg-strong">{value}</dd>
         </div>
-      </div>
-    </div>
+      ))}
+    </dl>
   )
 }
 
-/** Dos barras de muestra cortadas con tus ajustes, dibujadas a escala. */
-function BarPreview({ bars, cut }: { bars: Bar[]; cut: CutSettings }) {
+/** Lo que no se edita aquí: ángulos, soldadura y acero salen de la línea, con su procedencia. */
+function FromLine({ sample, row }: { sample: SawSample; row: (param: SawParam, title: string, description: ReactNode, control: ReactNode) => ReactNode }) {
+  const t = useT(es)
+  const fmt = useFormat()
+  const origin = (o: SawSample['weldOrigin']) => t(`workshop.saw.origin.${o ?? 'own'}`)
+  const value = (text: string) => <p className="figure m-0 text-h4 font-medium text-fg-strong">{text}</p>
   return (
-    <figure className="rounded-lg border border-paper-200 bg-paper-0 p-4 sm:p-5">
-      <figcaption className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-        <span className="font-medium text-paper-900">Así cortamos con tus ajustes</span>
-        <span className="text-meta text-paper-600">Marcos de dos ventanas · barra de {formatMM(cut.barLength)} mm</span>
-      </figcaption>
-      <div className="flex flex-col gap-4">
-        {bars.map((bar, i) => (
-          <BarRow key={i} bar={bar} cut={cut} index={i} />
-        ))}
-      </div>
-      <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1.5 text-meta text-paper-600">
-        <Legend className="bg-ink-100 ring-1 ring-ink-600/40 ring-inset">Pieza</Legend>
-        <Legend className="bg-paper-900">Corte de sierra</Legend>
-        <Legend className="bg-[repeating-linear-gradient(135deg,var(--paper-350)_0_2px,transparent_2px_5px)]">Despunte y pérdida</Legend>
-        <Legend className="bg-ok-50 ring-1 ring-ok-600/40 ring-inset">Retazo para guardar</Legend>
-      </div>
-    </figure>
-  )
-}
-
-function Legend({ className, children }: { className: string; children: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span aria-hidden className={cn('inline-block h-2.5 w-4 rounded-[2px]', className)} />
-      {children}
-    </span>
-  )
-}
-
-function BarRow({ bar, cut, index }: { bar: Bar; cut: CutSettings; index: number }) {
-  const L = bar.barLength || cut.barLength
-  const pct = (mm: number) => `${(Math.max(0, mm) / L) * 100}%`
-  const lastEnd = bar.cuts.length ? Math.max(...bar.cuts.map((c) => c.offset + c.length)) : cut.trimStart
-  const remainderStart = L - cut.trimEnd - bar.remainder
-  const reusable = bar.remainder >= cut.minReusable && bar.remainder > 0
-  return (
-    <div>
-      <div className="mb-1.5 flex items-baseline justify-between gap-3 text-meta text-paper-600">
-        <span>Barra {index + 1}</span>
-        <span className="tabular">
-          Aprovechamiento <span className="font-medium text-paper-900">{bar.yieldPct.toLocaleString('es-CL', { maximumFractionDigits: 1 })} %</span>
-        </span>
-      </div>
-      <div className="relative h-11 overflow-hidden rounded-[3px] border border-paper-350/60 bg-paper-100" role="img" aria-label={`Barra ${index + 1}: ${bar.cuts.length} piezas, sobran ${formatMM(bar.remainder)} mm`}>
-        {cut.trimStart > 0 ? <Hatch left={0} width={pct(cut.trimStart)} /> : null}
-        {bar.cuts.map((c, i) => (
-          <div key={i}>
-            <div
-              className="absolute inset-y-1 flex flex-col items-center justify-center overflow-hidden rounded-[2px] bg-ink-100 px-1 text-center ring-1 ring-ink-600/40 ring-inset"
-              style={{ left: pct(c.offset), width: pct(c.length) }}
-            >
-              <span className="text-[12px] leading-none font-semibold text-ink-700 tabular">{formatMM(c.length)}</span>
-              <span className="mt-0.5 truncate text-[10px] leading-none text-ink-700/80 max-sm:hidden">{c.label}</span>
-            </div>
-            {cut.kerf > 0 ? <div className="absolute inset-y-0 bg-paper-900" style={{ left: pct(c.offset + c.length), width: `max(1px, ${pct(cut.kerf)})` }} /> : null}
-          </div>
-        ))}
-        {bar.remainder > 0 ? (
-          reusable ? (
-            <div
-              className="absolute inset-y-1 flex items-center justify-center overflow-hidden rounded-[2px] bg-ok-50 px-1 ring-1 ring-ok-600/40 ring-inset"
-              style={{ left: pct(Math.max(lastEnd + cut.kerf, remainderStart)), width: pct(bar.remainder) }}
-            >
-              <span className="truncate text-[11px] font-medium text-ok-800 tabular">Retazo {formatMM(bar.remainder)}</span>
-            </div>
-          ) : (
-            <Hatch left={pct(Math.max(lastEnd + cut.kerf, remainderStart))} width={pct(bar.remainder)} />
-          )
-        ) : null}
-        {cut.trimEnd > 0 ? <Hatch left={pct(L - cut.trimEnd)} width={pct(cut.trimEnd)} /> : null}
-      </div>
-    </div>
-  )
-}
-
-function Hatch({ left, width }: { left: string | number; width: string }) {
-  return (
-    <div
-      aria-hidden
-      className="absolute inset-y-0 bg-[repeating-linear-gradient(135deg,var(--paper-350)_0_2px,transparent_2px_5px)] opacity-70"
-      style={{ left, width }}
-    />
+    <FieldGroup
+      title={t('workshop.saw.lineTitle', { line: sample.lineName })}
+      description={
+        <>
+          {t('workshop.saw.lineHelp')}{' '}
+          <Link to="/catalogo?tab=lineas" className="font-medium text-accent hover:underline">
+            {t('workshop.saw.lineLink')}
+          </Link>
+        </>
+      }
+      bodyClassName="@container"
+    >
+      {row('miter', t('workshop.saw.miter'), `${t('workshop.saw.miterHelp')} ${origin(sample.cutOrigin)}`, value(`${fmt.number(sample.miter, { maxDecimals: 1 })}°`))}
+      {row('weld', t('workshop.saw.weld'), origin(sample.weldOrigin), value(sample.weld !== null ? t('workshop.saw.weldValue', { mm: fmt.mm(sample.weld) }) : t('workshop.saw.noData')))}
+      {row(
+        'steel',
+        t('workshop.saw.steel'),
+        sample.steel ? `${sample.steel.code} · ${origin(sample.cutOrigin)}` : t('workshop.saw.noSteel'),
+        value(sample.steel ? t('workshop.saw.steelValue', { mm: fmt.mm(Math.round((sample.steel.pieceLength - sample.steel.length) * 10) / 10) }) : t('workshop.saw.noData')),
+      )}
+    </FieldGroup>
   )
 }

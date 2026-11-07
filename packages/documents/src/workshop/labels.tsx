@@ -1,6 +1,8 @@
+import { barPieceIds } from './bars'
 import { AngleText, CutShape, DocRoot, Sheet } from './common'
 import { fmtGlassMm, fmtM2, fmtMm } from './format'
 import { chunk, colorInfo, sideWords, workshopPieceCodes } from './helpers'
+import { resolveWorkshopLocale, type WorkshopI18n } from './locale'
 import { WorkshopQr } from './qr'
 import { WORKSHOP_PAPER_SIZES } from './styles'
 import type { WorkshopDocumentData, WorkshopDocumentProps } from './types'
@@ -20,6 +22,8 @@ export interface WorkshopLabel {
   side?: string
   angles?: [number, number]
   extra?: string
+  /** De qué barra sale: «B3-2» (barra 3, pieza 2 de ese perfil). */
+  bar?: string
   qr: string
 }
 
@@ -65,6 +69,7 @@ export function workshopLabelCount(data: WorkshopDocumentData, opts: Pick<Worksh
 /** Todas las etiquetas de la OT: una por pieza física (y por vidrio), en orden de ventana. */
 export function workshopLabels(data: WorkshopDocumentData, opts: WorkshopLabelOptions = {}): WorkshopLabel[] {
   const qrValue = opts.qrValue ?? defaultQr
+  const barOf = barPositions(data)
   const max = opts.limit === undefined ? Infinity : Math.max(0, Math.floor(opts.limit))
   const labels: WorkshopLabel[] = []
   if (!(max > 0)) return labels
@@ -92,6 +97,8 @@ export function workshopLabels(data: WorkshopDocumentData, opts: WorkshopLabelOp
           side: sideWords(p.side),
           angles: [p.piece.angleStart, p.piece.angleEnd],
         }
+        const bar = barOf.get(`${p.code}:${unit}`)
+        if (bar) base.bar = bar
         if (push(base)) return labels
       }
       if (opts.includeGlass ?? true) {
@@ -119,6 +126,20 @@ export function workshopLabels(data: WorkshopDocumentData, opts: WorkshopLabelOp
   return labels
 }
 
+/** Barra y posición de cada pieza física: «V2-M03:1» → «B3-2». */
+function barPositions(data: WorkshopDocumentData): Map<string, string> {
+  const out = new Map<string, string>()
+  const ids = barPieceIds(data)
+  for (const list of ids.values()) {
+    list.forEach((bar, b) =>
+      bar.forEach((id, n) => {
+        if (id) out.set(`${id.code}:${id.unit}`, `B${b + 1}-${n + 1}`)
+      }),
+    )
+  }
+  return out
+}
+
 export interface LabelsDocumentProps extends WorkshopDocumentProps, WorkshopLabelOptions {
   /** «sheet» = hoja Carta/A4 con 10 etiquetas de 100 × 50 mm; «roll» = rollo térmico 100 × 50 mm. */
   format?: 'sheet' | 'roll'
@@ -127,7 +148,8 @@ export interface LabelsDocumentProps extends WorkshopDocumentProps, WorkshopLabe
 const PER_SHEET = 10
 
 /** Etiquetas de 100 × 50 mm por pieza con QR, código, perfil, medida grande y ángulos. */
-export function LabelsDocument({ data, paper = 'letter', format = 'sheet', includeGlass, qrValue, limit }: LabelsDocumentProps) {
+export function LabelsDocument({ data, paper = 'letter', format = 'sheet', includeGlass, qrValue, limit, locale, currency, taxLabel }: LabelsDocumentProps) {
+  const w = resolveWorkshopLocale({ locale, currency, taxLabel }, data)
   const labels = workshopLabels(data, { includeGlass, qrValue, limit })
   const size = WORKSHOP_PAPER_SIZES[paper]
   const padX = Math.max(0, (size.width - 200) / 2).toFixed(2)
@@ -143,19 +165,19 @@ export function LabelsDocument({ data, paper = 'letter', format = 'sheet', inclu
   const groups = format === 'roll' ? labels.map((l) => [l]) : chunk(labels, PER_SHEET)
 
   return (
-    <DocRoot data={data} paper={paper} pageRule={pageRule} extraCss={extraCss} kind="labels">
+    <DocRoot data={data} paper={paper} pageRule={pageRule} extraCss={extraCss} kind="labels" w={w}>
       {groups.map((group, i) =>
         format === 'roll' ? (
           <Sheet key={i} className="fzw-sheet-roll">
             {group.map((label) => (
-              <PieceLabel key={`${label.code}-${label.unit}`} label={label} data={data} />
+              <PieceLabel key={`${label.code}-${label.unit}`} label={label} data={data} w={w} />
             ))}
           </Sheet>
         ) : (
           <Sheet key={i} className="fzw-sheet-labels">
             <div className="fzw-labels-sheet">
               {group.map((label) => (
-                <PieceLabel key={`${label.code}-${label.unit}`} label={label} data={data} />
+                <PieceLabel key={`${label.code}-${label.unit}`} label={label} data={data} w={w} />
               ))}
             </div>
           </Sheet>
@@ -163,21 +185,21 @@ export function LabelsDocument({ data, paper = 'letter', format = 'sheet', inclu
       )}
       {labels.length === 0 ? (
         <Sheet>
-          <p className="fzw-muted">No hay piezas para etiquetar.</p>
+          <p className="fzw-muted">{w.t('labels.empty')}</p>
         </Sheet>
       ) : null}
     </DocRoot>
   )
 }
 
-function PieceLabel({ label, data }: { label: WorkshopLabel; data: WorkshopDocumentData }) {
+function PieceLabel({ label, data, w }: { label: WorkshopLabel; data: WorkshopDocumentData; w: WorkshopI18n }) {
   const glass = label.kind === 'glass'
   return (
     <div className="fzw-label" data-code={label.code}>
       <div className="fzw-label-qr">
-        <WorkshopQr value={label.qr} size="27mm" title={`QR de la pieza ${label.code}`} />
+        <WorkshopQr value={label.qr} size="27mm" title={w.t('labels.qrTitle', { code: label.code })} />
         <small>
-          OT N° {data.workOrder.number}
+          {w.t('common.otLabel', { number: data.workOrder.number })}
           <br />
           {data.quote.title}
         </small>
@@ -185,7 +207,7 @@ function PieceLabel({ label, data }: { label: WorkshopLabel; data: WorkshopDocum
       <div className="fzw-label-main">
         <div className="fzw-label-top">
           <span className="fzw-label-code">{label.code}</span>
-          {label.units > 1 ? <span className="fzw-label-unit">{`unidad ${label.unit} de ${label.units}`}</span> : null}
+          {label.units > 1 ? <span className="fzw-label-unit">{w.t('labels.unitOf', { unit: label.unit, units: label.units })}</span> : null}
         </div>
         <div className="fzw-label-name">{label.title}</div>
         <div className="fzw-label-measure" style={glass ? { fontSize: '19pt' } : undefined}>
@@ -201,6 +223,7 @@ function PieceLabel({ label, data }: { label: WorkshopLabel; data: WorkshopDocum
           ) : (
             <span className="fzw-small">{label.extra}</span>
           )}
+          {label.bar ? <span className="fzw-label-bar">{label.bar}</span> : null}
           {label.side ? <strong>{label.side}</strong> : null}
         </div>
       </div>

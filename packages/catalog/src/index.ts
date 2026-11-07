@@ -1,13 +1,15 @@
 /**
- * @framezen/catalog — catálogo base, catálogo de ejemplo, lectura de listas
+ * @dekopen/catalog — catálogo base, catálogo de ejemplo, lectura de listas
  * «MisPrecios» y normalización de datos de marcas. Este punto de entrada es seguro
- * para navegador (sin node:*). El importador de archivos está en «@framezen/catalog/node».
+ * para navegador (sin node:*). El importador de archivos está en «@dekopen/catalog/node».
  */
-export const CATALOG_VERSION = '4.0.0'
+export const CATALOG_VERSION = '5.1.0'
 
 export { parseCsv, parseMisPreciosCsv, splitType } from './csv'
 export type { MisPreciosRow } from './csv'
 export { COLOR_PALETTE, isColorless, normalizeColor } from './colors'
+export { BUILTIN_TEXTURES, builtinTexture, builtinTextureRef } from './textures'
+export type { BuiltinTexture } from './textures'
 export {
   TYPOLOGY_IDS,
   SLIDING_TYPOLOGIES,
@@ -48,8 +50,11 @@ export {
   GENERIC_ACCESSORY_RULES,
   GENERIC_BRAND,
   GENERIC_BRAND_ID,
+  GENERIC_EXTRA_ACCESSORY_RULES,
   GENERIC_HARDWARE_RULES,
   GENERIC_ITEMS,
+  GENERIC_LIFT_SLIDE_HARDWARE_RULES,
+  GENERIC_PANEL_ACCESSORY_RULES,
   GENERIC_SLIDING_ACCESSORY_RULES,
   GENERIC_SLIDING_HARDWARE_RULES,
   SAMPLE_SOURCE,
@@ -74,6 +79,8 @@ export {
   requiredRolesFor,
 } from './readiness'
 export type { LineReadiness, ReadinessIndex, ReadinessState, RoleGap } from './readiness'
+export { CUT_FIELDS, FIELD_LABEL, ORIGIN_LABEL, applyEvidence, cutOrigin, defaultProvenance, lineProvenance, provenanceWarnings, unverifiedCuts } from './provenance'
+export type { BeadRange, CatalogEvidence, DataOrigin, DataSource, DataStatus, EvidenceReport, FieldProvenance, LineEvidence, LineProvenance, LineWithProvenance, ProfileEvidence, ProfileWithProvenance, SizeLimit, VariantEvidence } from './provenance'
 export { matchMisPrecios, misPreciosRowKind } from './misprecios'
 export type { MisPreciosMatch, MisPreciosRowKind } from './misprecios'
 export { cleanLabel, normalizeKey, parseDecimal, slug } from './text'

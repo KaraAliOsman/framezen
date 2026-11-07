@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { Quote, WorkOrder } from '@framezen/shared'
+import type { Quote, WorkOrder } from '@dekopen/shared'
 import { item, sampleDesign, signup, startServer, type TestServer } from './helpers'
 
 let server: TestServer
@@ -25,7 +25,8 @@ describe('enviar, portal del cliente y aceptación', () => {
     expect(sent.body.quote.revision).toBe(1)
     expect(sent.body.quote.status).toBe('sent')
     expect(sent.body.quote.sentAt).toBeTruthy()
-    expect(sent.body.quote.validUntil).toBeTruthy()
+    // Sin vigencia definida por el taller no se inventa una fecha.
+    expect(sent.body.quote.validUntil).toBeUndefined()
     expect(sent.body.revisionLabel).toBe('A')
     const token: string = sent.body.quote.shareToken
     expect(token.length).toBeGreaterThan(16)
@@ -42,7 +43,7 @@ describe('enviar, portal del cliente y aceptación', () => {
     expect(view.body.quote.totals.marginPct).toBe(0)
     expect(view.body.org.name).toBe('Aberturas Maule')
     expect(view.body.org.accent).toBe('#0F766E')
-    expect(view.body.documents.validityDays).toBe(15)
+    expect(view.body.documents.validityDays).toBe(0)
     expect(view.body.features).toContain('client3d')
     expect(view.body.catalog.items).toEqual([])
     for (const p of view.body.catalog.profiles) expect(p.priceByColor).toEqual({})

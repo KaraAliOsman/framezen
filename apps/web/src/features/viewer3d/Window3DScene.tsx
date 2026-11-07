@@ -1,13 +1,17 @@
-import type { Catalog, Layout, WindowDesign } from '@framezen/engine'
-import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-three/drei'
+import type { TextureSources } from '@dekopen/documents'
+import type { Catalog, Layout, WindowDesign } from '@dekopen/engine'
+import { ContactShadows, OrbitControls } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
-import { type ComponentRef, memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
-import { MathUtils, type PerspectiveCamera, Spherical, Vector3 } from 'three'
-import { buildWindowModel, type BuildWindowModelInput, type WindowModel } from './model/buildWindowModel'
+import { type ComponentRef, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { MathUtils, type PerspectiveCamera, PMREMGenerator, Spherical, Vector3 } from 'three'
+import { buildSceneModel, reduceCatalog } from './model/assembly'
+import type { BuildWindowModelInput, WindowModel } from './model/buildWindowModel'
 import { clamp01 } from './model/kinematics'
+import { applyGlassLook } from './model/materials'
+import { createStudioTexture } from './studio/hdri'
+import type { StudioLook } from './studio/look'
+import type { ViewerTier } from './tier'
 import type { Viewer3DView } from './types'
-
-export const PAPER = '#FAF8F5'
 
 /** Ángulo de tres cuartos y límites de la cámara (radianes). */
 const VIEW_YAW = 0.42
@@ -31,101 +35,159 @@ export interface Window3DSceneProps {
   reducedMotion: boolean
   /** false cuando el visor está fuera de pantalla: se detiene el balanceo. */
   active?: boolean
+  /** Puesta en escena (exposición, luz y sombra) según el color y el tema. */
+  look: StudioLook
+  tier: ViewerTier
+  /** Texturas subidas (data URL) y versión de la caché de teselas integradas (reconstruye al llegar). */
+  textures?: TextureSources
+  texturesVersion?: number
   onReady?: () => void
+  /** Avisa si lo que se muestra se puede abrir. */
+  onMovable?: (movable: boolean) => void
 }
 
-/** Solo lo que el modelo usa del catálogo: así un catálogo grande no reconstruye la escena. */
-function reduceInput(layout: Layout, design: WindowDesign, catalog: Catalog): BuildWindowModelInput {
-  const colorIds = new Set([design.colorId, design.colorInId].filter(Boolean))
-  const glassIds = new Set([design.glassId, ...layout.panes.map((pane) => pane.glassId)].filter(Boolean))
-  return {
-    layout,
-    design,
-    catalog: {
-      colors: catalog.colors.filter((color) => colorIds.has(color.id)),
-      lines: catalog.lines
-        .filter((line) => line.id === design.lineId)
-        .map((line) => ({ ...line, hardwareRules: [], accessoryRules: [], profiles: {}, typologyIds: [], colorIds: [] })),
-      glass: catalog.glass.filter((glass) => glassIds.has(glass.id)),
-      brands: [],
-      profiles: [],
-      items: [],
-      brandSettings: [],
-    },
-  }
-}
-
-function modelKey(input: BuildWindowModelInput): string {
-  const { layout, design, catalog } = input
+function modelKey(input: BuildWindowModelInput, texturesVersion: number): string {
+  const { layout, design, catalog, textures } = input
   return JSON.stringify([
+    texturesVersion,
+    textures?.uploads ? Object.entries(textures.uploads).map(([id, source]) => [id, source.href.length, source.href.slice(-16), source.scaleMm ?? null]) : null,
     layout,
     design.lineId,
     design.colorId,
     design.colorInId ?? null,
     design.glassId,
-    catalog.colors.map((color) => [color.id, color.hex, color.name]),
+    catalog.colors.map((color) => [color.id, color.hex, color.name, color.texture ?? null]),
     catalog.lines.map((line) => line.depth ?? null),
     catalog.glass.map((glass) => [glass.id, glass.kind, glass.thickness]),
   ])
 }
 
-export function Window3DScene({ layout, design, catalog, openAmount, autoRotate, view, reducedMotion, active = true, onReady }: Window3DSceneProps) {
-  const input = useMemo(() => reduceInput(layout, design, catalog), [layout, design, catalog])
-  const key = useMemo(() => modelKey(input), [input])
+export function Window3DScene({
+  layout,
+  design,
+  catalog,
+  openAmount,
+  autoRotate,
+  view,
+  reducedMotion,
+  active = true,
+  look,
+  tier,
+  textures,
+  texturesVersion = 0,
+  onReady,
+  onMovable,
+}: Window3DSceneProps) {
+  const invalidate = useThree((state) => state.invalidate)
+  const input = useMemo(() => ({ layout, design, catalog: reduceCatalog(layout, design, catalog), textures, onTextureLoad: invalidate }), [layout, design, catalog, textures, invalidate])
+  const key = useMemo(() => modelKey(input, texturesVersion), [input, texturesVersion])
   // Se reconstruye solo si cambia el contenido (la clave), no la identidad de los objetos.
-  const model = useMemo(() => buildWindowModel(input), [key])
+  const model = useMemo(() => buildSceneModel(input), [key])
   useEffect(() => () => model.dispose(), [model])
+  useEffect(() => onMovable?.(model.movable), [model, onMovable])
+  useLayoutEffect(() => {
+    applyGlassLook(model.root, look.glass, model.size.height)
+    invalidate()
+  }, [model, look.glass, invalidate])
+  const [moving, setMoving] = useState(false)
+  const environmentReady = useStudioEnvironment(look, tier)
 
   return (
     <>
-      <color attach="background" args={[PAPER]} />
-      <StudioLighting />
+      <StudioLighting size={model.size} view={view} look={look} tier={tier} />
       <primitive object={model.root} />
-      <OpeningAnimator model={model} openAmount={openAmount} reducedMotion={reducedMotion} />
+      <OpeningAnimator model={model} openAmount={openAmount} reducedMotion={reducedMotion} onMoving={setMoving} />
       <ContactShadows
         position={[0, -0.001, 0]}
-        scale={[model.size.width * 1.7 + 1.4, model.size.width + 1.6]}
-        far={Math.max(0.4, Math.min(model.size.height, 1.4))}
-        blur={2.6}
-        opacity={0.42}
-        resolution={512}
-        color="#3B342C"
+        scale={[model.size.width * 1.7 + 1.2, model.size.depth + model.reach + 1.4]}
+        far={Math.max(0.4, Math.min(model.size.height, 1.1))}
+        blur={1.8}
+        opacity={look.shadowOpacity}
+        resolution={tier.contactShadow}
+        color={look.shadowColor}
+        // La sombra se recalcula solo si algo se mueve: orbitar no la cambia y en un teléfono cuesta.
+        frames={moving ? Infinity : 1}
       />
       <CameraRig size={model.size} reach={model.reach} view={view} autoRotate={autoRotate && active} reducedMotion={reducedMotion} />
-      <FirstFrame onReady={onReady} />
+      <FirstFrame enabled={environmentReady} onReady={onReady} />
     </>
   )
 }
 
-/** Estudio suave: entorno con paneles de luz (sin descargas) y una luz principal cálida. */
-const StudioLighting = memo(function StudioLighting() {
+/** Entorno HDR generado en el navegador: se prefiltra una vez por visor y se libera al desmontar. */
+function useStudioEnvironment(look: StudioLook, tier: ViewerTier): boolean {
+  const gl = useThree((state) => state.gl)
+  const scene = useThree((state) => state.scene)
+  const invalidate = useThree((state) => state.invalidate)
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    const hdri = createStudioTexture(tier.environment)
+    const generator = new PMREMGenerator(gl)
+    const target = generator.fromEquirectangular(hdri)
+    hdri.dispose()
+    generator.dispose()
+    scene.environment = target.texture
+    setReady(true)
+    invalidate()
+    return () => {
+      scene.environment = null
+      target.dispose()
+    }
+  }, [gl, scene, tier.environment, invalidate])
+
+  useEffect(() => {
+    scene.environmentIntensity = look.environment
+    gl.toneMappingExposure = look.exposure
+    invalidate()
+  }, [gl, scene, look.environment, look.exposure, invalidate])
+
+  return ready
+}
+
+/**
+ * Luz de estudio: el entorno da el volumen y una luz principal desde arriba a la izquierda (la misma
+ * dirección del dibujo 2D) proyecta sombra real: separa hoja, marco y junquillo. Sigue al lado que se mira.
+ */
+const StudioLighting = memo(function StudioLighting({ size, view, look, tier }: { size: WindowModel['size']; view: Viewer3DView; look: StudioLook; tier: ViewerTier }) {
+  const span = Math.max(size.width, size.height) * 0.75 + 0.2
+  const front = view === 'interior' ? 1 : -1
   return (
     <>
-      <hemisphereLight args={['#FFFFFF', '#EDEAE5', 0.45]} />
-      <directionalLight position={[2.6, 4.2, 3.4]} intensity={1.1} color="#FFFDF9" />
-      <directionalLight position={[-3, 2.4, -2.6]} intensity={0.4} color="#EEF1FA" />
-      <Environment resolution={256} frames={1}>
-        <color attach="background" args={['#E6E4E0']} />
-        <Lightformer form="rect" intensity={2.4} position={[0, 6, 1.5]} scale={[10, 5, 1]} />
-        <Lightformer form="rect" intensity={1.3} position={[-6, 2, 1.5]} scale={[5, 3.5, 1]} />
-        <Lightformer form="rect" intensity={1.3} position={[6, 2, 1.5]} scale={[5, 3.5, 1]} />
-        <Lightformer form="rect" intensity={0.9} position={[0, 2, 7]} scale={[9, 2.5, 1]} />
-        <Lightformer form="rect" intensity={0.9} position={[0, 2, -7]} scale={[9, 2.5, 1]} />
-        <Lightformer form="rect" intensity={0.45} color="#F2EEE8" position={[0, -3, 0]} scale={[12, 12, 1]} />
-        {/* Franjas altas frente a la ventana: el reflejo diagonal sutil del vidrio. */}
-        <Lightformer form="rect" intensity={2.6} position={[-2.6, 1.6, 4.5]} rotation={[0, -0.5, 0.22]} scale={[0.8, 8, 1]} />
-        <Lightformer form="rect" intensity={1.8} position={[-1.5, 1.6, 4.9]} rotation={[0, -0.3, 0.22]} scale={[0.3, 8, 1]} />
-        <Lightformer form="rect" intensity={2.6} position={[2.6, 1.6, -4.5]} rotation={[0, Math.PI - 0.5, -0.22]} scale={[0.8, 8, 1]} />
-        <Lightformer form="rect" intensity={1.8} position={[1.5, 1.6, -4.9]} rotation={[0, Math.PI - 0.3, -0.22]} scale={[0.3, 8, 1]} />
-      </Environment>
+      {/* Una sola luz con sombra, del lado que se mira: dos mapas de sombra no aportan y cuestan memoria. */}
+      <directionalLight
+        position={[-1.6 * front, size.height + 1.9, 2.8 * front]}
+        intensity={look.key}
+        color="#FFF8EE"
+        castShadow
+        shadow-mapSize={[tier.shadowMap, tier.shadowMap]}
+        shadow-bias={-0.0002}
+        shadow-normalBias={0.0016}
+        shadow-camera-left={-span}
+        shadow-camera-right={span}
+        shadow-camera-top={span + size.height / 2}
+        shadow-camera-bottom={-span}
+        shadow-camera-near={0.1}
+        shadow-camera-far={14}
+      />
+      <directionalLight position={[1.8 * front, size.height * 0.6 + 0.4, 1.2 * front]} intensity={look.key * 0.22} color="#E9EFFA" />
     </>
   )
 })
 
 /** Lleva la apertura hacia `openAmount` con un amortiguado suave (~250 ms). */
-function OpeningAnimator({ model, openAmount, reducedMotion }: { model: WindowModel; openAmount: number; reducedMotion: boolean }) {
+function OpeningAnimator({ model, openAmount, reducedMotion, onMoving }: { model: WindowModel; openAmount: number; reducedMotion: boolean; onMoving: (moving: boolean) => void }) {
   const current = useRef(clamp01(openAmount))
+  const moving = useRef(false)
   const invalidate = useThree((state) => state.invalidate)
+  const setMoving = useCallback(
+    (next: boolean) => {
+      if (moving.current === next) return
+      moving.current = next
+      onMoving(next)
+    },
+    [onMoving],
+  )
 
   useLayoutEffect(() => {
     model.setOpenAmount(current.current)
@@ -139,7 +201,11 @@ function OpeningAnimator({ model, openAmount, reducedMotion }: { model: WindowMo
   useFrame((_, delta) => {
     const target = clamp01(openAmount)
     let value = current.current
-    if (value === target) return
+    if (value === target) {
+      setMoving(false)
+      return
+    }
+    setMoving(true)
     if (reducedMotion) {
       value = target
     } else {
@@ -342,10 +408,10 @@ function CameraRig({
 }
 
 /** Avisa cuando se dibujó el primer cuadro (para el fundido de entrada). */
-function FirstFrame({ onReady }: { onReady?: () => void }) {
+function FirstFrame({ enabled, onReady }: { enabled: boolean; onReady?: () => void }) {
   const done = useRef(false)
   useFrame(() => {
-    if (done.current) return
+    if (done.current || !enabled) return
     done.current = true
     if (onReady) requestAnimationFrame(() => onReady())
   })

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { BillingState, Client, Quote } from '@framezen/shared'
+import type { BillingState, Client, Quote } from '@dekopen/shared'
 import { signup, startServer, type TestServer } from './helpers'
 
 let server: TestServer

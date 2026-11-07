@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { SAMPLE_CATALOG } from '@framezen/catalog'
-import type { Catalog, Glass, Line } from '@framezen/engine'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
+import type { Catalog, Glass, Line } from '@dekopen/engine'
 import { defaultGlassId, glassComposition, isClearDvh, pickGlass, preferredGlass } from './catalog'
 import { defaultLineFor } from './typologies'
 

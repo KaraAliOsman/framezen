@@ -1,12 +1,13 @@
 import { and, desc, eq, sql } from 'drizzle-orm'
-import type { QuoteTotals } from '@framezen/engine'
-import type { Client, OrgSettings, Quote, QuoteItem, QuoteSummary } from '@framezen/shared'
+import type { QuoteTotals } from '@dekopen/engine'
+import type { Client, OrgSettings, Quote, QuoteItem, QuoteSummary } from '@dekopen/shared'
 import type { Db } from '../db/client'
 import { clients, orgSettings, quoteRevisions, quotes, workOrders, type QuoteData } from '../db/schema'
 import type { Logger } from '../lib/logger'
 import { defaultStoredSettings, getSettings } from './settings'
 import type { CatalogService } from './catalog'
 import { evaluate, summaryNumbers, type Evaluation, type ItemPrices } from './pricing'
+import { readStoredDocOverrides } from './templates/overrides'
 
 export type QuoteRow = typeof quotes.$inferSelect
 export type ClientRow = typeof clients.$inferSelect
@@ -48,6 +49,12 @@ export function publicClient(client: Client): Client {
   }
 }
 
+/** Ajustes del documento siempre en v2 al responder (las filas anteriores a v5 guardan v1 plano). */
+function documentOverridesOf(stored: unknown): Pick<Quote, 'documentOverrides'> {
+  const overrides = readStoredDocOverrides(stored)
+  return overrides ? { documentOverrides: overrides } : {}
+}
+
 export function toQuote(row: QuoteRow, client?: Client | null): Quote {
   const d = row.data
   return {
@@ -62,8 +69,9 @@ export function toQuote(row: QuoteRow, client?: Client | null): Quote {
     discountPct: d.discountPct ?? 0,
     ...(d.pricing ? { pricing: d.pricing } : {}),
     ...(d.notes ? { notes: d.notes } : {}),
-    ...(d.documentOverrides ? { documentOverrides: d.documentOverrides } : {}),
+    ...documentOverridesOf(d.documentOverrides),
     ...(d.validUntil ? { validUntil: d.validUntil } : {}),
+    ...(d.siteAddress ? { siteAddress: d.siteAddress } : {}),
     revision: row.revision,
     ...(row.shareToken ? { shareToken: row.shareToken } : {}),
     ...(d.totals ? { totals: d.totals } : {}),
@@ -71,6 +79,7 @@ export function toQuote(row: QuoteRow, client?: Client | null): Quote {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     ...(row.sentAt ? { sentAt: iso(row.sentAt) } : {}),
+    ...(row.sentFormat ? { sentFormat: row.sentFormat } : {}),
     ...(row.acceptedAt ? { acceptedAt: iso(row.acceptedAt) } : {}),
     ...(row.acceptedBy ? { acceptedBy: row.acceptedBy } : {}),
   }
@@ -90,6 +99,7 @@ export interface SummaryRow {
   units: number
   firstItem: QuoteItem | null
   clientName: string | null
+  lostReason: string | null
 }
 
 export function toSummary(row: SummaryRow): QuoteSummary {
@@ -107,6 +117,7 @@ export function toSummary(row: SummaryRow): QuoteSummary {
     total: Number(row.total),
     units: row.units,
     ...(row.firstItem ? { firstItem: row.firstItem } : {}),
+    ...(row.lostReason ? { lostReason: row.lostReason } : {}),
   }
 }
 
@@ -140,6 +151,7 @@ export const summaryColumns = {
   units: quotes.units,
   firstItem: quotes.firstItem,
   clientName: clients.name,
+  lostReason: quotes.lostReason,
 }
 
 async function ensureSettingsRow(db: Db, orgId: string): Promise<void> {
@@ -321,12 +333,13 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value ?? null)
 }
 
-const DOCUMENT_KEYS = ['title', 'clientId', 'items', 'extras', 'discountPct', 'pricing', 'notes', 'documentOverrides', 'validUntil'] as const
+const DOCUMENT_KEYS = ['title', 'siteAddress', 'clientId', 'items', 'extras', 'discountPct', 'pricing', 'notes', 'documentOverrides', 'validUntil'] as const
 
 /** ¿El documento de la cotización es el mismo que el de la foto enviada? (estado y totales aparte). */
 export function sameAsSent(row: QuoteRow, snapshot: Quote): boolean {
   const live = toQuote(row, null) as unknown as Record<string, unknown>
-  const sent = snapshot as unknown as Record<string, unknown>
+  // Las fotos enviadas antes de v5 guardan los ajustes del documento en v1: se comparan en v2.
+  const sent: Record<string, unknown> = { ...(snapshot as unknown as Record<string, unknown>), documentOverrides: readStoredDocOverrides(snapshot.documentOverrides) }
   return DOCUMENT_KEYS.every((key) => stableJson(live[key]) === stableJson(sent[key]))
 }
 

@@ -74,10 +74,10 @@ export function quoteFileName(quote: { number: number; title?: string | null; re
  * «OT-38-Cortes-Casa-Perez.pdf» (mismo orden que workshopDocumentFileName de la web, más la
  * obra); la OT misma es «OT-38-Casa-Perez.pdf».
  */
-export function workshopFileName(base: string, workOrder: { number: number | string; title?: string | null }): PdfFileName {
+export function workshopFileName(base: string, workOrder: { number: number | string; title?: string | null; fromQuote?: boolean }): PdfFileName {
   const doc = base === 'OT' ? undefined : base
-  const ascii = join(['OT', workOrder.number, doc ? fileSlug(doc) : undefined, fileSlug(workOrder.title)])
-  const unicode = join(['OT', workOrder.number, doc ? fileTitle(doc) : undefined, fileTitle(workOrder.title)])
+  const ascii = join([workOrder.fromQuote ? 'Cotizacion' : 'OT', workOrder.number, doc ? fileSlug(doc) : undefined, fileSlug(workOrder.title)])
+  const unicode = join([workOrder.fromQuote ? 'Cotización' : 'OT', workOrder.number, doc ? fileTitle(doc) : undefined, fileTitle(workOrder.title)])
   return { ascii: `${ascii}.pdf`, unicode: `${unicode}.pdf` }
 }
 

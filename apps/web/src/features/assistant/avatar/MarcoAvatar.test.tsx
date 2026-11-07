@@ -14,9 +14,9 @@ describe('<MarcoAvatar>', () => {
     )
     const svg = getByRole('img', { name: 'Marco, tu asistente' })
     expect(svg.getAttribute('width')).toBe('40')
-    const body = svg.querySelector('[data-marco="body"]')
+    const body = svg.querySelector('[data-av="body"]')
     expect(body?.getAttribute('d')).toMatch(/^M.+Z$/)
-    expect(svg.querySelector('[data-marco="eye-0"]')?.getAttribute('display')).toBe('inline')
+    expect(svg.querySelector('[data-av="eye-0"]')?.getAttribute('display')).toBe('inline')
   })
 
   it('sin título es decorativo', () => {
@@ -40,17 +40,21 @@ describe('<MarcoAvatar>', () => {
 
   it('la miniatura estática se repinta al cambiar de estado', () => {
     const { container, rerender } = render(<MarcoAvatar state="idle" size={20} animated={false} />)
-    const pill = () => container.querySelector('[data-marco="pill"]')!
+    const pill = () => container.querySelector('[data-av="pill"]')!
     expect(pill().getAttribute('display')).toBe('none')
     act(() => rerender(<MarcoAvatar state="approval" size={20} animated={false} />))
     expect(pill().getAttribute('display')).toBe('inline')
     expect(pill().getAttribute('fill')).toBe('#F0B429')
     act(() => rerender(<MarcoAvatar state="thinking" size={20} animated={false} />))
-    expect(container.querySelector('[data-marco="dot-0"]')!.getAttribute('display')).toBe('inline')
+    expect(container.querySelector('[data-av="dot-0"]')!.getAttribute('display')).toBe('inline')
   })
 
   it('acepta un color propio para el cuerpo', () => {
     const { container } = render(<MarcoAvatar state="idle" color="#0E0E10" animated={false} />)
-    expect((container.querySelector('[data-marco="body"]') as SVGPathElement).style.fill).toMatch(/#0e0e10|rgb\(14, 14, 16\)/i)
+    // El cuerpo se pinta con `var(--av-fill)`, que sale de `--av-body` (claro) o `--av-body-dark`: el color propio manda en ambos.
+    const svg = container.querySelector('svg') as SVGSVGElement
+    expect(svg.style.getPropertyValue('--av-body')).toMatch(/#0e0e10|rgb\(14, 14, 16\)/i)
+    expect(svg.style.getPropertyValue('--av-body-dark')).toMatch(/#0e0e10|rgb\(14, 14, 16\)/i)
+    expect((container.querySelector('[data-av="body"]') as SVGPathElement).style.fill).toBe('var(--av-fill)')
   })
 })

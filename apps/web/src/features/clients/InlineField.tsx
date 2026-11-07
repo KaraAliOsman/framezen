@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Pencil } from 'lucide-react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { Check, Pencil } from 'lucide-react'
 import { cn } from '../../lib/cn'
+import { useT } from '../../lib/i18n'
 import { fieldClass } from '../../ui'
+import es from './i18n/es'
 
 export interface InlineFieldProps {
   label: string
@@ -16,18 +18,40 @@ export interface InlineFieldProps {
   hint?: string | null
   /** Acción rápida a la derecha (llamar, WhatsApp, correo). */
   action?: ReactNode
+  /** Recién guardado: muestra ✓ un momento. */
+  saved?: boolean
+  /** Cifras tabulares (documentos, códigos). */
+  mono?: boolean
+  readOnly?: boolean
   className?: string
 }
 
 /**
- * Dato editable en el lugar: clic (o Enter) para editar, Enter o salir para guardar, Esc para
- * dejarlo como estaba. Vacío muestra «Agregar…» en vez de un guion.
+ * Dato editable en el lugar: etiqueta arriba y valor abajo. Clic (o Enter) para editar, Enter o salir para guardar, Esc para dejarlo como estaba.
+ * Vacío muestra «Agregar…» en vez de un guion.
  */
-export function InlineField({ label, value, placeholder, onCommit, type = 'text', multiline, normalize, hint, action, className }: InlineFieldProps) {
+export function InlineField({
+  label,
+  value,
+  placeholder,
+  onCommit,
+  type = 'text',
+  multiline,
+  normalize,
+  hint,
+  action,
+  saved,
+  mono,
+  readOnly,
+  className,
+}: InlineFieldProps) {
+  const t = useT(es)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value)
   const viewRef = useRef<HTMLButtonElement>(null)
   const inputRef = useRef<HTMLInputElement & HTMLTextAreaElement>(null)
+  const id = useId()
+  const hintId = `${id}-hint`
 
   useEffect(() => {
     if (!editing) setDraft(value)
@@ -51,14 +75,14 @@ export function InlineField({ label, value, placeholder, onCommit, type = 'text'
     requestAnimationFrame(() => viewRef.current?.focus())
   }
 
-  const id = `inline-${label.toLowerCase().replace(/\s+/g, '-')}`
+  const showHint = Boolean(hint) && !editing
 
   return (
-    <div className={cn('group/field flex min-h-11 items-start gap-3 py-2', className)}>
-      <div className="min-w-0 flex-1">
-        <label htmlFor={id} className="block text-meta text-paper-600">
-          {label}
-        </label>
+    <div className={cn('group/field min-w-0 py-1', className)}>
+      <label htmlFor={id} className="block text-table text-fg-muted">
+        {label}
+      </label>
+      <div className="min-w-0">
         {editing ? (
           multiline ? (
             <textarea
@@ -75,7 +99,7 @@ export function InlineField({ label, value, placeholder, onCommit, type = 'text'
                 }
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) finish(true)
               }}
-              className={cn(fieldClass, 'mt-1 w-full px-2.5 py-1.5 leading-[20px] [field-sizing:content]')}
+              className={cn(fieldClass, 'w-full px-2.5 py-1.5 text-base [field-sizing:content]')}
             />
           ) : (
             <input
@@ -92,27 +116,56 @@ export function InlineField({ label, value, placeholder, onCommit, type = 'text'
                   finish(false)
                 }
               }}
-              className={cn(fieldClass, 'mt-1 h-9 w-full px-2.5 touch:h-11')}
+              className={cn(fieldClass, 'h-8 w-full px-2.5 text-base touch:h-11', mono && 'code-id')}
             />
           )
         ) : (
-          <button
-            ref={viewRef}
-            id={id}
-            type="button"
-            onClick={() => setEditing(true)}
-            aria-label={`${label}: ${value || 'vacío'}. Editar`}
-            className="-mx-2 mt-0.5 flex w-[calc(100%+16px)] items-start justify-between gap-2 rounded-sm px-2 py-1 text-left transition-colors duration-120 hover:bg-paper-100"
-          >
-            <span className={cn('min-w-0 break-words', value ? 'text-paper-900' : 'text-paper-600/70', multiline && 'whitespace-pre-line')}>
-              {value || placeholder}
-            </span>
-            <Pencil aria-hidden strokeWidth={1.75} className="mt-0.5 size-3.5 shrink-0 text-paper-350 opacity-0 transition-opacity group-hover/field:opacity-100" />
-          </button>
+          <div className="flex min-w-0 items-start gap-1">
+            <button
+              ref={viewRef}
+              id={id}
+              type="button"
+              disabled={readOnly}
+              onClick={() => setEditing(true)}
+              aria-label={t('inline.edit', { label, value: value || t('inline.empty') })}
+              aria-describedby={showHint ? hintId : undefined}
+              className={cn(
+                '-ml-2 flex min-h-8 min-w-0 flex-1 items-start justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-base',
+                'transition-colors duration-100 ease-out hover:bg-hover disabled:pointer-events-none touch:min-h-11',
+              )}
+            >
+              <span
+                className={cn(
+                  'min-w-0 break-words',
+                  value ? 'text-fg' : 'text-fg-faint',
+                  multiline && 'whitespace-pre-line',
+                  mono && value && 'code-id',
+                )}
+              >
+                {value || placeholder}
+              </span>
+              {saved ? (
+                <span className="mt-0.5 inline-flex shrink-0 items-center text-success motion-safe:animate-[fz-fade-in_140ms_cubic-bezier(0.2,0.8,0.2,1)_both]" role="status">
+                  <Check aria-hidden strokeWidth={2.25} className="size-3.5" />
+                  <span className="sr-only">{t('inline.saved')}</span>
+                </span>
+              ) : (
+                <Pencil
+                  aria-hidden
+                  strokeWidth={1.75}
+                  className="mt-1 size-3.5 shrink-0 text-fg-faint opacity-0 transition-opacity duration-100 group-hover/field:opacity-100"
+                />
+              )}
+            </button>
+            {action && value ? <div className="flex shrink-0 items-center">{action}</div> : null}
+          </div>
         )}
-        {hint && !editing ? <p className="mt-1 text-[13px] leading-[18px] text-warn-800">{hint}</p> : null}
+        {showHint ? (
+          <p id={hintId} className="mt-0.5 mb-1 text-table text-warning">
+            {hint}
+          </p>
+        ) : null}
       </div>
-      {action && !editing && value ? <div className="flex shrink-0 items-center gap-1 pt-4">{action}</div> : null}
     </div>
   )
 }

@@ -1,6 +1,6 @@
-# Framezen · especificación maestra
+# DEKOPEN · especificación maestra
 
-> Framezen es el software para talleres y fábricas de ventanas y puertas de PVC (y aluminio) en Chile y
+> DEKOPEN es el software para talleres y fábricas de ventanas y puertas de PVC (y aluminio) en Chile y
 > LatAm: diseñas una ventana en segundos, ves su precio al instante, mandas una cotización que vende y
 > pasas a taller con cortes optimizados, vidrios, materiales y montaje — sin que nada te bloquee.
 
@@ -36,12 +36,12 @@ arquitectura: son lo que NO queremos ser.
 Monorepo npm (`npm install`, `npm run dev`, `npm test`, `npm run build`, `npm start`).
 
 ```
-packages/engine     @framezen/engine     Motor puro TS: diseño, pauta, cortes, vidrios, herrajes, precio, optimizador, tipologías, avisos
-packages/catalog    @framezen/catalog    Importador de "informacion de marcas" → Catalog; catálogo base original; CSV MisPrecios
-packages/shared     @framezen/shared     Contrato HTTP (api.ts) y planes (plans.ts)
-packages/documents  @framezen/documents  Dibujo SVG de ventanas + todas las plantillas de documentos (React, CSS propio, imprimibles)
-apps/server         @framezen/server     Hono + Drizzle; PGlite en local (.data/pg) y Postgres con DATABASE_URL; PDF con Chromium (playwright-core)
-apps/web            @framezen/web        React 19 + Vite + Tailwind 4 + Radix + motion + TanStack Query + zustand + react-router 7
+packages/engine     @dekopen/engine     Motor puro TS: diseño, pauta, cortes, vidrios, herrajes, precio, optimizador, tipologías, avisos
+packages/catalog    @dekopen/catalog    Importador de "informacion de marcas" → Catalog; catálogo base original; CSV MisPrecios
+packages/shared     @dekopen/shared     Contrato HTTP (api.ts) y planes (plans.ts)
+packages/documents  @dekopen/documents  Dibujo SVG de ventanas + todas las plantillas de documentos (React, CSS propio, imprimibles)
+apps/server         @dekopen/server     Hono + Drizzle; PGlite en local (.data/pg) y Postgres con DATABASE_URL; PDF con Chromium (playwright-core)
+apps/web            @dekopen/web        React 19 + Vite + Tailwind 4 + Radix + motion + TanStack Query + zustand + react-router 7
 ```
 
 - Los paquetes exportan TypeScript fuente (`main: ./src/index.ts`); Vite y tsx los compilan.

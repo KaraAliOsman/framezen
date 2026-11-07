@@ -1,18 +1,534 @@
 @import 'tailwindcss';
-@import '@fontsource-variable/instrument-sans/wdth.css';
-@import '@fontsource/jetbrains-mono/400.css';
-@import '@fontsource/jetbrains-mono/500.css';
+/* Funnel Sans (interfaz) y Funnel Display (títulos y cifras): variables 300–800, OFL, latin + latin-ext por
+   unicode-range (ñ, ç, ß, İ ı Ş ş Ğ ğ). Con `tnum` limpio: los montos se alinean sin monoespaciada. */
+@import '@fontsource-variable/funnel-sans/wght.css';
+@import '@fontsource-variable/funnel-display/wght.css';
 
-/* Framezen · «Papel y tinta». Fuente de verdad de tokens: docs/DESIGN.md */
+/*
+ * DEKOPEN · «Huincha» — fuente de verdad de los tokens visuales (documentados en docs/DESIGN.md v3).
+ *
+ * Roles que no se tocan:
+ *   señal  = amarillo huincha. Solo la acción principal, la marca, el destello del total y una serie destacada.
+ *            Nunca como texto, borde, fondo de panel ni selección.
+ *   tinta  = el token `accent` de siempre: casilla, interruptor, pestaña, enlace, foco. Ya no es un color.
+ *   hoja   = canvas/surface, donde se trabaja · marco = frame, la app alrededor de la hoja.
+ *   select = azul, solo dentro del lienzo del dibujo.
+ *
+ * Capas:
+ *   1. Variables de tiempo de ejecución `--dk-*` por tema (`:root`/[data-theme='light'] = Blanco,
+ *      [data-theme='dark'] = Oscuro y [data-theme='original'] = Original, el predeterminado).
+ *   2. Alias heredados (`--paper-*`, `--ink-*`, `--ok/warn/bad-*`) que apuntan a la paleta nueva: todo lo
+ *      que ya usa `bg-paper-0`, `text-ink-600`, `var(--paper-200)`… sigue funcionando con el tema nuevo.
+ *   3. `@theme inline`: utilidades de Tailwind (semánticas + nombres heredados) que leen las variables del
+ *      elemento, así un `data-theme` local (vitrina, previsualizaciones, sección negra) también funciona.
+ */
 
-@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
-/* Pantallas táctiles: inputs de 44 px y texto de 16 px (evita el zoom de iOS). */
+/* `dark:` sigue al tema más cercano: un bloque claro dentro de una página oscura no recibe `dark:`. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *):not(:where([data-theme='dark'] [data-theme='light'], [data-theme='dark'] [data-theme='light'] *)));
+/* Pantallas táctiles: controles de 44 px y texto de 16 px (evita el zoom de iOS). */
 @custom-variant touch (@media (pointer: coarse));
 
-@theme {
-  --font-sans: 'Instrument Sans Variable', 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+/* ── 1. Tema Blanco ───────────────────────────────────────────────────────────────────────── */
+:root,
+[data-theme='light'] {
+  color-scheme: light;
 
+  /* Neutros de tinta fría (matiz azul violáceo mínimo, el complemento del amarillo). */
+  --dk-frame: #f0f0f3;
+  --dk-frame-hover: #e7e7eb;
+  --dk-canvas: #ffffff;
+  --dk-surface: #ffffff;
+  --dk-sunken: #f7f7f9;
+  --dk-raised: #ffffff;
+  --dk-hover: #f2f2f5;
+  --dk-pressed: #e9e9ee;
+  --dk-inverse: #15161d;
+  --dk-thumb: #ffffff;
+  --dk-track: #cfcfd8;
+  --dk-scrim: rgb(21 22 29 / 0.32);
+
+  /* Placa: en Original las listas suben en blanco sobre la hoja gris; aquí no hay nada que separar. */
+  --dk-plate: transparent;
+  --dk-shadow-plate: none;
+  --dk-nav-active: #ffffff;
+  --dk-nav-active-fg: #15161d;
+  --dk-tabbar: #ffffff;
+
+  --dk-divider: #ebebef;
+  --dk-divider-strong: #dcdce3;
+  --dk-control: #92939f;
+  --dk-control-hover: #6f707d;
+
+  --dk-fg-strong: #15161d;
+  --dk-fg: #24252e;
+  --dk-fg-muted: #62636f;
+  --dk-fg-faint: #767783;
+  --dk-fg-inverse: #f6f6f8;
+
+  /* Señal: amarillo huincha, siempre con texto tinta. */
+  --dk-signal: #ffd21f;
+  --dk-signal-hover: #ffc800;
+  --dk-signal-pressed: #f2bc00;
+  --dk-on-signal: #15161d;
+  --dk-signal-wash: rgb(255 210 31 / 0.34);
+
+  /* Tinta: estados de control. Se llama accent por compatibilidad con las ~2700 clases existentes. */
+  --dk-accent: #15161d;
+  --dk-accent-hover: #2b2c36;
+  --dk-accent-pressed: #000000;
+  --dk-fg-on-accent: #ffffff;
+  --dk-accent-subtle: #f2f2f5;
+  --dk-accent-subtle-strong: #e7e7ec;
+  --dk-accent-ink: #15161d;
+  --dk-accent-line: #dcdce3;
+  --dk-focus: #15161d;
+  --dk-focus-ring: rgb(21 22 29 / 0.1);
+  --dk-selection: rgb(21 22 29 / 0.13);
+
+  /* Selección dentro del lienzo del dibujo (y solo ahí). */
+  --dk-select: #1f6bff;
+  --dk-select-ring: rgb(31 107 255 / 0.22);
+
+  /* Estados: tinta / fondo / borde + sólido. Aviso naranjo: la señal no significa cuidado. */
+  --dk-success: #0b7a4d;
+  --dk-success-bg: #e7f6ee;
+  --dk-success-line: #a8dcc2;
+  --dk-success-solid: #0b7a4d;
+  --dk-on-success-solid: #ffffff;
+  --dk-warning: #ad4a00;
+  --dk-warning-bg: #fff1e5;
+  --dk-warning-line: #f6cca9;
+  --dk-warning-solid: #f27c1c;
+  --dk-on-warning-solid: #15161d;
+  --dk-danger: #c81e36;
+  --dk-danger-bg: #fdecef;
+  --dk-danger-line: #f6bac4;
+  --dk-danger-solid: #d0213b;
+  --dk-on-danger-solid: #ffffff;
+  --dk-info: #1d5fd6;
+  --dk-info-bg: #ebf2fe;
+  --dk-info-line: #b6cdf7;
+
+  /* Series de gráficos: tinta primero, señal para destacar una; distintas de los estados. */
+  --dk-chart-1: #15161d;
+  --dk-chart-2: #9c9daa;
+  --dk-chart-3: #2f6fed;
+  --dk-chart-4: #e8ae00;
+  --dk-chart-5: #e0562f;
+  --dk-chart-6: #0f9b78;
+
+  /* Dibujo de ventanas y marca. */
+  --dk-frame-line: #383e42;
+  --dk-dimension: #62636f;
+  --dk-dimension-text: #24252e;
+  --dk-brand-glass: #ffd21f;
+  --sketch-glass-opacity: 0.7;
+  --sketch-glint-opacity: 0.95;
+
+  /* Elevación: reposo sin sombra; la sombra es para lo que flota de verdad. */
+  --dk-highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --dk-shadow-xs: 0 1px 2px rgb(21 22 29 / 0.05);
+  --dk-shadow-raised: 0 0 0 1px rgb(21 22 29 / 0.05), 0 1px 2px rgb(21 22 29 / 0.07);
+  --dk-shadow-float: 0 0 0 1px rgb(21 22 29 / 0.07), 0 4px 10px -2px rgb(21 22 29 / 0.07), 0 14px 32px -6px rgb(21 22 29 / 0.14);
+  --dk-shadow-pop: 0 0 0 1px rgb(21 22 29 / 0.07), 0 8px 18px -4px rgb(21 22 29 / 0.1), 0 28px 64px -12px rgb(21 22 29 / 0.26);
+  --dk-shadow-primary: inset 0 -1px 0 rgb(21 22 29 / 0.1);
+
+  /* Estados heredados (escala 50 / 600 / 800 de la v4). */
+  --ok-50: #e7f6ee;
+  --ok-600: #0f8a58;
+  --ok-800: #0a5f3c;
+  --warn-50: #fff1e5;
+  --warn-600: #c75800;
+  --warn-800: #8a3b00;
+  --bad-50: #fdecef;
+  --bad-600: #d0213b;
+  --bad-800: #99162a;
+}
+
+/* ── 1b. Tema oscuro: composición propia (las superficies suben aclarándose), no una inversión ── */
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --dk-frame: #0d0e12;
+  --dk-frame-hover: #1a1b21;
+  --dk-canvas: #141519;
+  --dk-surface: #191a20;
+  --dk-sunken: #101115;
+  --dk-raised: #202128;
+  --dk-hover: #23242c;
+  --dk-pressed: #2c2d36;
+  --dk-inverse: #2c2d36;
+  --dk-thumb: #33343e;
+  --dk-track: #41424d;
+  --dk-scrim: rgb(0 0 0 / 0.58);
+
+  --dk-plate: transparent;
+  --dk-shadow-plate: none;
+  --dk-nav-active: #191a20;
+  --dk-nav-active-fg: #f6f6f8;
+  --dk-tabbar: #141519;
+
+  --dk-divider: #26272f;
+  --dk-divider-strong: #363741;
+  --dk-control: #6f707d;
+  --dk-control-hover: #8c8d9a;
+
+  --dk-fg-strong: #f6f6f8;
+  --dk-fg: #e3e3e9;
+  --dk-fg-muted: #a3a4b1;
+  --dk-fg-faint: #868794;
+  --dk-fg-inverse: #f1f1f4;
+
+  --dk-signal: #ffd60a;
+  --dk-signal-hover: #ffe24d;
+  --dk-signal-pressed: #f2c500;
+  --dk-on-signal: #15161d;
+  --dk-signal-wash: rgb(255 214 10 / 0.2);
+
+  --dk-accent: #f1f1f4;
+  --dk-accent-hover: #ffffff;
+  --dk-accent-pressed: #d4d4dc;
+  --dk-fg-on-accent: #15161d;
+  --dk-accent-subtle: #24252d;
+  --dk-accent-subtle-strong: #2e2f39;
+  --dk-accent-ink: #f6f6f8;
+  --dk-accent-line: #3a3b46;
+  --dk-focus: #f1f1f4;
+  --dk-focus-ring: rgb(241 241 244 / 0.16);
+  --dk-selection: rgb(241 241 244 / 0.22);
+
+  --dk-select: #6ea4ff;
+  --dk-select-ring: rgb(110 164 255 / 0.28);
+
+  --dk-success: #5fd3a0;
+  --dk-success-bg: #10291f;
+  --dk-success-line: #24604a;
+  --dk-success-solid: #5fd3a0;
+  --dk-on-success-solid: #06251a;
+  --dk-warning: #ffa964;
+  --dk-warning-bg: #33200f;
+  --dk-warning-line: #7a4a22;
+  --dk-warning-solid: #ff9a4a;
+  --dk-on-warning-solid: #2b1604;
+  --dk-danger: #ff8d9e;
+  --dk-danger-bg: #36161d;
+  --dk-danger-line: #84303f;
+  --dk-danger-solid: #ff8d9e;
+  --dk-on-danger-solid: #3a0d16;
+  --dk-info: #9dc0ff;
+  --dk-info-bg: #162440;
+  --dk-info-line: #36548c;
+
+  --dk-chart-1: #f1f1f4;
+  --dk-chart-2: #7c7d8a;
+  --dk-chart-3: #76a3ff;
+  --dk-chart-4: #ffd60a;
+  --dk-chart-5: #ff8a66;
+  --dk-chart-6: #42cfa5;
+
+  --dk-frame-line: #c9cad2;
+  --dk-dimension: #a3a4b1;
+  --dk-dimension-text: #e3e3e9;
+  --dk-brand-glass: #ffd60a;
+  --sketch-glass-opacity: 0.22;
+  --sketch-glint-opacity: 0.45;
+
+  --dk-highlight: inset 0 1px 0 rgb(255 255 255 / 0.05);
+  --dk-shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+  --dk-shadow-raised: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 0 0 1px rgb(255 255 255 / 0.05), 0 1px 2px rgb(0 0 0 / 0.4);
+  --dk-shadow-float: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 0 0 1px rgb(255 255 255 / 0.07), 0 4px 12px rgb(0 0 0 / 0.3), 0 16px 40px rgb(0 0 0 / 0.42);
+  --dk-shadow-pop: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 0 0 1px rgb(255 255 255 / 0.08), 0 8px 20px rgb(0 0 0 / 0.36), 0 28px 72px rgb(0 0 0 / 0.56);
+  --dk-shadow-primary: inset 0 -1px 0 rgb(21 22 29 / 0.14);
+
+  --ok-50: #10291f;
+  --ok-600: #5fd3a0;
+  --ok-800: #9de6c4;
+  --warn-50: #33200f;
+  --warn-600: #ff9a4a;
+  --warn-800: #ffc699;
+  --bad-50: #36161d;
+  --bad-600: #ff8d9e;
+  --bad-800: #ffc1cb;
+}
+
+/* ── 1c. Tema Original: el oficial de DEKOPEN y el predeterminado ──────────────────────────────
+   La huincha es amarilla sobre caja negra: el marco va en tinta azulada (el complemento del amarillo,
+   por eso la señal resalta sin gritar) y la hoja tiene tono propio, gris tinta muy claro, para que lo
+   que se toca (campos, tablas, flotantes) suba en blanco. Es neutro frío a propósito: nada de crema.
+   Todo lo que es dato del producto (dibujo, documentos, 3D, marca) usa los valores de Blanco. */
+[data-theme='original'] {
+  color-scheme: light;
+
+  --dk-frame: #1b1d28;
+  --dk-frame-hover: #2b2e3d;
+  --dk-canvas: #e3e4ec;
+  --dk-surface: #ffffff;
+  --dk-sunken: #d8dae3;
+  --dk-raised: #ffffff;
+  /* Tonos sobre lo que haya debajo: sirven igual sobre la hoja gris y sobre una placa blanca. */
+  --dk-hover: rgb(27 29 40 / 0.06);
+  --dk-pressed: rgb(27 29 40 / 0.11);
+  --dk-inverse: #1b1d28;
+  --dk-thumb: #ffffff;
+  --dk-track: #a6a8b8;
+  --dk-scrim: rgb(19 20 29 / 0.46);
+
+  --dk-plate: #ffffff;
+  --dk-shadow-plate: 0 0 0 1px rgb(27 29 40 / 0.06), 0 1px 2px rgb(27 29 40 / 0.05);
+  --dk-nav-active: #e3e4ec;
+  --dk-nav-active-fg: #15161d;
+  --dk-tabbar: #1b1d28;
+
+  --dk-divider: #cfd1db;
+  --dk-divider-strong: #b9bbc9;
+  --dk-control: #797b8c;
+  --dk-control-hover: #5c5e6e;
+
+  --dk-fg-strong: #15161d;
+  --dk-fg: #23252f;
+  --dk-fg-muted: #4f5160;
+  --dk-fg-faint: #5c5e6c;
+  --dk-fg-inverse: #f6f6f8;
+
+  --dk-signal: #ffd21f;
+  --dk-signal-hover: #ffc800;
+  --dk-signal-pressed: #f2bc00;
+  --dk-on-signal: #15161d;
+  --dk-signal-wash: rgb(255 210 31 / 0.42);
+
+  --dk-accent: #15161d;
+  --dk-accent-hover: #2b2c36;
+  --dk-accent-pressed: #000000;
+  --dk-fg-on-accent: #ffffff;
+  --dk-accent-subtle: rgb(27 29 40 / 0.07);
+  --dk-accent-subtle-strong: rgb(27 29 40 / 0.12);
+  --dk-accent-ink: #15161d;
+  --dk-accent-line: #b9bbc9;
+  --dk-focus: #15161d;
+  --dk-focus-ring: rgb(21 22 29 / 0.14);
+  --dk-selection: rgb(21 22 29 / 0.16);
+
+  --dk-select: #1f6bff;
+  --dk-select-ring: rgb(31 107 255 / 0.22);
+
+  /* Estados: tintas un punto más profundas y fondos más saturados, para que aguanten sobre la hoja gris. */
+  --dk-success: #0a6a44;
+  --dk-success-bg: #d3efe1;
+  --dk-success-line: #8fcfb0;
+  --dk-success-solid: #0a6a44;
+  --dk-on-success-solid: #ffffff;
+  --dk-warning: #964000;
+  --dk-warning-bg: #fde6d2;
+  --dk-warning-line: #edb88b;
+  --dk-warning-solid: #f27c1c;
+  --dk-on-warning-solid: #15161d;
+  --dk-danger: #b2182f;
+  --dk-danger-bg: #fbdde2;
+  --dk-danger-line: #eda2af;
+  --dk-danger-solid: #c81e36;
+  --dk-on-danger-solid: #ffffff;
+  --dk-info: #1a53be;
+  --dk-info-bg: #dae7fc;
+  --dk-info-line: #a3bff1;
+
+  --dk-chart-1: #15161d;
+  --dk-chart-2: #7f8191;
+  --dk-chart-3: #2460d8;
+  --dk-chart-4: #d59f00;
+  --dk-chart-5: #d24b25;
+  --dk-chart-6: #0b876a;
+
+  /* Dibujo y marca: idénticos a Blanco. La ventana no cambia de color con el tema. */
+  --dk-frame-line: #383e42;
+  --dk-dimension: #4f5160;
+  --dk-dimension-text: #23252f;
+  --dk-brand-glass: #ffd21f;
+  --sketch-glass-opacity: 0.7;
+  --sketch-glint-opacity: 0.95;
+
+  --dk-highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --dk-shadow-xs: 0 1px 2px rgb(27 29 40 / 0.07);
+  --dk-shadow-raised: 0 0 0 1px rgb(27 29 40 / 0.06), 0 1px 2px rgb(27 29 40 / 0.08);
+  --dk-shadow-float: 0 0 0 1px rgb(27 29 40 / 0.08), 0 4px 10px -2px rgb(27 29 40 / 0.1), 0 14px 32px -6px rgb(27 29 40 / 0.2);
+  --dk-shadow-pop: 0 0 0 1px rgb(27 29 40 / 0.08), 0 8px 18px -4px rgb(27 29 40 / 0.14), 0 28px 64px -12px rgb(27 29 40 / 0.34);
+  --dk-shadow-primary: inset 0 -1px 0 rgb(21 22 29 / 0.12);
+
+  --ok-50: #d3efe1;
+  --ok-600: #0a6a44;
+  --ok-800: #074e32;
+  --warn-50: #fde6d2;
+  --warn-600: #964000;
+  --warn-800: #743100;
+  --bad-50: #fbdde2;
+  --bad-600: #b2182f;
+  --bad-800: #8b1224;
+}
+
+/* Lo que va sobre el marco de tinta (barra lateral, barra inferior del teléfono, panel de acceso): claro
+   sobre oscuro. Solo en Original; en Blanco y Oscuro el atributo `data-frame` no cambia nada. */
+[data-theme='original'] [data-frame] {
+  color-scheme: dark;
+
+  --dk-canvas: #1b1d28;
+  --dk-surface: #2b2e3d;
+  --dk-sunken: #14151e;
+  --dk-raised: #2b2e3d;
+  --dk-hover: #2b2e3d;
+  --dk-pressed: #363a4b;
+  --dk-thumb: #e3e4ec;
+  --dk-track: #4a4d60;
+
+  --dk-divider: #2f3242;
+  --dk-divider-strong: #414558;
+  --dk-control: #7b7f94;
+  --dk-control-hover: #9a9db0;
+
+  --dk-fg-strong: #ffffff;
+  --dk-fg: #e3e4ec;
+  --dk-fg-muted: #aeb1c2;
+  --dk-fg-faint: #9396a9;
+
+  --dk-accent: #f1f1f4;
+  --dk-accent-hover: #ffffff;
+  --dk-accent-pressed: #d4d4dc;
+  --dk-fg-on-accent: #15161d;
+  --dk-accent-subtle: #2b2e3d;
+  --dk-accent-subtle-strong: #363a4b;
+  --dk-accent-ink: #ffffff;
+  --dk-focus: #f1f1f4;
+  --dk-focus-ring: rgb(241 241 244 / 0.18);
+  --dk-selection: rgb(241 241 244 / 0.24);
+
+  --dk-danger: #ff9dac;
+  --dk-warning: #ffb27a;
+  --dk-success: #6fdcac;
+  --dk-info: #a9c8ff;
+
+  --dk-frame-line: #c9cad2;
+  --dk-dimension: #aeb1c2;
+  --dk-dimension-text: #e3e4ec;
+  --sketch-glass-opacity: 0.22;
+  --sketch-glint-opacity: 0.45;
+
+  --dk-shadow-xs: none;
+  --dk-shadow-raised: none;
+}
+
+/* ── 2. Alias heredados → paleta nueva (se recalculan en cada elemento con data-theme) ─────── */
+:root,
+[data-theme],
+[data-frame] {
+  --paper-0: var(--dk-surface);
+  --paper-50: var(--dk-canvas);
+  --paper-100: var(--dk-hover);
+  --paper-200: var(--dk-divider);
+  --paper-350: var(--dk-control);
+  --paper-600: var(--dk-fg-muted);
+  --paper-900: var(--dk-fg);
+
+  --ink-50: var(--dk-accent-subtle);
+  --ink-100: var(--dk-accent-subtle-strong);
+  --ink-500: var(--dk-focus);
+  --ink-600: var(--dk-accent);
+  --ink-700: var(--dk-accent-ink);
+}
+
+/* Constantes que no cambian con el tema: ritmo, alturas y movimiento. */
+:root {
+  --dk-control-h: 36px;
+  --dk-control-h-touch: 44px;
+  --dk-row-h: 44px;
+  --dk-row-h-double: 56px;
+  --dk-dur-fast: 100ms;
+  --dk-dur-menu: 140ms;
+  --dk-dur-panel: 180ms;
+  --dk-dur-sheet: 240ms;
+  --dk-dur-exit: 110ms;
+}
+
+/* ── 3. Tailwind: utilidades que leen las variables del tema ──────────────────────────────── */
+@theme inline {
+  /* Superficies */
+  --color-frame: var(--dk-frame);
+  --color-frame-hover: var(--dk-frame-hover);
+  --color-canvas: var(--dk-canvas);
+  --color-surface: var(--dk-surface);
+  --color-sunken: var(--dk-sunken);
+  --color-raised: var(--dk-raised);
+  --color-hover: var(--dk-hover);
+  --color-pressed: var(--dk-pressed);
+  --color-inverse: var(--dk-inverse);
+  --color-thumb: var(--dk-thumb);
+  --color-track: var(--dk-track);
+  --color-scrim: var(--dk-scrim);
+  --color-plate: var(--dk-plate);
+  --color-nav-active: var(--dk-nav-active);
+  --color-nav-active-fg: var(--dk-nav-active-fg);
+  --color-tabbar: var(--dk-tabbar);
+  /* Bordes */
+  --color-divider: var(--dk-divider);
+  --color-divider-strong: var(--dk-divider-strong);
+  --color-control: var(--dk-control);
+  --color-control-hover: var(--dk-control-hover);
+  /* Texto */
+  --color-fg-strong: var(--dk-fg-strong);
+  --color-fg: var(--dk-fg);
+  --color-fg-muted: var(--dk-fg-muted);
+  --color-fg-faint: var(--dk-fg-faint);
+  --color-fg-inverse: var(--dk-fg-inverse);
+  --color-fg-on-accent: var(--dk-fg-on-accent);
+  /* Señal */
+  --color-signal: var(--dk-signal);
+  --color-signal-hover: var(--dk-signal-hover);
+  --color-signal-pressed: var(--dk-signal-pressed);
+  --color-on-signal: var(--dk-on-signal);
+  --color-signal-wash: var(--dk-signal-wash);
+  /* Tinta (accent) */
+  --color-accent: var(--dk-accent);
+  --color-accent-hover: var(--dk-accent-hover);
+  --color-accent-pressed: var(--dk-accent-pressed);
+  --color-accent-subtle: var(--dk-accent-subtle);
+  --color-accent-subtle-strong: var(--dk-accent-subtle-strong);
+  --color-accent-ink: var(--dk-accent-ink);
+  --color-accent-line: var(--dk-accent-line);
+  --color-focus: var(--dk-focus);
+  --color-focus-ring: var(--dk-focus-ring);
+  /* Selección del lienzo */
+  --color-select: var(--dk-select);
+  --color-select-ring: var(--dk-select-ring);
+  /* Estados */
+  --color-success: var(--dk-success);
+  --color-success-bg: var(--dk-success-bg);
+  --color-success-line: var(--dk-success-line);
+  --color-success-solid: var(--dk-success-solid);
+  --color-on-success-solid: var(--dk-on-success-solid);
+  --color-warning: var(--dk-warning);
+  --color-warning-bg: var(--dk-warning-bg);
+  --color-warning-line: var(--dk-warning-line);
+  --color-warning-solid: var(--dk-warning-solid);
+  --color-on-warning-solid: var(--dk-on-warning-solid);
+  --color-danger: var(--dk-danger);
+  --color-danger-bg: var(--dk-danger-bg);
+  --color-danger-line: var(--dk-danger-line);
+  --color-danger-solid: var(--dk-danger-solid);
+  --color-on-danger-solid: var(--dk-on-danger-solid);
+  --color-info: var(--dk-info);
+  --color-info-bg: var(--dk-info-bg);
+  --color-info-line: var(--dk-info-line);
+  /* Gráficos */
+  --color-chart-1: var(--dk-chart-1);
+  --color-chart-2: var(--dk-chart-2);
+  --color-chart-3: var(--dk-chart-3);
+  --color-chart-4: var(--dk-chart-4);
+  --color-chart-5: var(--dk-chart-5);
+  --color-chart-6: var(--dk-chart-6);
+  /* Dibujo */
+  --color-frame-line: var(--dk-frame-line);
+  --color-dimension: var(--dk-dimension);
+  --color-dimension-text: var(--dk-dimension-text);
+  --color-brand-glass: var(--dk-brand-glass);
+
+  /* Nombres heredados v4 (≈2 700 usos): mismas clases, paleta nueva. */
   --color-paper-0: var(--paper-0);
   --color-paper-50: var(--paper-50);
   --color-paper-100: var(--paper-100);
@@ -20,13 +536,11 @@
   --color-paper-350: var(--paper-350);
   --color-paper-600: var(--paper-600);
   --color-paper-900: var(--paper-900);
-
   --color-ink-50: var(--ink-50);
   --color-ink-100: var(--ink-100);
   --color-ink-500: var(--ink-500);
   --color-ink-600: var(--ink-600);
   --color-ink-700: var(--ink-700);
-
   --color-ok-50: var(--ok-50);
   --color-ok-600: var(--ok-600);
   --color-ok-800: var(--ok-800);
@@ -37,24 +551,54 @@
   --color-bad-600: var(--bad-600);
   --color-bad-800: var(--bad-800);
 
+  /* Elevación (los valores cambian con el tema). */
+  --shadow-xs: var(--dk-shadow-xs);
+  --shadow-raised: var(--dk-shadow-raised);
+  --shadow-plate: var(--dk-shadow-plate);
+  --shadow-float: var(--dk-shadow-float);
+  --shadow-pop: var(--dk-shadow-pop);
+}
+
+@theme static {
+  --font-sans: 'Funnel Sans Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Funnel Display Variable', 'Funnel Sans Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Sin monoespaciada en el producto: `font-mono` queda como alias de la interfaz con cifras tabulares. */
+  --font-mono: 'Funnel Sans Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* Materiales (fijos, no cambian con el tema: son datos del producto). Referencias de pantalla, no RAL exactos. */
   --color-pvc-white: #f6f5f1;
+  --color-pvc-traffic-white: #f1f2ee;
   --color-pvc-anthracite: #383e42;
   --color-pvc-black: #0e0e10;
   --color-pvc-golden-oak: #a8692e;
   --color-pvc-walnut: #5b3a22;
+  --color-pvc-winchester: #7a4a2a;
+  --color-pvc-aluminium: #bfc8c7;
   --color-glass: #d9ebee;
+  --color-glass-edge: #bcd9de;
+  --color-gasket: #1f2427;
 
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  /* Radios: 8 controles · 12 paneles y menús · 16 diálogos y hoja. */
+  --radius-xs: 5px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-control: 8px;
+  --radius-panel: 12px;
+  --radius-dialog: 16px;
 
-  --shadow-float: 0 1px 2px rgb(31 28 24 / 0.06), 0 8px 24px rgb(31 28 24 / 0.08);
-  --shadow-pop: 0 2px 4px rgb(31 28 24 / 0.06), 0 16px 40px rgb(31 28 24 / 0.12);
+  /* Movimiento: entra rápido y se posa; sale más corto. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-in: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 0.2, 1);
 
-  --ease-out: cubic-bezier(0.2, 0, 0, 1);
-  --ease-in: cubic-bezier(0.4, 0, 1, 1);
-
+  /* Escala tipográfica (tamaño / interlineado / tracking). */
+  --text-micro: 11px;
+  --text-micro--line-height: 14px;
+  --text-micro--letter-spacing: 0.005em;
   --text-meta: 12px;
   --text-meta--line-height: 16px;
   --text-table: 13px;
@@ -63,116 +607,133 @@
   --text-base--line-height: 20px;
   --text-lead: 16px;
   --text-lead--line-height: 24px;
-  --text-h3: 20px;
-  --text-h3--line-height: 28px;
-  --text-h2: 24px;
-  --text-h2--line-height: 32px;
-  --text-h1: 32px;
-  --text-h1--line-height: 40px;
-  --text-display: 56px;
-  --text-display--line-height: 60px;
-
-  --color-pvc-winchester: #7a4a2a;
-}
-
-:root {
-  --paper-0: #ffffff;
-  --paper-50: #faf8f5;
-  --paper-100: #f4f1ec;
-  --paper-200: #e4dfd7;
-  --paper-350: #9c9489;
-  --paper-600: #6f685e;
-  --paper-900: #1f1c18;
-
-  --ink-50: #eef1fc;
-  --ink-100: #dce3fa;
-  --ink-500: #3a5bd6;
-  --ink-600: #2747c2;
-  --ink-700: #1f3aa0;
-
-  --ok-50: #e6f2ea;
-  --ok-600: #2f7d4f;
-  --ok-800: #1d5234;
-  --warn-50: #fbf0dc;
-  --warn-600: #a35f00;
-  --warn-800: #6b3e00;
-  --bad-50: #fbe8e5;
-  --bad-600: #c23b2e;
-  --bad-800: #8a2219;
-
-  /* Vidrio de los dibujos: 70 % sobre papel; más tenue sobre fondo oscuro. */
-  --sketch-glass-opacity: 0.7;
-  --sketch-glint-opacity: 0.95;
-
-  color-scheme: light;
-}
-
-[data-theme='dark'] {
-  --paper-0: #1e1b18;
-  --paper-50: #151311;
-  --paper-100: #24211d;
-  --paper-200: #34302b;
-  --paper-350: #5e5850;
-  --paper-600: #a39d94;
-  --paper-900: #ede9e3;
-  --ink-50: #1d2238;
-  --ink-100: #263057;
-  --ink-500: #8ea5ee;
-  --ink-600: #8ea5ee;
-  --ink-700: #b3c3f4;
-  --ok-50: #17271d;
-  --ok-600: #6cbf8c;
-  --ok-800: #a6dcb9;
-  --warn-50: #2c2213;
-  --warn-600: #e2a24a;
-  --warn-800: #f2cd92;
-  --bad-50: #311a17;
-  --bad-600: #ec7a6c;
-  --bad-800: #f6b3aa;
-  --sketch-glass-opacity: 0.22;
-  --sketch-glint-opacity: 0.45;
-  color-scheme: dark;
+  --text-h4: 15px;
+  --text-h4--line-height: 22px;
+  --text-h3: 18px;
+  --text-h3--line-height: 24px;
+  --text-h3--letter-spacing: -0.01em;
+  --text-h2: 22px;
+  --text-h2--line-height: 28px;
+  --text-h2--letter-spacing: -0.015em;
+  --text-h1: 28px;
+  --text-h1--line-height: 34px;
+  --text-h1--letter-spacing: -0.02em;
+  --text-figure: 32px;
+  --text-figure--line-height: 38px;
+  --text-figure--letter-spacing: -0.025em;
+  --text-display-sm: 44px;
+  --text-display-sm--line-height: 48px;
+  --text-display-sm--letter-spacing: -0.025em;
+  --text-display: 64px;
+  --text-display--line-height: 66px;
+  --text-display--letter-spacing: -0.03em;
+  --text-display-lg: 88px;
+  --text-display-lg--line-height: 88px;
+  --text-display-lg--letter-spacing: -0.035em;
 }
 
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
     text-rendering: optimizeLegibility;
+    -webkit-tap-highlight-color: transparent;
   }
   body {
-    @apply bg-paper-50 text-paper-900 font-sans antialiased;
+    @apply bg-canvas text-fg font-sans antialiased;
     min-height: 100dvh;
     font-size: 14px;
     line-height: 20px;
-    font-feature-settings: 'ss01' on;
+    font-synthesis-weight: none;
+    font-optical-sizing: auto;
+  }
+  /* Los títulos hablan con la voz de Funnel Display, sin que cada pantalla tenga que pedirlo. */
+  h1,
+  h2 {
+    font-family: var(--font-display);
+    text-wrap: balance;
   }
   ::selection {
-    background: var(--ink-100);
+    background: var(--dk-selection);
+    color: var(--dk-fg-strong);
   }
   :focus-visible {
-    outline: 2px solid var(--ink-500);
+    outline: 2px solid var(--dk-focus);
     outline-offset: 2px;
   }
   button,
   [role='button'] {
     cursor: pointer;
   }
-}
-
-@layer utilities {
-  .tabular {
+  :disabled,
+  [aria-disabled='true'] {
+    cursor: not-allowed;
+  }
+  kbd,
+  code,
+  samp {
+    font-family: var(--font-sans);
     font-variant-numeric: tabular-nums;
   }
-  .narrow {
-    font-stretch: 87.5%;
+  hr {
+    border-color: var(--dk-divider);
   }
-  .scrollbar-quiet {
-    scrollbar-width: thin;
-    scrollbar-color: var(--paper-200) transparent;
+  :root[data-input='pointer'] [role='tab']:focus-visible,
+  :root[data-input='pointer'] [role='radio']:focus-visible {
+    outline: none;
+  }
+  @media (forced-colors: active) {
+    :focus-visible {
+      outline-color: Highlight;
+    }
   }
 }
 
-/* ── Movimiento: 120/160/200/240 ms, solo opacity y transform ───────────────── */
+/* ── Utilidades ─────────────────────────────────────────────────────────────────────────────── */
+
+/** Cifras alineadas (montos, cantidades, conteos). */
+@utility tabular {
+  font-variant-numeric: lining-nums tabular-nums;
+}
+@utility num {
+  font-variant-numeric: lining-nums tabular-nums;
+  font-feature-settings: 'tnum' on;
+}
+/** Medidas y cotas («1.200 × 1.000 mm»): la interfaz con cifras tabulares, sin monoespaciada. */
+@utility dim {
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: 0;
+}
+/** Identificadores (N° 412, PRO-70, Q-2026-0184): mismas cifras, mismo tamaño que el texto que acompañan. */
+@utility code-id {
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: 0;
+}
+/** Texto denso en tablas y cotas: apretado sin deformar la letra (la familia no tiene eje de ancho). */
+@utility narrow {
+  letter-spacing: -0.01em;
+}
+@utility scrollbar-quiet {
+  scrollbar-width: thin;
+  scrollbar-color: var(--dk-divider-strong) transparent;
+}
+/** Selección en listas y menús: por tono, sin filo. Conserva el nombre para no romper los usos existentes. */
+@utility edge-accent {
+  background-color: var(--dk-accent-subtle);
+}
+/** Halo de foco para campos (borde de tinta + aro suave). */
+@utility ring-focus {
+  border-color: var(--dk-focus);
+  box-shadow: 0 0 0 3px var(--dk-focus-ring);
+  outline: none;
+}
+/** Cifra de presentación: Funnel Display, tabular, ajustada. */
+@utility figure {
+  font-family: var(--font-display);
+  font-variant-numeric: lining-nums tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* ── Movimiento: solo opacity y transform; las salidas son más cortas que las entradas ───────── */
 
 @keyframes fz-fade-in {
   from { opacity: 0; }
@@ -181,13 +742,13 @@
   to { opacity: 0; }
 }
 @keyframes fz-pop-in {
-  from { opacity: 0; transform: translateY(var(--fz-pop-y, 4px)) scale(0.98); }
+  from { opacity: 0; transform: translateY(var(--fz-pop-y, 2px)) scale(0.97); }
 }
 @keyframes fz-pop-out {
   to { opacity: 0; transform: scale(0.98); }
 }
 @keyframes fz-dialog-in {
-  from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)) scale(0.98); }
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.97); }
   to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
 @keyframes fz-dialog-out {
@@ -195,16 +756,16 @@
   to { opacity: 0; transform: translate(-50%, -50%) scale(0.98); }
 }
 @keyframes fz-sheet-right-in {
-  from { opacity: 0; transform: translateX(16px); }
+  from { transform: translateX(calc(100% + 16px)); }
 }
 @keyframes fz-sheet-right-out {
-  to { opacity: 0; transform: translateX(16px); }
+  to { transform: translateX(calc(100% + 16px)); }
 }
 @keyframes fz-sheet-left-in {
-  from { opacity: 0; transform: translateX(-16px); }
+  from { transform: translateX(calc(-100% - 16px)); }
 }
 @keyframes fz-sheet-left-out {
-  to { opacity: 0; transform: translateX(-16px); }
+  to { transform: translateX(calc(-100% - 16px)); }
 }
 @keyframes fz-sheet-bottom-in {
   from { transform: translateY(100%); }
@@ -220,49 +781,110 @@
   to { transform: rotate(360deg); }
 }
 @keyframes fz-breathe {
-  50% { opacity: 0.45; }
+  50% { opacity: 0.4; }
+}
+@keyframes fz-rise {
+  from { opacity: 0; transform: translateY(4px); }
+}
+@keyframes fz-check {
+  from { opacity: 0; transform: scale(0.6); }
+}
+@keyframes fz-sheen {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
 }
 
 @layer components {
-  .fz-overlay[data-state='open'] { animation: fz-fade-in 200ms var(--ease-out); }
-  .fz-overlay[data-state='closed'] { animation: fz-fade-out 150ms var(--ease-in); }
+  .fz-overlay {
+    background: var(--dk-scrim);
+  }
+  .fz-overlay[data-state='open'] { animation: fz-fade-in 180ms var(--ease-out); }
+  .fz-overlay[data-state='closed'] { animation: fz-fade-out 110ms var(--ease-exit); }
 
-  .fz-pop[data-side='top'] { --fz-pop-y: -4px; }
+  /* Flotantes: nacen desde su disparador (origen de Radix). El segundo tooltip seguido entra sin animar. */
+  .fz-pop {
+    transform-origin: var(
+      --radix-popper-transform-origin,
+      var(--radix-dropdown-menu-content-transform-origin, var(--radix-popover-content-transform-origin, 50% 0))
+    );
+  }
+  .fz-pop[data-side='top'] { --fz-pop-y: -2px; }
+  .fz-pop[data-side='left'] { --fz-pop-y: 0px; }
+  .fz-pop[data-side='right'] { --fz-pop-y: 0px; }
   .fz-pop[data-state='open'],
-  .fz-pop[data-state='delayed-open'],
-  .fz-pop[data-state='instant-open'] { animation: fz-pop-in 160ms var(--ease-out); }
-  .fz-pop[data-state='closed'] { animation: fz-pop-out 120ms var(--ease-in); }
+  .fz-pop[data-state='delayed-open'] { animation: fz-pop-in 140ms var(--ease-out); }
+  .fz-pop[data-state='instant-open'] { animation: none; }
+  .fz-pop[data-state='closed'] { animation: fz-pop-out 100ms var(--ease-exit); }
 
   .fz-dialog { transform: translate(-50%, -50%); }
-  .fz-dialog[data-state='open'] { animation: fz-dialog-in 240ms var(--ease-out) both; }
-  .fz-dialog[data-state='closed'] { animation: fz-dialog-out 180ms var(--ease-in) both; }
+  .fz-dialog[data-state='open'] { animation: fz-dialog-in 180ms var(--ease-out) both; }
+  .fz-dialog[data-state='closed'] { animation: fz-dialog-out 110ms var(--ease-exit) both; }
 
-  .fz-sheet-right[data-state='open'] { animation: fz-sheet-right-in 200ms var(--ease-out); }
-  .fz-sheet-right[data-state='closed'] { animation: fz-sheet-right-out 150ms var(--ease-in); }
-  .fz-sheet-left[data-state='open'] { animation: fz-sheet-left-in 200ms var(--ease-out); }
-  .fz-sheet-left[data-state='closed'] { animation: fz-sheet-left-out 150ms var(--ease-in); }
-  .fz-sheet-bottom[data-state='open'] { animation: fz-sheet-bottom-in 240ms var(--ease-out); }
-  .fz-sheet-bottom[data-state='closed'] { animation: fz-sheet-bottom-out 180ms var(--ease-in); }
+  .fz-sheet-right[data-state='open'] { animation: fz-sheet-right-in 280ms var(--ease-drawer); }
+  .fz-sheet-right[data-state='closed'] { animation: fz-sheet-right-out 180ms var(--ease-exit); }
+  .fz-sheet-left[data-state='open'] { animation: fz-sheet-left-in 280ms var(--ease-drawer); }
+  .fz-sheet-left[data-state='closed'] { animation: fz-sheet-left-out 180ms var(--ease-exit); }
+  .fz-sheet-bottom[data-state='open'] { animation: fz-sheet-bottom-in 280ms var(--ease-drawer); }
+  .fz-sheet-bottom[data-state='closed'] { animation: fz-sheet-bottom-out 180ms var(--ease-exit); }
 
-  .fz-flash-layer { animation: fz-flash 600ms var(--ease-out) forwards; }
-  .fz-spin { animation: fz-spin 700ms linear infinite; }
+  /* Margen derecho de la hoja. Con el asistente abierto (AssistantRoot publica data-assistant-place y
+     --fz-assistant-inset) cede el ancho del panel y quedan dos hojas con 8 px de aire entre ellas. Vale
+     para todas las pantallas, también el editor: cuando el panel va a su columna de ventanas la
+     posición es 'items', no 'right', y la hoja no se mueve. */
+  @media (min-width: 768px) {
+    .fz-sheet-gutter {
+      padding-right: 8px;
+      transition: padding-right 240ms var(--ease-drawer);
+    }
+    :root[data-assistant-place='right'] .fz-sheet-gutter {
+      padding-right: calc(var(--fz-assistant-inset) + 4px);
+    }
+  }
+
+  .fz-rise { animation: fz-rise 180ms var(--ease-out) both; }
+  .fz-check { animation: fz-check 120ms var(--ease-out); }
+  .fz-flash-layer { animation: fz-flash 700ms var(--ease-out) forwards; }
+  .fz-spin { animation: fz-spin 560ms linear infinite; }
   .fz-breathe { animation: fz-breathe 1.2s ease-in-out infinite; }
 
-  /* Toasts (sonner): tinta invertida, sobria. */
+  /* Esqueleto: un barrido muy lento que dice "esto carga"; quieto con movimiento reducido. */
+  .fz-skeleton {
+    position: relative;
+    overflow: hidden;
+    background: var(--dk-hover);
+  }
+  .fz-skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, var(--dk-sunken), transparent);
+    animation: fz-sheen 1.6s var(--ease-standard) infinite;
+  }
+
+  [data-theme='original'] .fz-skeleton::after {
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.32), transparent);
+  }
+
+  /* Toasts (sonner): tinta sobre claro; superficie elevada sobre oscuro. */
   .fz-toast {
     display: flex;
     align-items: center;
-    gap: 12px;
-    width: var(--width, 356px);
+    gap: 10px;
+    width: var(--width, 360px);
+    min-height: 44px;
     padding: 10px 10px 10px 14px;
     border-radius: var(--radius-md);
-    background: var(--paper-900);
-    color: var(--paper-0);
-    box-shadow: var(--shadow-pop);
+    background: var(--dk-inverse);
+    color: var(--dk-fg-inverse);
+    box-shadow: var(--dk-shadow-pop);
     font-size: 14px;
     line-height: 20px;
   }
-  .fz-toast [data-icon] { flex: none; display: flex; color: inherit; opacity: 0.8; }
+  .fz-toast [data-icon] { flex: none; display: flex; color: inherit; opacity: 0.85; }
+  .fz-toast[data-type='success'] [data-icon] { color: #5fd3a0; opacity: 1; }
+  .fz-toast[data-type='error'] [data-icon] { color: #ff8d9e; opacity: 1; }
+  .fz-toast[data-type='warning'] [data-icon] { color: #ffa964; opacity: 1; }
+  .fz-toast[data-type='info'] [data-icon] { color: #9dc0ff; opacity: 1; }
   .fz-toast [data-content] { flex: 1; min-width: 0; }
   .fz-toast [data-description] { opacity: 0.72; font-size: 13px; line-height: 18px; }
   .fz-toast-action {
@@ -271,12 +893,12 @@
     padding: 0 10px;
     border-radius: var(--radius-sm);
     font-weight: 600;
-    color: var(--ink-100);
-    background: color-mix(in srgb, var(--paper-0) 10%, transparent);
-    transition: background-color 120ms var(--ease-out);
+    color: inherit;
+    background: rgb(255 255 255 / 0.12);
+    transition: background-color 100ms var(--ease-out), transform 100ms var(--ease-out);
   }
-  [data-theme='dark'] .fz-toast-action { color: var(--ink-600); }
-  .fz-toast-action:hover { background: color-mix(in srgb, var(--paper-0) 18%, transparent); }
+  .fz-toast-action:hover { background: rgb(255 255 255 / 0.2); }
+  .fz-toast-action:active { transform: scale(0.97); }
   .fz-toast-cancel {
     flex: none;
     height: 28px;
@@ -295,6 +917,7 @@
   }
 }
 
+/* Movimiento reducido: se quita el recorrido; quedan los cambios de opacidad que aclaran el estado. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -303,5 +926,8 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+  .fz-skeleton::after {
+    display: none;
   }
 }

@@ -2,7 +2,7 @@
  * Datos de los documentos (cotización, taller y catálogo) armados con el motor.
  *
  * El motor es la única fuente de cifras. Cotización, taller y catálogo usan los constructores
- * puros de '@framezen/documents' (buildQuoteDocData / buildWorkshopDocInput /
+ * puros de '@dekopen/documents' (buildQuoteDocData / buildWorkshopDocInput /
  * buildCatalogDocData), los mismos de la vista previa de la web: el PDF muestra exactamente lo
  * que se ve en pantalla.
  */
@@ -17,9 +17,9 @@ import {
   type QuoteDocData,
   type QuoteDocOverrides,
   type WorkshopDocInput,
-} from '@framezen/documents'
-import type { Catalog, QuoteTotals } from '@framezen/engine'
-import type { Client, DocumentPrefs, Feature, Org, OrgSettings, Quote, Role, WorkOrder } from '@framezen/shared'
+} from '@dekopen/documents'
+import type { Catalog, QuoteTotals } from '@dekopen/engine'
+import type { Client, DocTemplate, DocumentPrefs, Feature, Org, OrgSettings, Quote, Role, WorkOrder } from '@dekopen/shared'
 import type { ItemPrices } from '../pricing'
 
 // ── Cotización ───────────────────────────────────────────────────────────────
@@ -37,6 +37,12 @@ export interface QuoteDocInput {
   totals?: QuoteTotals
   /** Fecha del documento (por defecto, la de envío o la última edición). */
   date?: string
+  /** Texturas subidas por el taller que usan los colores: `{ [assetId]: data URL }` (Chromium imprime sin red). */
+  textures?: Readonly<Record<string, string>>
+  /** Plantilla ya cargada (diseño o plantilla propia de la empresa): services/templates › loadQuoteTemplateForRender. */
+  template?: DocTemplate
+  /** Imágenes de esa plantilla (id de recurso → data URL): services/templates › templateAssetDataUrls. */
+  assets?: Readonly<Record<string, string>>
 }
 
 /** Preferencias del documento ya combinadas con los textos propios de la cotización. */
@@ -62,6 +68,9 @@ export function buildQuoteDoc(input: QuoteDocInput): QuoteDocData {
     ...(input.client !== undefined ? { client: input.client } : {}),
     ...(input.portalUrl ? { portalUrl: input.portalUrl } : {}),
     ...(input.date ? { date: input.date } : {}),
+    ...(input.textures && Object.keys(input.textures).length ? { textures: { ...input.textures } } : {}),
+    ...(input.template ? { template: input.template } : {}),
+    ...(input.assets && Object.keys(input.assets).length ? { assets: { ...input.assets } } : {}),
   })
   return pinPrices(data, input.quote, input.itemPrices, input.totals)
 }
@@ -69,7 +78,8 @@ export function buildQuoteDoc(input: QuoteDocInput): QuoteDocData {
 // ── Taller ───────────────────────────────────────────────────────────────────
 
 export interface WorkshopDocArgs {
-  workOrder: WorkOrder
+  /** La OT, o el rótulo de una cotización que aún no la tiene (`fromQuote`). */
+  workOrder: WorkOrder | (Pick<WorkOrder, 'number'> & Partial<Pick<WorkOrder, 'createdAt' | 'clientName'>> & { fromQuote: true })
   quote: Quote
   org: Org
   catalog: Catalog
@@ -99,9 +109,9 @@ export function buildWorkshopDoc(args: WorkshopDocArgs): WorkshopDocInput {
 
 /**
  * Mismas reglas que la vista previa de /documentos: ambos usan `buildCatalogDocData` de
- * '@framezen/documents' (tipologías por línea, color y vidrio del taller, «desde $X/m²»).
+ * '@dekopen/documents' (tipologías por línea, color y vidrio del taller, «desde $X/m²»).
  */
-export { CATALOG_DOC_MAX_TYPOLOGIES as CATALOG_MAX_TYPOLOGIES, fromPricePerM2 } from '@framezen/documents'
+export { CATALOG_DOC_MAX_TYPOLOGIES as CATALOG_MAX_TYPOLOGIES, fromPricePerM2 } from '@dekopen/documents'
 
 export interface CatalogDocInput {
   org: Org

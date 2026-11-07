@@ -1,8 +1,11 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Outlet, useLocation } from 'react-router'
+import { TexturesProvider } from '../../features/catalog/colors/TexturesProvider'
+import { useT } from '../../lib/i18n'
 import { SIDEBAR_AUTO_COLLAPSE_QUERY, useShellStore } from '../../lib/stores'
 import { useShortcut } from '../../lib/useShortcut'
 import { useToastArea } from '../../ui'
+import es from '../i18n/es'
 import { AccountBanner } from './AccountBanner'
 import { MobileNavSheet, MobileTabBar } from './MobileNav'
 import { PageFallback } from './PageFallback'
@@ -13,6 +16,7 @@ import { Topbar } from './Topbar'
 
 /** Marco general de la app privada: barra lateral, barra superior, contenido y paleta ⌘K. */
 export default function AppShell() {
+  const t = useT(es)
   const toggleSidebar = useShellStore((s) => s.toggleSidebar)
   const commandOpen = useShellStore((s) => s.commandOpen)
   const setCommandOpen = useShellStore((s) => s.setCommandOpen)
@@ -46,27 +50,33 @@ export default function AppShell() {
   }, [pathname])
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-paper-50">
+    <div className="flex h-dvh overflow-hidden bg-canvas text-fg md:bg-frame">
       <a
         href="#contenido"
-        className="sr-only z-50 rounded-sm bg-paper-900 px-3 py-2 text-paper-0 focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
+        className="sr-only z-50 rounded-sm bg-inverse px-3 py-2 text-fg-inverse focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
       >
-        Saltar al contenido
+        {t('shell.skip')}
       </a>
       <Sidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar onShowShortcuts={showShortcuts} />
-        <AccountBanner />
-        <main
-          id="contenido"
-          ref={mainRef}
-          tabIndex={-1}
-          className="scrollbar-quiet min-h-0 flex-1 overflow-y-auto pb-[calc(56px+env(safe-area-inset-bottom))] focus:outline-none md:pb-0"
-        >
-          <Suspense fallback={<PageFallback />}>
-            <Outlet />
-          </Suspense>
-        </main>
+      {/* La hoja: el marco es la app; aquí adentro está el trabajo. En el teléfono ocupa toda la pantalla.
+          Con el asistente abierto cede su lugar y quedan dos hojas lado a lado (ver .fz-sheet-gutter). */}
+      <div className="fz-sheet-gutter flex min-w-0 flex-1 flex-col md:py-2">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-canvas md:rounded-lg md:shadow-raised">
+          <Topbar onShowShortcuts={showShortcuts} />
+          <AccountBanner />
+          <main
+            id="contenido"
+            ref={mainRef}
+            tabIndex={-1}
+            className="scrollbar-quiet min-h-0 flex-1 overflow-y-auto pb-[calc(56px+env(safe-area-inset-bottom))] focus:outline-none md:pb-0"
+          >
+            <Suspense fallback={<PageFallback />}>
+              <TexturesProvider>
+                <Outlet />
+              </TexturesProvider>
+            </Suspense>
+          </main>
+        </div>
       </div>
       <MobileTabBar />
       <MobileNavSheet />

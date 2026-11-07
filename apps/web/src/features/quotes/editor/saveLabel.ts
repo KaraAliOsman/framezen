@@ -1,3 +1,5 @@
+import { translate } from '../../../lib/i18n'
+import es from '../i18n/es'
 import type { SaveInfo } from '../model/store'
 
 /**
@@ -6,7 +8,7 @@ import type { SaveInfo } from '../model/store'
  * solo. `undefined` = el texto de siempre.
  */
 export function editorSaveLabel(save: Pick<SaveInfo, 'status' | 'message' | 'retrying' | 'local'>): string | undefined {
-  if (save.status === 'offline') return save.local ? 'Sin conexión · guardado en este equipo' : 'Sin conexión · no cierres esta pestaña'
-  if (save.status === 'error' && !save.retrying) return save.message ? `No pudimos guardar: ${save.message}` : 'No pudimos guardar tus cambios'
+  if (save.status === 'offline') return translate(es, save.local ? 'save.offlineLocal' : 'save.offline')
+  if (save.status === 'error' && !save.retrying) return save.message ? translate(es, 'save.errorWith', { message: save.message }) : translate(es, 'save.error')
   return undefined
 }

@@ -1,5 +1,5 @@
 /**
- * Suite E2E de Framezen (Playwright). No levanta servidores: espera la web de Vite en
+ * Suite E2E de DEKOPEN (Playwright). No levanta servidores: espera la web de Vite en
  * http://localhost:5180 (proxy /api → 8787) ya corriendo (`npm run dev`).
  *
  *   npx playwright test -c e2e                 # todo

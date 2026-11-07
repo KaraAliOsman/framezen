@@ -114,7 +114,8 @@ describe('buildWorkshopDataWith', () => {
     const result = buildWorkshopDataWith(fakeCore, quote, withBrand, DEFAULT_PRICING, DEFAULT_CUT)
     const bar = result.optimization.groups[0].bars[0]
     expect(bar.cuts[0].offset).toBe(20)
-    expect(bar.kerfLoss).toBe(bar.cuts.length * 5)
+    // Piezas a 45°: el disco de 5 mm ocupa 7,1 mm en el eje de la barra.
+    expect(bar.kerfLoss).toBeCloseTo(bar.cuts.length * 7.1, 5)
   })
 
   it('usa retazos de bodega y no los compra', () => {

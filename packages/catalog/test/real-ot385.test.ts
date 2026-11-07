@@ -16,7 +16,7 @@
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { computeBom, createDesign, priceItem, roundHalfUp, type Bom, type Catalog, type DesignNode, type WindowDesign } from '@framezen/engine'
+import { computeBom, createDesign, priceItem, roundHalfUp, type Bom, type Catalog, type DesignNode, type WindowDesign } from '@dekopen/engine'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { hardwareRangeGaps } from '../src/index'
 import { DEFAULT_SOURCE_DIR, importBrandData } from '../src/node'

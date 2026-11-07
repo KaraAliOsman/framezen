@@ -1,4 +1,4 @@
-import type { Catalog } from '@framezen/engine'
+import type { Catalog } from '@dekopen/engine'
 import { TYPOLOGY_IDS } from '../src/index'
 
 /** Integridad referencial de un catálogo (ids únicos y referencias existentes). */

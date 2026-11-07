@@ -1,9 +1,9 @@
 /**
- * Puente y entorno simulados para probar a Marco sin el editor real (solo pruebas).
+ * Puente y entorno simulados para probar el asistente sin el editor real (solo pruebas).
  */
-import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@framezen/catalog'
-import type { Catalog, Id, WindowDesign } from '@framezen/engine'
-import type { Client, Quote, QuoteItem, QuoteSummary } from '@framezen/shared'
+import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@dekopen/catalog'
+import type { Catalog, Id, WindowDesign } from '@dekopen/engine'
+import type { Client, Quote, QuoteItem, QuoteSummary } from '@dekopen/shared'
 import type { QuoteEditorBridge } from './bridge'
 import type { ExecutorEnv } from './executor'
 

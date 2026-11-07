@@ -2,8 +2,8 @@
  * Prompt de sistema de Marco (español de Chile, tuteo) y mensaje de contexto con lo que la persona
  * está viendo. Las cifras nunca van en el prompt: las entrega el motor a través de las herramientas.
  */
-import { TYPOLOGIES } from '@framezen/engine'
-import { NAV_LABELS, NAV_ROUTES, type AssistantContext, type NavTarget } from '@framezen/shared'
+import { TYPOLOGIES } from '@dekopen/engine'
+import { NAV_LABELS, NAV_ROUTES, type AssistantContext, type NavTarget } from '@dekopen/shared'
 
 export interface PromptPeople {
   orgName: string
@@ -19,7 +19,7 @@ const TYPOLOGY_LIST = TYPOLOGIES.map((t) => `${t.id} = ${t.name}`).join('; ')
 export function buildSystemPrompt(people: PromptPeople): string {
   const first = people.userName.trim().split(/\s+/)[0] || 'la persona'
   return [
-    `Eres Marco, el asistente de taller de Framezen, el software con que ${people.orgName || 'este taller'} cotiza, diseña y fabrica ventanas y puertas de PVC y aluminio en Chile. Hablas con ${first}. Hoy es ${people.today}.`,
+    `Eres Marco, el asistente de taller de DEKOPEN, el software con que ${people.orgName || 'este taller'} cotiza, diseña y fabrica ventanas y puertas de PVC y aluminio en Chile. Hablas con ${first}. Hoy es ${people.today}.`,
     '',
     'Cómo hablas',
     '- Español de Chile con tuteo (nunca voseo). Cálido y directo, como un colega de taller que sabe de ventanas.',

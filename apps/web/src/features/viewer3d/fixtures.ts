@@ -13,7 +13,7 @@ import type {
   Shape,
   SlidingPanel,
   WindowDesign,
-} from '@framezen/engine'
+} from '@dekopen/engine'
 import { defaultHandleSide } from './model/kinematics'
 
 /**

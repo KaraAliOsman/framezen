@@ -28,7 +28,7 @@ import type {
   Profile,
   ProfileRole,
   TypologyId,
-} from '@framezen/engine'
+} from '@dekopen/engine'
 import {
   chamberFromColor,
   inferUnit,
@@ -50,6 +50,7 @@ import { brandRuleFor, colorFromCode, modelGroupKey, profileModelCode, prolineTo
 import { COLOR_PALETTE, colorSuffixes, isColorless, normalizeColor } from './colors'
 import { parseMisPreciosCsv, type MisPreciosRow } from './csv'
 import { PROLINE_FACES, PROLINE_LINES, PROLINE_REINFORCEMENT, PROLINE_REINFORCEMENT_LINE, prolineSettings } from './proline'
+import { applyEvidence, type CatalogEvidence, type EvidenceReport } from './provenance'
 import { TYPICAL_PAUTA_PREFIX, lineReadiness, readinessIndex, requiredRolesFor, type ReadinessState } from './readiness'
 import { GENERIC_BRAND, GENERIC_ITEMS, buildLineRules } from './rules'
 import { SAMPLE_CATALOG } from './sample'
@@ -63,6 +64,11 @@ export const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 /** .data/catalog/base.json en la raíz del repo (CATALOG_BASE_FILE lo reemplaza, útil en builds empaquetados). */
 export const DEFAULT_BASE_FILE = process.env.CATALOG_BASE_FILE || join(REPO_ROOT, '.data', 'catalog', 'base.json')
 export const DEFAULT_REPORT_FILE = join(dirname(DEFAULT_BASE_FILE), 'import-report.json')
+/**
+ * Evidencia técnica de cada marca (fuentes, medidas contrastadas, correcciones). Es local: el
+ * repositorio público guarda las reglas, no los datos. Sin este archivo nada se da por verificado.
+ */
+export const DEFAULT_EVIDENCE_FILE = process.env.CATALOG_EVIDENCE_FILE || join(REPO_ROOT, 'docs', 'build', 'v7-evidencia.json')
 
 /** Marcas activadas por defecto (las de mejor cobertura de precios y pautas). */
 export const RECOMMENDED_BRANDS = ['PROLINE', 'TERMICO', 'WINSA', 'KOMPEN', 'KUNSTHERM', 'HERRAJESGENERICOS', 'VIDRIOSPROLINE', 'VIDRIOS']
@@ -148,6 +154,8 @@ export interface ImportReport {
     outlierPrice: number
   }
   brands: BrandImportReport[]
+  /** Qué aplicó y qué no pudo aplicar de la evidencia técnica. */
+  evidence?: EvidenceReport
   totals: CatalogStats & { genericItemsUsed: number }
   /** Líneas por estado: lista para cotizar, cotiza con avisos, solo medidas. */
   readiness: Record<ReadinessState, number>
@@ -844,7 +852,17 @@ const AVISO_REF = /perfil (marco|hoja) (\d+)/i
  * Lee la carpeta de datos de marcas y arma el catálogo base. Nunca lanza por datos
  * incompletos: devuelve lo que pudo importar y un reporte con cifras y avisos.
  */
-export function importBrandData(sourceDir: string = DEFAULT_SOURCE_DIR): ImportResult {
+/** Lee la evidencia técnica local; sin archivo, `null`: nada se da por verificado. */
+export function readEvidence(file: string = DEFAULT_EVIDENCE_FILE): CatalogEvidence | null {
+  return readJson<CatalogEvidence>(file) ?? null
+}
+
+export interface ImportOptions {
+  /** Evidencia técnica. Por defecto se lee `DEFAULT_EVIDENCE_FILE` solo al importar la carpeta real. */
+  evidence?: CatalogEvidence | null
+}
+
+export function importBrandData(sourceDir: string = DEFAULT_SOURCE_DIR, options: ImportOptions = {}): ImportResult {
   const report: ImportReport = {
     sourceDir,
     files: { read: 0, duplicates: [] },
@@ -872,7 +890,7 @@ export function importBrandData(sourceDir: string = DEFAULT_SOURCE_DIR): ImportR
   const useColor = (id: string): void => {
     if (colorsById.has(id)) return
     const known = COLOR_PALETTE.find((color) => color.id === id)
-    colorsById.set(id, known ?? normalizeColor(id.replace(/-/g, ' ')))
+    colorsById.set(id, known ? { ...known, ...(known.texture ? { texture: { ...known.texture } } : {}) } : normalizeColor(id.replace(/-/g, ' ')))
   }
 
   const catalog: Catalog = { colors: [], brands: [], lines: [], profiles: [], items: [], glass: [], brandSettings: [] }
@@ -1355,7 +1373,7 @@ export function importBrandData(sourceDir: string = DEFAULT_SOURCE_DIR): ImportR
       let pauta = verified?.pauta ?? derived.pauta
       // El ancho y descuento de hoja corresponden a la hoja de la variante (no a la moda de toda la línea).
       if (!verified && plan.variant?.pair) pauta = { ...pauta, sashWidth: plan.variant.pair[0], sashDeduction: plan.variant.pair[1] }
-      const doorPauta = verified?.doorPauta ?? derived.doorPauta
+      let doorPauta = verified?.doorPauta ?? derived.doorPauta
       const planProductIds = new Set(plan.products.map((product) => product.id))
       const own = brandProfiles.filter((profile) => profile.lineId === ownerId && !draftById.get(profile.id)?.common)
       const commons = brandProfiles.filter((profile) => draftById.get(profile.id)?.common)
@@ -1412,6 +1430,37 @@ export function importBrandData(sourceDir: string = DEFAULT_SOURCE_DIR): ImportR
         const current = brandProfiles.find((profile) => profile.id === roles.sash)
         const interior = own.find((profile) => profile.role === 'sash' && profile.id !== roles.sash && /\bINT/.test(normalizeKey(profile.name)) && !isComplementProfile(profile.name))
         if (current && interior && /\bEXT/.test(normalizeKey(current.name))) sashInProfileId = interior.id
+      }
+
+      // Puerta: la hoja por defecto abre hacia adentro; la exterior va aparte con su propia pauta.
+      let doorOutProfileId: string | undefined
+      let doorOutPauta: Partial<Pauta> | undefined
+      if (!verified && kind === 'casement' && roles.door_sash) {
+        const doorSashes = own.filter((profile) => profile.role === 'door_sash' && !isComplementProfile(profile.name))
+        const interior = doorSashes.find((profile) => /\bINT/.test(normalizeKey(profile.name)))
+        const exterior = doorSashes.find((profile) => /\bEXT/.test(normalizeKey(profile.name)))
+        if (interior && exterior) {
+          roles.door_sash = interior.id
+          doorOutProfileId = exterior.id
+          const pairOf = (side: RegExp) =>
+            mode(
+              plan.products
+                // Una hoja de puerta nunca es más angosta que la de ventana: esos productos traen la pauta mal.
+                .filter((product) => isDoorProduct(product) && side.test(normalizeKey(`${product.typologyName} ${product.name}`)) && product.ah > product.dh && product.dh > 0 && product.ah > pauta.sashWidth)
+                .map((product) => [product.ah, product.dh] as const),
+              (value) => value.join('/'),
+            )
+          const inPair = pairOf(/\bINT/)
+          const outPair = pairOf(/\bEXT/)
+          if (inPair) doorPauta = { ...doorPauta, sashWidth: inPair[0], sashDeduction: inPair[1] }
+          if (outPair && (outPair[0] !== doorPauta?.sashWidth || outPair[1] !== doorPauta?.sashDeduction)) doorOutPauta = { sashWidth: outPair[0], sashDeduction: outPair[1] }
+        }
+      }
+
+      // Algunas marcas llaman «Encuentro» a la pieza central: se usa si el sistema no trae otro traslapo.
+      if (kind === 'sliding' && !roles.interlock) {
+        const meeting = own.find((profile) => /^ENCUENTRO\b/.test(normalizeKey(profile.name)))
+        if (meeting) roles.interlock = meeting.id
       }
 
       // Colores que ofrece: los del marco y la hoja por defecto con precio (si no hay precios, los vistos).
@@ -1474,6 +1523,8 @@ export function importBrandData(sourceDir: string = DEFAULT_SOURCE_DIR): ImportR
         ...(verified?.sashInPauta ? { sashInPauta: verified.sashInPauta } : {}),
         profiles: roles,
         ...(sashInProfileId ? { sashInProfileId } : {}),
+        ...(doorOutProfileId ? { doorOutProfileId } : {}),
+        ...(doorOutPauta ? { doorOutPauta } : {}),
         colorIds,
         typologyIds,
         hardwareRules: [] as HardwareRule[],
@@ -1602,6 +1653,18 @@ export function importBrandData(sourceDir: string = DEFAULT_SOURCE_DIR): ImportR
 
   catalog.colors = [...colorsById.values()]
 
+  // ── Procedencia: lo que dice cada fabricante, antes de decidir qué se cotiza sin revisión ──
+  const evidence = options.evidence !== undefined ? options.evidence : sourceDir && sourceDir === DEFAULT_SOURCE_DIR ? readEvidence() : null
+  report.evidence = applyEvidence(catalog, evidence)
+  for (const variant of evidence?.variants ?? []) {
+    const line = catalog.lines.find((candidate) => candidate.id === variant.id)
+    const parent = deferredRules.find((entry) => entry.line.id === variant.parent)
+    if (!line || !parent || deferredRules.some((entry) => entry.line.id === variant.id)) continue
+    const lineReport: LineImportReport = { ...parent.report, id: line.id, name: line.name, typologies: line.typologyIds.length, variantOf: variant.parent, readiness: { state: 'geometry', headline: '', details: [], missing: [], readyColors: [] } }
+    report.brands.find((brand) => brand.lines.includes(parent.report))?.lines.push(lineReport)
+    deferredRules.push({ ...parent, line, report: lineReport })
+  }
+
   // ── Completitud honesta: se calcula al final, con perfiles, refuerzos, reglas y precios ya armados ──
   const index = readinessIndex(catalog)
   const doubtfulById = new Map(report.brands.flatMap((brand) => brand.doubtfulUnits.map((entry) => [entry.id, entry] as const)))
@@ -1617,7 +1680,7 @@ export function importBrandData(sourceDir: string = DEFAULT_SOURCE_DIR): ImportR
     lineReport.readiness = {
       state: readiness.state,
       headline: readiness.headline,
-      details: [...readiness.details, ...lineReport.readiness.details],
+      details: [...readiness.details, ...readiness.dataWarnings, ...lineReport.readiness.details],
       missing: readiness.missing,
       readyColors: readiness.readyColors,
     }

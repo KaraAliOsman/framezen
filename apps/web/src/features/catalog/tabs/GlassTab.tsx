@@ -1,33 +1,30 @@
 import { useMemo, useState } from 'react'
-import { Info, RotateCcw, Search } from 'lucide-react'
-import type { Catalog, GlassKind } from '@framezen/engine'
-import { formatCLP } from '@framezen/engine'
+import { RotateCcw, Search } from 'lucide-react'
+import type { Catalog, GlassKind } from '@dekopen/engine'
 import { ApiRequestError, humanError, request } from '../../../lib/api'
-import { formatNumber, normalizeSearch } from '../../../lib/format'
-import { Badge, DataTable, IconButton, Input, Select, SkeletonRows, toast, toastUndo, type DataTableColumn } from '../../../ui'
+import { normalizeSearch } from '../../../lib/format'
+import { useFormat, useGlossary, useT } from '../../../lib/i18n'
+import { DataTable, IconButton, Input, Notice, Select, SkeletonRows, toast, toastUndo, type DataTableColumn } from '../../../ui'
 import { useCatalogBrands, usePriceOverrides, useSavePrices } from '../api'
+import es from '../i18n/es'
 import { buildPriceRows, editChange, resetChange, undoFor, type PriceRow } from '../model/prices'
 import { FilterChip } from '../parts'
 
-export const GLASS_KIND_LABEL: Record<GlassKind, string> = {
-  dvh: 'Termopanel',
-  mono: 'Simple',
-  laminated: 'Laminado',
-  tempered: 'Templado',
-  other: 'Otro',
-}
-
 type KindFilter = 'all' | GlassKind
+const KIND_FILTERS: KindFilter[] = ['all', 'dvh', 'mono', 'laminated', 'tempered', 'other']
 
 /**
  * Proveedor sin la palabra de la familia: «Vidrios PROLINE» → «PROLINE». La lista que se llama
- * solo «Vidrios» (sin proveedor en el origen) se muestra como «Lista general».
+ * solo «Vidrios» (sin proveedor en el origen) se muestra como «Lista general» (`general`).
  */
-export function glassBrandLabel(name: string): string {
-  return name.replace(/^vidrios?\b[\s·:-]*/i, '').trim() || 'Lista general'
+export function glassBrandLabel(name: string, general = 'Lista general'): string {
+  return name.replace(/^vidrios?\b[\s·:-]*/i, '').trim() || general
 }
 
 export function GlassTab({ catalog, loading }: { catalog: Catalog | undefined; loading: boolean }) {
+  const t = useT(es)
+  const g = useGlossary()
+  const fmt = useFormat()
   const overridesQuery = usePriceOverrides()
   const overrides = useMemo(() => overridesQuery.data?.overrides ?? [], [overridesQuery.data])
   const brands = useCatalogBrands()
@@ -38,17 +35,18 @@ export function GlassTab({ catalog, loading }: { catalog: Catalog | undefined; l
   const [missingOnly, setMissingOnly] = useState(false)
   const [minAreaLocked, setMinAreaLocked] = useState(false)
   const [minAreaLocal, setMinAreaLocal] = useState<Record<string, number>>({})
+  const general = t('glass.generalList')
 
-  const glassById = useMemo(() => new Map((catalog?.glass ?? []).map((g) => [g.id, g])), [catalog])
+  const glassById = useMemo(() => new Map((catalog?.glass ?? []).map((glass) => [glass.id, glass])), [catalog])
   const rows = useMemo(
     () =>
       catalog
-        ? buildPriceRows({ ...catalog, profiles: [], items: [] }, overrides).sort(
+        ? buildPriceRows({ ...catalog, profiles: [], items: [] }, overrides, t.locale).sort(
             // Por nombre: el mismo vidrio de dos proveedores queda junto.
             (a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }) || a.brandName.localeCompare(b.brandName, 'es'),
           )
         : [],
-    [catalog, overrides],
+    [catalog, overrides, t.locale],
   )
   const glassBrandOn = (brands.data?.items ?? []).some((b) => b.enabled && b.brand.kind === 'glass')
 
@@ -58,9 +56,9 @@ export function GlassTab({ catalog, loading }: { catalog: Catalog | undefined; l
     return rows.filter((r) => {
       if (brandId !== 'all' && r.brandId !== brandId) return false
       if (terms.length) {
-        const g = glassById.get(r.id)
-        const text = normalizeSearch(`${r.name} ${g?.composition ?? ''} ${r.brandName}`)
-        if (!terms.every((t) => text.includes(t))) return false
+        const glass = glassById.get(r.id)
+        const text = normalizeSearch(`${r.name} ${glass?.composition ?? ''} ${r.brandName}`)
+        if (!terms.every((term) => text.includes(term))) return false
       }
       return true
     })
@@ -87,15 +85,14 @@ export function GlassTab({ catalog, loading }: { catalog: Catalog | undefined; l
   const brandOptions = useMemo(() => {
     const seen = new Map<string, string>()
     for (const r of rows) if (!seen.has(r.brandId)) seen.set(r.brandId, r.brandName)
-    return [{ value: 'all', label: 'Todas las marcas' }, ...[...seen].map(([value, label]) => ({ value, label }))]
-  }, [rows])
+    return [{ value: 'all', label: t('common.allBrands') }, ...[...seen].map(([value, label]) => ({ value, label }))]
+  }, [rows, t])
 
   const commit = (row: PriceRow, value: string | number | null) => {
     if (typeof value !== 'number' || value === row.price) return
     const undo = undoFor([row])
     save.mutate(editChange(row, value, overrides), {
-      onSuccess: () =>
-        toastUndo(`${row.name}: ${formatCLP(row.price)} → ${formatCLP(value)} el m²`, () => save.mutate(undo), { id: 'glass-change' }),
+      onSuccess: () => toastUndo(t('glass.changed', { name: row.name, before: fmt.money(row.price), after: fmt.money(value) }), () => save.mutate(undo), { id: 'glass-change' }),
       onError: (e) => toast.error(humanError(e)),
     })
   }
@@ -105,7 +102,7 @@ export function GlassTab({ catalog, loading }: { catalog: Catalog | undefined; l
     setMinAreaLocal((m) => ({ ...m, [row.id]: minArea }))
     try {
       await request(`/catalog/glass/${encodeURIComponent(row.id)}`, { method: 'PATCH', body: { minArea: minArea || null } })
-      toast.success(`${row.name}: se cobra un mínimo de ${formatNumber(minArea, 2)} m² por pieza.`, { id: 'glass-min' })
+      toast.success(t('glass.minSaved', { name: row.name, area: fmt.area(minArea) }), { id: 'glass-min' })
     } catch (error) {
       if (error instanceof ApiRequestError && (error.status === 404 || error.status === 405)) {
         setMinAreaLocked(true)
@@ -121,14 +118,14 @@ export function GlassTab({ catalog, loading }: { catalog: Catalog | undefined; l
   const columns: DataTableColumn<PriceRow>[] = [
     {
       id: 'name',
-      header: 'Vidrio',
+      header: t('glass.colName'),
       value: (r) => r.name,
       cell: (r) => {
-        const g = glassById.get(r.id)
+        const glass = glassById.get(r.id)
         return (
           <span className="flex min-w-0 items-baseline gap-2">
-            <span className="truncate text-paper-900">{r.name}</span>
-            {g?.composition ? <span className="truncate text-meta text-paper-600 max-md:hidden">{g.composition}</span> : null}
+            <span className="truncate text-fg">{r.name}</span>
+            {glass?.composition ? <span className="truncate text-meta text-fg-muted tabular max-md:hidden">{glass.composition}</span> : null}
           </span>
         )
       },
@@ -137,13 +134,13 @@ export function GlassTab({ catalog, loading }: { catalog: Catalog | undefined; l
       ? [
           {
             id: 'brand',
-            header: 'Proveedor',
+            header: t('glass.colBrand'),
             width: 130,
             hideBelow: 'md' as const,
-            value: (r: PriceRow) => glassBrandLabel(r.brandName),
+            value: (r: PriceRow) => glassBrandLabel(r.brandName, general),
             cell: (r: PriceRow) => (
-              <span className="text-paper-600" title={r.brandName}>
-                {glassBrandLabel(r.brandName)}
+              <span className="text-fg-muted" title={r.brandName}>
+                {glassBrandLabel(r.brandName, general)}
               </span>
             ),
           },
@@ -151,60 +148,60 @@ export function GlassTab({ catalog, loading }: { catalog: Catalog | undefined; l
       : []),
     {
       id: 'kind',
-      header: 'Tipo',
-      width: 110,
+      header: t('glass.colKind'),
+      width: 168,
       hideBelow: 'sm',
-      value: (r) => GLASS_KIND_LABEL[glassById.get(r.id)?.kind ?? 'other'],
+      value: (r) => g.glassKind(glassById.get(r.id)?.kind ?? 'other'),
     },
     {
       id: 'thickness',
-      header: 'Espesor',
-      width: 86,
+      header: t('glass.colThickness'),
+      width: 92,
       align: 'right',
       hideBelow: 'lg',
       value: (r) => glassById.get(r.id)?.thickness ?? null,
-      format: (n) => `${formatNumber(n, 1)} mm`,
+      format: (n) => <span className="tabular">{fmt.mm(n, { unit: true })}</span>,
     },
     {
       id: 'price',
-      header: 'Precio m²',
+      header: t('glass.colPrice'),
       width: 120,
       align: 'right',
       value: (r) => r.price,
-      cell: (r) => (r.price > 0 ? formatCLP(r.price) : <span className="text-warn-600">Sin precio</span>),
-      edit: { type: 'money', onCommit: commit, label: (r) => `Precio por m² de ${r.name}` },
+      cell: (r) => (r.price > 0 ? <span className="tabular">{fmt.money(r.price)}</span> : <span className="text-warning">{t('common.noPrice')}</span>),
+      edit: { type: 'money', onCommit: commit, label: (r) => t('glass.pricePer', { name: r.name }) },
     },
     {
       id: 'minArea',
-      header: 'Mínimo',
+      header: t('glass.colMin'),
       width: 96,
       align: 'right',
       hideBelow: 'sm',
       value: (r) => minAreaLocal[r.id] ?? r.minArea ?? null,
       cell: (r) => {
         const v = minAreaLocal[r.id] ?? r.minArea
-        return v ? `${formatNumber(v, 2)} m²` : <span className="text-paper-600">—</span>
+        return v ? <span className="tabular">{fmt.area(v)}</span> : <span className="text-fg-muted">{t('common.noneDash')}</span>
       },
-      ...(minAreaLocked ? {} : { edit: { type: 'number' as const, onCommit: (r: PriceRow, v: string | number | null) => void commitMinArea(r, v), label: (r: PriceRow) => `Área mínima de ${r.name}` } }),
+      ...(minAreaLocked
+        ? {}
+        : { edit: { type: 'number' as const, onCommit: (r: PriceRow, v: string | number | null) => void commitMinArea(r, v), label: (r: PriceRow) => t('glass.minAreaOf', { name: r.name }) } }),
     },
     {
       id: 'state',
-      header: <span className="sr-only">Estado</span>,
+      header: <span className="sr-only">{t('glass.colState')}</span>,
       width: 88,
       sortable: false,
       cell: (r) =>
         r.own ? (
           <span className="flex items-center justify-end gap-0.5">
-            <Badge tone="ink" size="sm">
-              Tuyo
-            </Badge>
+            <span className="text-table text-fg-muted">{t('common.yours')}</span>
             <IconButton
               icon={RotateCcw}
-              label="Volver al precio de lista"
+              label={t('common.resetToList')}
               size="sm"
               onClick={() =>
                 save.mutate(resetChange(r, overrides), {
-                  onSuccess: () => toast.success(`${r.name} volvió al precio de lista.`),
+                  onSuccess: () => toast.success(t('common.resetDone', { name: r.name })),
                   onError: (e) => toast.error(humanError(e)),
                 })
               }
@@ -217,56 +214,47 @@ export function GlassTab({ catalog, loading }: { catalog: Catalog | undefined; l
   return (
     <div className="flex flex-col gap-4">
       {!glassBrandOn && rows.length ? (
-        <p className="flex items-start gap-2 rounded-md border border-paper-200 bg-paper-0 px-3.5 py-2.5 text-[13px] leading-[18px] text-paper-600">
-          <Info aria-hidden className="mt-px size-4 shrink-0 text-ink-600" strokeWidth={1.75} />
-          <span>
-            No tienes una marca de vidrios activa, así que ves todos los vidrios del catálogo base. Activa tu proveedor en <strong className="font-medium text-paper-900">Marcas</strong> para
-            trabajar solo con los suyos.
-          </span>
-        </p>
+        <Notice tone="neutral" size="compact">
+          {t.rich('glass.noGlassBrand', { b: <strong className="font-medium text-fg-strong" /> })}
+        </Notice>
       ) : null}
       {minAreaLocked ? (
-        <p className="flex items-start gap-2 rounded-md border border-warn-600/25 bg-warn-50 px-3.5 py-2.5 text-[13px] leading-[18px] text-warn-800">
-          <Info aria-hidden className="mt-px size-4 shrink-0" strokeWidth={1.75} />
-          Todavía no podemos guardar el área mínima desde aquí. Mientras tanto se cobra el área real de cada vidrio; los precios por m² sí se guardan.
-        </p>
+        <Notice tone="warning" size="compact">
+          {t('glass.minAreaLocked')}
+        </Notice>
       ) : null}
-      <div className="flex flex-col gap-3 rounded-lg border border-paper-200 bg-paper-0 p-3">
+      <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Input icon={Search} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar vidrio: 4+12+4, laminado, low-e…" aria-label="Buscar vidrio" wrapperClassName="sm:flex-1" />
-          <Select aria-label="Marca de vidrios" value={brandId} onValueChange={setBrandId} options={brandOptions} className="sm:w-52" />
+          <Input icon={Search} size="sm" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('glass.search')} aria-label={t('glass.searchLabel')} wrapperClassName="sm:flex-1" />
+          <Select aria-label={t('glass.brandLabel')} value={brandId} onValueChange={setBrandId} options={brandOptions} size="sm" className="sm:w-52" />
         </div>
         <div className="scrollbar-quiet -mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
-          {(['all', 'dvh', 'mono', 'laminated', 'tempered', 'other'] as KindFilter[])
-            .filter((k) => k === 'all' || kindCounts[k])
-            .map((k) => (
-              <FilterChip key={k} active={kind === k} onClick={() => setKind(k)} count={kindCounts[k] ?? 0}>
-                {k === 'all' ? 'Todos' : GLASS_KIND_LABEL[k]}
-              </FilterChip>
-            ))}
-          <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-paper-200" />
+          {KIND_FILTERS.filter((k) => k === 'all' || kindCounts[k]).map((k) => (
+            <FilterChip key={k} active={kind === k} onClick={() => setKind(k)} count={kindCounts[k] ?? 0}>
+              {k === 'all' ? t('glass.all') : g.glassKind(k)}
+            </FilterChip>
+          ))}
+          <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-divider" />
           <FilterChip active={missingOnly} onClick={() => setMissingOnly((v) => !v)} count={missing}>
-            Sin precio
+            {t('glass.missing')}
           </FilterChip>
         </div>
       </div>
       {loading || !catalog ? (
-        <div className="overflow-hidden rounded-md border border-paper-200 bg-paper-0">
-          <SkeletonRows rows={8} columns={4} />
-        </div>
+        <SkeletonRows rows={8} columns={4} />
       ) : (
         <>
           <DataTable
             rows={filtered.slice(0, 300)}
             columns={filtered.length > 300 ? columns.map((c) => ({ ...c, sortable: false })) : columns}
             getRowId={(r) => r.key}
-            caption="Vidrios con precio por metro cuadrado"
-            noun={['vidrio', 'vidrios']}
+            caption={t('glass.caption')}
+            density="compact"
+            bleed
+            noun={[t('glass.nounOne'), t('glass.nounOther')]}
           />
-          <p className="text-center text-[13px] text-paper-600 sm:text-left">
-            {filtered.length > 300
-              ? `Mostrando 300 de ${formatNumber(filtered.length)}. Busca por espesor o tipo para encontrarlo.`
-              : 'El precio es por m² neto. Bajo el área mínima, cada pieza se cobra como si tuviera esa área.'}
+          <p className="text-center text-table text-fg-muted sm:text-left">
+            {filtered.length > 300 ? t('glass.showing', { shown: fmt.number(300), total: fmt.number(filtered.length) }) : t('glass.footer')}
           </p>
         </>
       )}

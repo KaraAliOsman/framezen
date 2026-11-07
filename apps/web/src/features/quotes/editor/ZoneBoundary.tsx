@@ -7,7 +7,9 @@
 import type { ReactNode } from 'react'
 import { Trash2, Undo2 } from 'lucide-react'
 import { cn } from '../../../lib/cn'
+import { useT } from '../../../lib/i18n'
 import { Button, ErrorBoundary, ZoneError } from '../../../ui'
+import es from '../i18n/es'
 import { useEditor, useEditorState } from './context'
 import { removeWithUndo } from './useEditorWiring'
 
@@ -18,18 +20,19 @@ function useSelectedDesign() {
 
 /** Acciones que funcionan aunque el dibujo falle: deshacer el último cambio y eliminar la ventana. */
 function ItemActions({ itemId }: { itemId: string | null | undefined }) {
+  const t = useT(es)
   const editor = useEditor()
   const canUndo = useEditorState((s) => s.past.length > 0)
   return (
     <>
       {canUndo ? (
         <Button size="sm" variant="ghost" icon={Undo2} onClick={() => editor.undo()}>
-          Deshacer
+          {t('zones.undo')}
         </Button>
       ) : null}
       {itemId ? (
         <Button size="sm" variant="ghost" icon={Trash2} onClick={() => removeWithUndo(editor, itemId)}>
-          Eliminar esta ventana
+          {t('zones.removeItem')}
         </Button>
       ) : null}
     </>
@@ -38,6 +41,7 @@ function ItemActions({ itemId }: { itemId: string | null | undefined }) {
 
 /** Lienzo de la ventana: si falla, aviso «No pudimos dibujar esta ventana» y la lista sigue usable. */
 export function CanvasBoundary({ children }: { children: ReactNode }) {
+  const t = useT(es)
   const itemId = useEditorState((s) => s.selectedItemId)
   const design = useSelectedDesign()
   return (
@@ -46,8 +50,8 @@ export function CanvasBoundary({ children }: { children: ReactNode }) {
       resetKeys={[itemId, design]}
       fallback={({ reset }) => (
         <ZoneError
-          title="No pudimos dibujar esta ventana"
-          description="Tus datos están a salvo. Puedes deshacer el último cambio, elegir otra ventana de la lista o eliminar esta."
+          title={t('zones.canvasTitle')}
+          description={t('zones.canvasBody')}
           onRetry={reset}
           actions={<ItemActions itemId={itemId} />}
         />
@@ -60,6 +64,7 @@ export function CanvasBoundary({ children }: { children: ReactNode }) {
 
 /** Vista Documento: si falla, el resto del editor (ventanas, totales, envío) sigue funcionando. */
 export function DocumentBoundary({ children }: { children: ReactNode }) {
+  const t = useT(es)
   const doc = useEditorState((s) => s.doc)
   const settings = useEditorState((s) => s.settings)
   return (
@@ -68,8 +73,8 @@ export function DocumentBoundary({ children }: { children: ReactNode }) {
       resetKeys={[doc, settings]}
       fallback={({ reset }) => (
         <ZoneError
-          title="No pudimos mostrar el documento"
-          description="Tus datos están a salvo. Puedes seguir editando las ventanas; reintenta en un momento."
+          title={t('zones.documentTitle')}
+          description={t('zones.documentBody')}
           onRetry={reset}
         />
       )}
@@ -81,6 +86,7 @@ export function DocumentBoundary({ children }: { children: ReactNode }) {
 
 /** Inspector (columna o hoja): si falla, conserva su lugar con un aviso y acciones sobre la ventana. */
 export function InspectorBoundary({ children, className }: { children: ReactNode; className?: string }) {
+  const t = useT(es)
   const itemId = useEditorState((s) => s.selectedItemId)
   const design = useSelectedDesign()
   return (
@@ -88,10 +94,10 @@ export function InspectorBoundary({ children, className }: { children: ReactNode
       label="inspector"
       resetKeys={[itemId, design]}
       fallback={({ reset }) => (
-        <aside aria-label="Inspector" className={cn('flex min-h-0 flex-col bg-paper-0', className)}>
+        <aside aria-label={t('inspector.aria')} className={cn('flex min-h-0 flex-col bg-surface', className)}>
           <ZoneError
-            title="No pudimos mostrar los ajustes de esta ventana"
-            description="Tus datos están a salvo. Reintenta, elige otra ventana o elimínala."
+            title={t('zones.inspectorTitle')}
+            description={t('zones.inspectorBody')}
             onRetry={reset}
             actions={<ItemActions itemId={itemId} />}
           />

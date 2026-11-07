@@ -1,13 +1,16 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { Link, Navigate, useSearchParams } from 'react-router'
 import { useMutation } from '@tanstack/react-query'
-import { ArrowLeft, MailCheck } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import { api, humanError } from '../../lib/api'
+import { useT } from '../../lib/i18n'
 import { Button, buttonClass, Field, Input } from '../../ui'
-import { AuthLayout, FormError } from './AuthLayout'
+import { AuthLayout, FormError, type AuthArtSpec } from './AuthLayout'
+import es from './i18n/es'
 import { emailError } from './validation'
 
 export default function ForgotPasswordPage() {
+  const t = useT(es)
   const [params] = useSearchParams()
   // Enlaces enviados con el formato anterior (/recuperar?token=…): van a «Contraseña nueva».
   const legacyToken = params.get('token')
@@ -23,37 +26,25 @@ export default function ForgotPasswordPage() {
     forgot.mutate(email.trim())
   }
 
-  const art = {
-    kind: 'transom' as const,
-    width: 1000,
-    height: 1600,
-    label: 'Abatir con sobreluz',
-    phrase: 'Nada se pierde.',
-    caption: 'Todo lo que cotizaste sigue guardado. Solo falta abrir la puerta de nuevo.',
-  }
+  const art = useMemo<AuthArtSpec>(
+    () => ({ typology: 'casement_transom', width: 1000, height: 1600, colorId: 'blanco' }),
+    [],
+  )
 
   if (legacyToken) return <Navigate to={`/restablecer/${encodeURIComponent(legacyToken)}`} replace />
 
   if (forgot.isSuccess) {
     return (
-      <AuthLayout pageTitle="Revisa tu correo" title="Revisa tu correo" art={art}>
+      <AuthLayout pageTitle={t('forgot.sentTitle')} title={t('forgot.sentTitle')} art={art}>
         <div className="flex flex-col gap-5">
-          <span className="inline-flex size-10 items-center justify-center rounded-md bg-ok-50 text-ok-600">
-            <MailCheck aria-hidden strokeWidth={1.75} className="size-5" />
-          </span>
-          <p className="text-paper-900">
-            Si <span className="font-medium">{email.trim()}</span> tiene una cuenta en Framezen, en un par de minutos te
-            llegará un enlace para elegir una contraseña nueva.
-          </p>
-          <p className="text-[13px] text-paper-600">
-            ¿No llega? Revisa la carpeta de spam o{' '}
-            <button type="button" onClick={() => forgot.reset()} className="font-medium text-ink-600 hover:text-ink-700">
-              prueba con otro correo
-            </button>
-            .
+          <p className="text-fg">{t.rich('forgot.sentText', { b: <span className="font-medium text-fg-strong" />, email: email.trim() })}</p>
+          <p className="text-table text-fg-muted">
+            {t.rich('forgot.notArriving', {
+              retry: <button type="button" onClick={() => forgot.reset()} className="font-medium text-fg-strong underline decoration-divider-strong underline-offset-4 hover:decoration-fg-muted" />,
+            })}
           </p>
           <Link to="/entrar" className={buttonClass('secondary', 'lg', 'w-full')}>
-            Volver a entrar
+            {t('forgot.back')}
           </Link>
         </div>
       </AuthLayout>
@@ -61,15 +52,10 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <AuthLayout
-      pageTitle="Recuperar acceso"
-      title="Recupera tu acceso"
-      subtitle="Te mandamos un enlace para elegir una contraseña nueva."
-      art={art}
-    >
+    <AuthLayout pageTitle={t('forgot.pageTitle')} title={t('forgot.title')} subtitle={t('forgot.subtitle')} art={art}>
       <form onSubmit={onSubmit} noValidate className="flex flex-col gap-5">
         <FormError>{forgot.error ? humanError(forgot.error) : null}</FormError>
-        <Field label="Correo de tu cuenta" error={error}>
+        <Field label={t('forgot.email')} error={error}>
           <Input
             type="email"
             autoComplete="email"
@@ -77,19 +63,16 @@ export default function ForgotPasswordPage() {
             autoFocus
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="tu@taller.cl"
-            size="lg"
+            placeholder={t('fields.emailPlaceholder')}
+           
           />
         </Field>
         <Button type="submit" variant="primary" size="lg" loading={forgot.isPending} className="w-full">
-          Enviar enlace
+          {t('forgot.submit')}
         </Button>
-        <Link
-          to="/entrar"
-          className="inline-flex items-center justify-center gap-1.5 text-[13px] font-medium text-paper-600 hover:text-paper-900"
-        >
+        <Link to="/entrar" className="inline-flex items-center justify-center gap-1.5 text-table font-medium text-fg-muted hover:text-fg-strong">
           <ArrowLeft aria-hidden className="size-3.5" />
-          Volver a entrar
+          {t('forgot.back')}
         </Link>
       </form>
     </AuthLayout>

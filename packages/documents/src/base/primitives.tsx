@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react'
-import type { Glass, QuoteExtra, QuoteTotals } from '@framezen/engine'
+import type { Glass, QuoteExtra, QuoteTotals } from '@dekopen/engine'
 import { clsx } from './clsx'
 import { documentCss } from './css'
 import { formatArea, formatClp, formatDateLong, formatMeasure, formatMm, formatNumber, formatPct, initials, joinParts } from './format'

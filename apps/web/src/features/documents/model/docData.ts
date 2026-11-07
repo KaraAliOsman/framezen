@@ -1,5 +1,5 @@
 /**
- * Datos para las plantillas de `@framezen/documents` armados con el motor real: la última
+ * Datos para las plantillas de `@dekopen/documents` armados con el motor real: la última
  * cotización del taller, una de ejemplo con sus propias líneas y precios, y el catálogo de
  * productos con «desde $X/m²». Ninguna cifra se inventa aquí: todas salen del motor.
  *
@@ -7,9 +7,9 @@
  * constructores que el PDF del servidor, para que lo que se ve aquí sea exactamente lo que se
  * descarga.
  */
-import { createDesign, type Catalog, type CutSettings, type Id, type Line, type PricingSettings, type QuoteExtra, type TypologyId, type WindowDesign } from '@framezen/engine'
-import { buildCatalogDocData, buildQuoteDocData, type CatalogDocData, type DocClient, type DocOrg, type QuoteDocData } from '@framezen/documents'
-import type { DocumentPrefs, Org, Quote, QuoteItem } from '@framezen/shared'
+import { createDesign, type Catalog, type CutSettings, type Id, type Line, type PricingSettings, type QuoteExtra, type TypologyId, type WindowDesign } from '@dekopen/engine'
+import { buildCatalogDocData, buildQuoteDocData, type CatalogDocData, type DocClient, type DocOrg, type QuoteDocData } from '@dekopen/documents'
+import type { DocumentPrefs, Org, Quote, QuoteItem } from '@dekopen/shared'
 
 export interface DocContext {
   catalog: Catalog
@@ -89,12 +89,12 @@ const SAMPLE_ROWS: SampleRow[] = [
 
 /** Cliente ficticio de la muestra. RUT de prueba conocido (12.345.678-5), nunca uno que pueda ser de una persona real. */
 export const SAMPLE_DOC_CLIENT: DocClient = {
-  name: 'Carolina Muñoz',
+  name: 'Cliente de ejemplo',
   rut: '12.345.678-5',
-  email: 'carolina.munoz@correo.cl',
-  phone: '+56 9 8765 4321',
-  address: 'Los Arrayanes 220',
-  city: 'Puerto Varas',
+  email: 'cliente@ejemplo.cl',
+  phone: '+56 9 0000 0000',
+  address: 'Dirección de ejemplo',
+  city: 'Ciudad',
 }
 
 /** Ítems de una cotización de ejemplo con las líneas, colores y vidrio del propio taller. */
@@ -140,7 +140,7 @@ export function sampleQuoteDoc(ctx: DocContext, options: { items?: number; date?
   const quote: Quote = {
     id: 'ejemplo',
     number: 412,
-    title: 'Casa Muñoz · Puerto Varas',
+    title: 'Obra de ejemplo',
     status: 'sent',
     items,
     extras,
@@ -162,8 +162,8 @@ export function sampleQuoteDoc(ctx: DocContext, options: { items?: number; date?
 
 // ── Catálogo de productos (el mismo constructor que GET /api/catalog/pdf) ──────
 
-/** «Desde $X/m²» del motor (el mismo cálculo del PDF): reexportado desde @framezen/documents. */
-export { CATALOG_DOC_MAX_TYPOLOGIES as CATALOG_MAX_TYPOLOGIES, fromPricePerM2 } from '@framezen/documents'
+/** «Desde $X/m²» del motor (el mismo cálculo del PDF): reexportado desde @dekopen/documents. */
+export { CATALOG_DOC_MAX_TYPOLOGIES as CATALOG_MAX_TYPOLOGIES, fromPricePerM2 } from '@dekopen/documents'
 
 export interface CatalogDocOptions {
   /** Líneas a incluir (por defecto, todas las activas). */

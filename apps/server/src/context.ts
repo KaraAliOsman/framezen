@@ -1,9 +1,11 @@
-import type { Role } from '@framezen/shared'
+import type { Role } from '@dekopen/shared'
 import type { AppConfig } from './config'
 import type { Db } from './db/client'
 import type { orgs, users } from './db/schema'
 import type { Logger } from './lib/logger'
 import type { Mailer } from './lib/mail'
+import type { ServerLocale } from './lib/i18n/locale'
+import type { KeyedRateLimiter } from './lib/keyed-limiter'
 import type { BackoffLimiter, RateLimiter } from './lib/rate-limit'
 import type { Viewer } from './services/access'
 import type { CatalogService } from './services/catalog'
@@ -15,8 +17,11 @@ export interface AuthContext {
   role: Role
 }
 
-/** `viewer`: rol + funciones del plan, calculado una vez por petición (services/access.ts). */
-export type AppEnv = { Variables: { auth: AuthContext; viewer?: Viewer } }
+/**
+ * `viewer`: rol + funciones del plan, calculado una vez por petición (services/access.ts).
+ * `locale`: idioma de la petición (middleware/locale.ts; requireAuth lo refina con la sesión).
+ */
+export type AppEnv = { Variables: { auth: AuthContext; viewer?: Viewer; locale?: ServerLocale } }
 
 /** Dependencias resueltas que comparten todas las rutas. */
 export interface AppDeps {
@@ -39,6 +44,16 @@ export interface AppDeps {
     publicActions: RateLimiter
     /** Correos salientes por organización y día (enviar cotización, invitar, avisos del portal). */
     outboundMail: RateLimiter
+    /**
+     * Topes con clave genérica (lib/keyed-limiter.ts) para el asistente v2, subidas y plantillas:
+     * p. ej. `deps.limits.keyed.take('ai-turn:user:<id>', { limit: 10, windowMs: 60_000 })`.
+     */
+    keyed: KeyedRateLimiter
   }
   now: () => Date
+  /**
+   * La propia app para llamadas internas (services/dispatch.ts). La asigna createApp; sin ella
+   * (deps armadas a mano en pruebas) no hay despacho interno.
+   */
+  internalFetch?: (request: Request) => Response | Promise<Response>
 }

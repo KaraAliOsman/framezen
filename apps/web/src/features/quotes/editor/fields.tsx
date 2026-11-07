@@ -3,12 +3,14 @@
  * «crear» al vuelo. Todos confirman solos (sin botón «Guardar»).
  */
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { Minus, Plus, UserRound } from 'lucide-react'
-import type { Client } from '@framezen/shared'
+import { Minus, Plus } from 'lucide-react'
+import type { Client } from '@dekopen/shared'
 import { humanError } from '../../../lib/api'
 import { cn } from '../../../lib/cn'
 import { useClients, useCreateClient } from '../../../lib/hooks'
+import { useT } from '../../../lib/i18n'
 import { Combobox } from '../../../ui'
+import es from '../i18n/es'
 import { QUOTE_LIMITS } from '../model/doc'
 import { toast } from './toasts'
 import { useEditor, useEditorShallow } from './context'
@@ -20,6 +22,7 @@ export function QtyStepper({
   onChange,
   label,
   size = 'sm',
+  quiet = false,
   className,
   tabIndex,
   stepButtonsInTabOrder = true,
@@ -28,12 +31,15 @@ export function QtyStepper({
   onChange: (value: number) => void
   label: string
   size?: 'sm' | 'md'
+  /** En filas: se lee como un número y −/+ aparecen al pasar por la fila (el ancho no cambia). */
+  quiet?: boolean
   className?: string
   /** Tab del campo (en listas con foco itinerante solo la fila activa entra al orden de Tab). */
   tabIndex?: number
   /** −/+ con Tab propio. En listas se quitan: el campo ya acepta ↑/↓. */
   stepButtonsInTabOrder?: boolean
 }) {
+  const t = useT(es)
   const [draft, setDraft] = useState<string | null>(null)
   const commit = () => {
     if (draft === null) return
@@ -59,26 +65,36 @@ export function QtyStepper({
   }
   const h = size === 'sm' ? 'h-6' : 'h-9 touch:h-11'
   const btn = cn(
-    'inline-flex shrink-0 items-center justify-center text-paper-600 transition-colors duration-120 hover:bg-paper-100 hover:text-paper-900 disabled:opacity-40',
+    'inline-flex shrink-0 items-center justify-center text-fg-muted transition-[background-color,color,opacity] duration-100 hover:bg-hover hover:text-fg-strong disabled:opacity-40',
     size === 'sm' ? 'w-6' : 'w-9 touch:w-11',
+    quiet && 'rounded-xs opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-100',
+  )
+  const less = (
+    <button
+      type="button"
+      className={btn}
+      aria-label={t('qty.less')}
+      tabIndex={stepButtonsInTabOrder ? undefined : -1}
+      disabled={value <= 0}
+      onClick={() => onChange(Math.max(0, value - 1))}
+    >
+      <Minus aria-hidden strokeWidth={2} className="size-3" />
+    </button>
   )
   return (
     <div
       role="group"
       aria-label={label}
       onClick={(e) => e.stopPropagation()}
-      className={cn('inline-flex items-stretch overflow-hidden rounded-sm border border-paper-200 bg-paper-0', h, className)}
+      className={cn('inline-flex items-stretch overflow-hidden', !quiet && 'rounded-sm border border-divider-strong bg-surface', h, className)}
     >
-      <button
-        type="button"
-        className={btn}
-        aria-label="Una menos"
-        tabIndex={stepButtonsInTabOrder ? undefined : -1}
-        disabled={value <= 0}
-        onClick={() => onChange(Math.max(0, value - 1))}
-      >
-        <Minus aria-hidden strokeWidth={2} className="size-3" />
-      </button>
+      {quiet ? (
+        <span aria-hidden className="flex items-center pr-0.5 text-table text-fg-muted">
+          ×
+        </span>
+      ) : (
+        less
+      )}
       <input
         aria-label={label}
         tabIndex={tabIndex}
@@ -93,12 +109,15 @@ export function QtyStepper({
         onKeyDown={onKeyDown}
         className={cn(
           // Foco siempre visible (anillo de 2 px por dentro: el grupo recorta lo que sobresale).
-          'min-w-0 border-x border-paper-200 bg-transparent text-center font-medium tabular text-paper-900 outline-none focus:bg-ink-50',
-          'focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ink-500 focus-visible:outline-solid',
-          size === 'sm' ? 'w-8 text-[13px]' : 'w-12 text-base touch:text-lead',
+          'min-w-0 bg-transparent text-center font-medium tabular text-fg-strong outline-none focus:bg-accent-subtle',
+          !quiet && 'border-x border-divider',
+          'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid',
+          size === 'sm' ? 'w-8 text-table' : 'w-12 text-base touch:text-lead',
+          quiet && 'w-6! text-left',
         )}
       />
-      <button type="button" className={btn} aria-label="Una más" tabIndex={stepButtonsInTabOrder ? undefined : -1} onClick={() => onChange(value + 1)}>
+      {quiet ? less : null}
+      <button type="button" className={btn} aria-label={t('qty.more')} tabIndex={stepButtonsInTabOrder ? undefined : -1} onClick={() => onChange(value + 1)}>
         <Plus aria-hidden strokeWidth={2} className="size-3" />
       </button>
     </div>
@@ -107,18 +126,23 @@ export function QtyStepper({
 
 // ── Título de la obra ─────────────────────────────────────────────────────────
 
-/** Título editable en el lugar: se ve como texto y se escribe encima. */
+/**
+ * Título editable en el lugar: se ve como texto y se escribe encima. En la cabecera (`md`) es una
+ * sola línea que no crece; en el teléfono (`lg`) crece con el texto.
+ */
 export function TitleField({ className, size = 'md' }: { className?: string; size?: 'md' | 'lg' }) {
+  const t = useT(es)
   const editor = useEditor()
   const { title } = useEditorShallow((s) => ({ title: s.doc.title }))
   const ref = useRef<HTMLTextAreaElement>(null)
+  const grows = size === 'lg'
 
   useEffect(() => {
     const el = ref.current
-    if (!el) return
+    if (!el || !grows) return
     el.style.height = 'auto'
     el.style.height = `${el.scrollHeight}px`
-  }, [title])
+  }, [title, grows])
 
   return (
     <textarea
@@ -126,8 +150,9 @@ export function TitleField({ className, size = 'md' }: { className?: string; siz
       rows={1}
       value={title}
       spellCheck={false}
-      aria-label="Nombre de la obra"
-      placeholder="Nombre de la obra"
+      aria-label={t('header.title')}
+      placeholder={t('header.title')}
+      title={title || undefined}
       maxLength={QUOTE_LIMITS.title}
       onChange={(e) => editor.setTitle(e.target.value.replace(/\n/g, ' '))}
       onKeyDown={(e) => {
@@ -138,9 +163,9 @@ export function TitleField({ className, size = 'md' }: { className?: string; siz
         }
       }}
       className={cn(
-        '-mx-1.5 block w-[calc(100%+12px)] resize-none overflow-hidden rounded-sm border border-transparent bg-transparent px-1.5 py-0.5 font-semibold tracking-[-0.01em] text-paper-900',
-        'transition-[border-color,background-color] duration-120 placeholder:text-paper-350 hover:border-paper-200 focus:border-ink-500 focus:bg-paper-0 focus:outline-none',
-        size === 'lg' ? 'text-h2' : 'text-h3',
+        'block resize-none rounded-sm border border-transparent bg-transparent px-1.5 font-display font-medium text-fg-strong',
+        'transition-[border-color,background-color] duration-100 placeholder:text-fg-faint hover:border-divider focus:border-focus focus:bg-surface focus:shadow-[0_0_0_3px_var(--dk-focus-ring)] focus:outline-none',
+        grows ? '-mx-1.5 w-[calc(100%+12px)] overflow-hidden py-0.5 text-h2' : 'h-9 overflow-hidden py-1 text-h3 whitespace-nowrap',
         className,
       )}
     />
@@ -149,7 +174,12 @@ export function TitleField({ className, size = 'md' }: { className?: string; siz
 
 // ── Cliente ───────────────────────────────────────────────────────────────────
 
-export function ClientField({ className }: { className?: string }) {
+/**
+ * Cliente de la cotización: buscar o crear al vuelo. `inline` = en la cabecera, sin borde hasta
+ * pasar el puntero (se lee como texto, se usa como campo).
+ */
+export function ClientField({ className, variant = 'field' }: { className?: string; variant?: 'field' | 'inline' }) {
+  const t = useT(es)
   const editor = useEditor()
   const { clientId, known } = useEditorShallow((s) => ({ clientId: s.doc.clientId, known: s.doc.clientId ? s.clients[s.doc.clientId] : undefined }))
   const clients = useClients('')
@@ -170,35 +200,30 @@ export function ClientField({ className }: { className?: string }) {
     <Combobox
       value={clientId}
       onChange={(id) => {
-        const client = id ? (clients.data ?? []).find((c) => c.id === id) ?? known : undefined
+        const client = id ? ((clients.data ?? []).find((c) => c.id === id) ?? known) : undefined
         editor.setClient(id ?? null, client)
       }}
       options={options}
       clearable
-      clearLabel="Sin cliente por ahora"
-      placeholder="Agregar cliente (opcional)"
-      searchPlaceholder="Busca o escribe un nombre…"
-      emptyText="Aún no tienes clientes. Escribe un nombre para crearlo."
-      createLabel={(q) => (
-        <>
-          Crear cliente <span className="font-medium">«{q}»</span>
-        </>
-      )}
+      clearLabel={t('client.clear')}
+      placeholder={t('client.placeholder')}
+      searchPlaceholder={t('client.search')}
+      emptyText={t('client.empty')}
+      createLabel={(name) => t.rich('client.create', { b: <span className="font-medium" />, name })}
       onCreate={async (name) => {
         try {
           const created = await createClient.mutateAsync({ name })
           editor.setClient(created.id, created)
-          toast.success(`Creaste a ${created.name}. Completa sus datos cuando quieras en Clientes.`)
+          toast.success(t('client.created', { name: created.name }))
         } catch (error) {
           toast.error(humanError(error))
         }
       }}
-      aria-label="Cliente"
-      className={cn('w-full', className)}
+      aria-label={t('client.label')}
+      className={cn(
+        variant === 'inline' ? 'h-9! w-auto justify-start! border-transparent! bg-transparent! text-fg-muted shadow-none! hover:border-divider! data-[state=open]:border-focus!' : 'w-full',
+        className,
+      )}
     />
   )
-}
-
-export function ClientGlyph() {
-  return <UserRound aria-hidden strokeWidth={1.75} className="size-4 text-paper-600" />
 }

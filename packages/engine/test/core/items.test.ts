@@ -202,7 +202,7 @@ describe('herrajes fuera de rango: un aviso corto, con el hueco', () => {
     const bom = computeBom(d, cat)
     const out = bom.warnings.filter((w) => w.code === 'hardware_out_of_range')
     expect(out).toHaveLength(1)
-    expect(out[0].message).toBe('No hay herraje de PROSLD70 para hojas de 1.412 mm de alto (cubre hasta 1.400 y desde 1.600). Las 2 hojas se cotizan sin él.')
+    expect(out[0].message).toBe('No hay herraje de PROSLD70 para hojas de 1.412 mm de alto (cubre hasta 1.400 y desde 1.600). Las 2 hojas quedan fuera del total.')
     expect(out[0].nodeId).toBeUndefined()
     // Lo que sí calza (carros) se cotiza igual.
     expect(itemQty(bom, 'carro')).toBe(4)

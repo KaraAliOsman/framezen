@@ -1,8 +1,15 @@
 /**
- * Cliente HTTP tipado contra el contrato de `@framezen/shared` (todas las rutas cuelgan de /api).
- * - Errores humanos en español (los del servidor ya vienen así; si no, ponemos uno claro).
+ * Cliente HTTP tipado contra el contrato de `@dekopen/shared` (todas las rutas cuelgan de /api).
+ * - Cada petición lleva `Accept-Language` con el idioma de la interfaz: el servidor responde sus
+ *   mensajes en ese idioma (y lo declara con `Content-Language`).
+ * - Errores humanos en el idioma de la interfaz: el mensaje del servidor si viene en ese idioma;
+ *   si no, uno propio según el `code` estable o el estado HTTP (en español, exactamente los de hoy).
  * - Reintento suave para lecturas y escrituras idempotentes ante cortes de red o 502/503/504.
  */
+import { acceptLanguage, matchLocale } from '@dekopen/shared'
+import libMessages from './i18n/es'
+import { getLocale, hasMessage, translate } from './i18n/runtime'
+import type { QuoteSelection } from '@dekopen/engine'
 import type {
   AcceptResult,
   ActivityEvent,
@@ -44,25 +51,38 @@ import type {
   SignupBody,
   TeamResponse,
   WorkOrder,
-} from '@framezen/shared'
+} from '@dekopen/shared'
 
 // Tipos del contrato que antes vivían aquí: se re-exportan para no romper importaciones existentes.
-export type { AcceptResult, CheckoutResult, InvitationInfo } from '@framezen/shared'
+export type { AcceptResult, CheckoutResult, InvitationInfo } from '@dekopen/shared'
 
 export const API_BASE = '/api'
 
-export const NETWORK_MESSAGE = 'No pudimos conectar. Tus cambios están a salvo; reintentamos solos.'
+/** Mensaje sin conexión en español (compatibilidad); `networkMessage()` lo da en el idioma actual. */
+export const NETWORK_MESSAGE: string = libMessages.api.network
 
-const FALLBACK_BY_STATUS: Record<number, string> = {
-  400: 'Revisa los datos e inténtalo de nuevo.',
-  401: 'Tu sesión terminó. Vuelve a entrar para seguir.',
-  403: 'No tienes acceso a esto. Pídele al dueño de la cuenta que te lo habilite.',
-  404: 'No encontramos lo que buscas. Puede que se haya borrado o que el enlace esté incompleto.',
-  409: 'Esto cambió en otra pestaña o por otra persona. Cargamos la versión más reciente.',
-  413: 'El archivo es demasiado grande. Prueba con uno de menos de 1 MB.',
-  429: 'Vamos muy rápido. Espera unos segundos y vuelve a intentarlo.',
+/** Mensaje sin conexión en el idioma de la interfaz. */
+export function networkMessage(): string {
+  return translate(libMessages, 'api.network')
 }
-const SERVER_FALLBACK = 'Tuvimos un problema de nuestro lado. Inténtalo de nuevo en un momento.'
+
+type StatusKey = keyof typeof libMessages.api.status
+const STATUS_KEY: Record<number, StatusKey> = {
+  400: 'badRequest',
+  401: 'unauthorized',
+  403: 'forbidden',
+  404: 'notFound',
+  409: 'conflict',
+  413: 'tooLarge',
+  429: 'tooMany',
+}
+
+/** Mensaje propio para un estado HTTP (5xx → «problema de nuestro lado»; otros 4xx → «revisa los datos»). */
+function statusMessage(status: number): string {
+  const key = STATUS_KEY[status]
+  if (key) return translate(libMessages, `api.status.${key}`)
+  return status >= 500 ? translate(libMessages, 'api.server') : translate(libMessages, 'api.status.badRequest')
+}
 
 /**
  * Error de la API con mensaje listo para mostrar. `status` 0 = sin conexión.
@@ -112,8 +132,8 @@ export function pdfFallback(error: unknown): PdfUnavailableBody['fallback'] | un
 /** Mensaje humano para cualquier error (API, red o inesperado). */
 export function humanError(error: unknown): string {
   if (error instanceof ApiRequestError) return error.message
-  if (error instanceof TypeError) return NETWORK_MESSAGE
-  return SERVER_FALLBACK
+  if (error instanceof TypeError) return networkMessage()
+  return translate(libMessages, 'api.server')
 }
 
 const RETRYABLE_STATUS = new Set([408, 502, 503, 504])
@@ -172,8 +192,24 @@ async function toApiError(res: Response): Promise<ApiRequestError> {
     payload = undefined
   }
   const err = payload?.error
-  const fallback = FALLBACK_BY_STATUS[res.status] ?? (res.status >= 500 ? SERVER_FALLBACK : FALLBACK_BY_STATUS[400])
-  return new ApiRequestError(res.status, err?.code ?? `http_${res.status}`, err?.message?.trim() || fallback, err?.field, payload)
+  const code = err?.code ?? `http_${res.status}`
+  return new ApiRequestError(res.status, code, localizedMessage(res, code, err?.message?.trim()), err?.field, payload)
+}
+
+/**
+ * Mensaje en el idioma de la interfaz. El del servidor se usa tal cual si viene en ese idioma
+ * (`Content-Language`; sin encabezado se asume español, como hasta v4). Si no, uno propio por
+ * `code` conocido o por estado HTTP.
+ */
+function localizedMessage(res: Response, code: string, serverMessage: string | undefined): string {
+  const locale = getLocale()
+  const contentLanguage = res.headers.get('Content-Language')
+  const serverLocale = contentLanguage ? matchLocale(contentLanguage, 'es') : 'es'
+  if (serverMessage && serverLocale === locale) return serverMessage
+  if (serverMessage && hasMessage(libMessages, `api.code.${code}`)) {
+    return translate(libMessages, `api.code.${code}` as `api.code.${keyof typeof libMessages.api.code}`)
+  }
+  return statusMessage(res.status)
 }
 
 async function parseBody<T>(res: Response): Promise<T> {
@@ -193,7 +229,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const idempotent = method === 'GET' || method === 'PUT' || method === 'DELETE'
   const retries = options.retry ?? (idempotent ? 2 : 0)
   const url = buildUrl(path, options.query)
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  const headers: Record<string, string> = { Accept: 'application/json', 'Accept-Language': acceptLanguage(getLocale()) }
   let body: string | undefined
   if (options.body !== undefined) {
     headers['Content-Type'] = 'application/json'
@@ -210,7 +246,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
         await wait(backoffDelay(attempt), options.signal)
         continue
       }
-      throw new ApiRequestError(0, 'network', NETWORK_MESSAGE)
+      throw new ApiRequestError(0, 'network', networkMessage())
     }
     if (res.ok) return parseBody<T>(res)
     if (attempt < retries && RETRYABLE_STATUS.has(res.status)) {
@@ -266,6 +302,12 @@ export interface ImportCsvOptions {
 }
 
 const enc = encodeURIComponent
+
+async function uploadArModel(token: string, glb: Blob): Promise<{ url: string }> {
+  const res = await fetch(`/api/public/quotes/${encodeURIComponent(token)}/ar-model`, { method: 'POST', headers: { 'Content-Type': 'model/gltf-binary' }, body: glb })
+  if (!res.ok) throw new ApiRequestError(res.status, 'ar_model', 'No pudimos preparar la ventana.')
+  return (await res.json()) as { url: string }
+}
 
 export const api = {
   auth: {
@@ -361,8 +403,10 @@ export const api = {
   portal: {
     get: (token: string) => request<PublicQuoteResponse>(`/public/quotes/${enc(token)}`),
     /** `revision`: la versión que el cliente tiene en pantalla (si hay una más nueva, 409 revision_changed). */
-    accept: (token: string, body: { name: string; rut?: string; revision?: number }) =>
+    accept: (token: string, body: { name: string; rut?: string; revision?: number; declared?: boolean; selection?: QuoteSelection }) =>
       request<AcceptResult>(`/public/quotes/${enc(token)}/accept`, { method: 'POST', body }),
+    /** Deja el modelo de la ventana en una dirección https para Scene Viewer (Android). */
+    hostArModel: (token: string, glb: Blob) => uploadArModel(token, glb),
     requestChanges: (token: string, body: { message: string; name?: string }) =>
       request<{ ok: boolean }>(`/public/quotes/${enc(token)}/request-changes`, { method: 'POST', body }),
   },

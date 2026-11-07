@@ -1,32 +1,36 @@
 /**
- * Optimización de cortes interactiva: cada barra dibujada a escala por perfil y color, las
- * piezas con el color de su ventana, la medida grande y «V3 · arr» debajo. Toca una pieza
- * para ver su detalle y resaltar su ventana; toca el número de la barra para marcarla cortada.
+ * Optimización de cortes interactiva: cada barra dibujada a escala por perfil y color, las piezas en
+ * tinta, la medida grande en cifras tabulares y «V3 · arr» debajo; despuntes y sobrante, en tono de
+ * hoja. Toca una pieza para ver su detalle y resaltar su ventana; toca la casilla para marcarla cortada.
+ * Con «Letra grande» se lee a un metro en la tablet junto a la sierra.
  */
-import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check } from 'lucide-react'
-import type { Bar, Catalog, CutSettings, OptimizationGroup } from '@framezen/engine'
-import { workshopSideWords } from '@framezen/documents'
+import type { Bar, Catalog, CutSettings, OptimizationGroup } from '@dekopen/engine'
+import { groupSaw, groupWeld, workshopSideWords, type BarPieceId } from '@dekopen/documents'
 import { cn } from '../../../lib/cn'
-import { formatNumber } from '../../../lib/format'
+import { T, useFormat, useT } from '../../../lib/i18n'
 import { Button } from '../../../ui'
-import { BAR_HEIGHT, LABEL_SIZE, mm, piecePolygon, placeBar, sideOf, type PiecePlacement } from '../model/cutLayout'
-
-const CAPTION_ROW = 18
-const INK = '#1F1C18'
+import es from '../i18n/es'
+import { BAR_METRICS, piecePolygon, placeBar, sideOf, type BarMetrics, type PiecePlacement } from '../model/cutLayout'
 
 /** Barras por perfil que se dibujan de entrada (y en cada «Ver más»). */
 export const CUT_BARS_PAGE = 40
 
 export interface WindowMeta {
   ref: string
-  tint: string
   name?: string
 }
 
 interface HoverState {
   key: string
   piece: PiecePlacement
+}
+
+/** Medida de taller en el idioma: «1.234,5» (es), «1,234.5» (en). */
+function useMeasure(): (value: number) => string {
+  const fmt = useFormat()
+  return useCallback((value: number) => fmt.number(Math.round(value * 10) / 10, { maxDecimals: 1 }), [fmt])
 }
 
 export function CutGroup({
@@ -39,7 +43,10 @@ export function CutGroup({
   isCut,
   onToggleCut,
   barKeyOf,
+  ids,
+  large = false,
 }: {
+  ids?: (BarPieceId | undefined)[][]
   group: OptimizationGroup
   catalog?: Catalog
   cut: CutSettings
@@ -49,7 +56,11 @@ export function CutGroup({
   isCut: (key: string) => boolean
   onToggleCut: (key: string) => void
   barKeyOf: (group: OptimizationGroup, index: number, bar: Bar) => string
+  large?: boolean
 }) {
+  const t = useT(es)
+  const fmt = useFormat()
+  const metrics = large ? BAR_METRICS.large : BAR_METRICS.normal
   const color = group.colorId ? catalog?.colors.find((c) => c.id === group.colorId) : undefined
   const frame = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
@@ -67,71 +78,69 @@ export function CutGroup({
   const [limit, setLimit] = useState(CUT_BARS_PAGE)
   const bars = group.bars.length > limit ? group.bars.slice(0, limit) : group.bars
   const rest = group.bars.length - bars.length
+  const checkCol = large ? 'grid-cols-[44px_minmax(0,1fr)]' : 'grid-cols-[24px_minmax(0,1fr)] touch:grid-cols-[44px_minmax(0,1fr)]'
+  const saw = groupSaw(group, cut)
+  const weld = groupWeld(catalog, group)
 
   return (
-    <section className="rounded-lg border border-paper-200 bg-paper-0" aria-label={`${group.code} ${group.name}`}>
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-paper-200 px-4 py-3">
+    <section aria-label={`${group.code} ${group.name}`}>
+      <header className="flex flex-wrap items-center gap-x-4 gap-y-1.5 pb-2">
         <div className="flex w-full min-w-0 items-center gap-2.5 sm:w-auto sm:flex-1">
           {color ? (
-            <span
-              aria-hidden
-              className="size-4 shrink-0 rounded-full border border-paper-350/60"
-              style={{ background: color.hex }}
-              title={color.name}
-            />
+            <span aria-hidden className="size-4 shrink-0 rounded-xs border border-divider-strong" style={{ background: color.hex }} title={color.name} />
           ) : (
-            <span aria-hidden className="size-4 shrink-0 rounded-full border border-dashed border-paper-350" title="Sin color (refuerzo)" />
+            <span aria-hidden className="size-4 shrink-0 rounded-xs border border-dashed border-control" title={t('bars.noColor')} />
           )}
-          <span className="shrink-0 font-mono text-[13px] text-paper-600">{group.code}</span>
-          <h3 className="min-w-0 truncate font-semibold text-paper-900">
+          <h3 className="min-w-0 truncate text-lead font-medium text-fg-strong">
+            <span className="code-id mr-2 font-normal text-fg-muted">{group.code}</span>
             {group.name}
-            {color ? <span className="font-normal text-paper-600"> · {color.name}</span> : null}
+            {color ? <span className="font-normal text-fg-muted"> · {color.name}</span> : null}
           </h3>
         </div>
-        <div className="flex items-center gap-3 text-[13px] text-paper-600 tabular">
-          <span>
-            <strong className="font-semibold text-paper-900">{group.barsNeeded}</strong> {group.barsNeeded === 1 ? 'barra' : 'barras'}
-          </span>
-          <span>
-            {group.pieces} {group.pieces === 1 ? 'pieza' : 'piezas'}
-          </span>
+        <div className="flex items-center gap-3 text-table text-fg-muted tabular">
+          <span>{t('bars.count', { count: group.barsNeeded })}</span>
+          <span>{t('bars.pieces', { count: group.pieces })}</span>
           <span className="flex items-center gap-1.5">
-            <span className="relative h-1.5 w-16 overflow-hidden rounded-full bg-paper-200" aria-hidden>
-              <span className="absolute inset-y-0 left-0 rounded-full bg-ink-600" style={{ width: `${Math.min(100, group.yieldPct)}%` }} />
+            <span className="relative h-1 w-16 overflow-hidden rounded-full bg-hover" aria-hidden>
+              <span className="absolute inset-y-0 left-0 rounded-full bg-accent" style={{ width: `${Math.min(100, group.yieldPct)}%` }} />
             </span>
-            <span className="font-medium text-paper-900">{formatNumber(group.yieldPct, 1)} %</span>
+            <span className="font-medium text-fg">{fmt.pct(group.yieldPct, 1)}</span>
           </span>
           {cutCount > 0 ? (
-            <span className="inline-flex items-center gap-1 font-medium text-ok-600">
+            <span className="inline-flex items-center gap-1 font-medium text-fg-strong">
               <Check aria-hidden strokeWidth={2} className="size-3.5" />
-              {cutCount} de {group.bars.length}
+              {t('bars.cutOf', { cut: cutCount, total: group.bars.length })}
             </span>
           ) : null}
         </div>
+        <p className="w-full text-table text-fg-muted tabular">
+          {t('bars.saw', { kerf: fmt.number(saw.kerf, { maxDecimals: 1 }), start: fmt.number(saw.trimStart, { maxDecimals: 1 }), end: fmt.number(saw.trimEnd, { maxDecimals: 1 }) })}
+          {weld !== null ? ` · ${t('bars.weld', { weld: fmt.number(weld, { maxDecimals: 1 }), total: fmt.number(weld * 2, { maxDecimals: 1 }) })}` : ''}
+        </p>
       </header>
       {/* Regla invisible y estable para medir el ancho de las barras (las filas cambian al recalcular). */}
-      <div aria-hidden className="grid h-0 grid-cols-[32px_minmax(0,1fr)] gap-2 overflow-hidden px-2 sm:grid-cols-[36px_minmax(0,1fr)] sm:gap-3 sm:px-4">
+      <div aria-hidden className={cn('grid h-0 gap-3 overflow-hidden', checkCol)}>
         <span />
         <div ref={frame} />
       </div>
-      <ol className="flex flex-col gap-1 px-2 py-3 sm:px-4">
+      <ol className={cn('flex flex-col', large ? 'gap-3' : 'gap-1')}>
         {bars.map((bar, i) => {
           const key = barKeyOf(group, i, bar)
+          const done = isCut(key)
           return (
-            <li key={key} className="grid grid-cols-[32px_minmax(0,1fr)] items-start gap-2 sm:grid-cols-[36px_minmax(0,1fr)] sm:gap-3">
+            <li key={key} className={cn('grid items-start gap-3', checkCol)}>
               <button
                 type="button"
                 onClick={() => onToggleCut(key)}
-                aria-pressed={isCut(key)}
-                aria-label={isCut(key) ? `Barra ${i + 1} cortada. Tocar para desmarcar` : `Marcar barra ${i + 1} como cortada`}
+                aria-pressed={done}
+                aria-label={done ? t('bars.marked', { n: i + 1 }) : t('bars.mark', { n: i + 1 })}
                 className={cn(
-                  'mt-1.5 inline-flex size-8 items-center justify-center rounded-full border text-[13px] font-semibold tabular transition-colors duration-120 ease-out',
-                  isCut(key)
-                    ? 'border-ok-600 bg-ok-600 text-paper-0 dark:text-paper-50'
-                    : 'border-paper-350 bg-paper-0 text-paper-900 hover:border-paper-900',
+                  'code-id inline-flex items-center justify-center rounded-xs border font-medium transition-colors duration-100 ease-out',
+                  large ? 'mt-2 size-11 text-lead' : 'mt-2 size-6 text-table touch:size-11',
+                  done ? 'border-accent bg-accent text-fg-on-accent' : 'border-control bg-surface text-fg-strong hover:border-accent',
                 )}
               >
-                {isCut(key) ? <Check aria-hidden strokeWidth={2.25} className="size-4" /> : i + 1}
+                {done ? <Check aria-hidden strokeWidth={2.5} className={large ? 'size-6' : 'size-3.5'} /> : i + 1}
               </button>
               <div className="min-w-0">
                 {width > 0 ? (
@@ -140,13 +149,15 @@ export function CutGroup({
                     index={i + 1}
                     cut={cut}
                     width={width}
+                    metrics={metrics}
                     windows={windows}
                     focusRef={focusRef}
                     onFocusRef={onFocusRef}
-                    done={isCut(key)}
+                    done={done}
+                    ids={ids?.[i]}
                   />
                 ) : (
-                  <div style={{ height: BAR_HEIGHT + CAPTION_ROW + 22 }} />
+                  <div style={{ height: metrics.barHeight + metrics.captionRow + 22 }} />
                 )}
               </div>
             </li>
@@ -154,12 +165,10 @@ export function CutGroup({
         })}
       </ol>
       {rest > 0 ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-paper-200 px-4 py-2.5 text-[13px] text-paper-600">
-          <span className="tabular">
-            Barras 1 a {formatNumber(bars.length)} de {formatNumber(group.bars.length)}
-          </span>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-table text-fg-muted">
+          <span className="tabular">{t('bars.range', { shown: fmt.number(bars.length), total: fmt.number(group.bars.length) })}</span>
           <Button size="sm" onClick={() => setLimit((n) => n + CUT_BARS_PAGE)}>
-            Ver {formatNumber(Math.min(rest, CUT_BARS_PAGE))} barras más
+            {t('bars.more', { count: Math.min(rest, CUT_BARS_PAGE) })}
           </Button>
         </div>
       ) : null}
@@ -172,134 +181,135 @@ const BarRow = memo(function BarRow({
   index,
   cut,
   width,
+  metrics,
   windows,
   focusRef,
   onFocusRef,
   done,
+  ids,
 }: {
+  ids?: (BarPieceId | undefined)[]
   bar: Bar
   index: number
   cut: CutSettings
   width: number
+  metrics: BarMetrics
   windows: ReadonlyMap<string, WindowMeta>
   focusRef: string | null
   onFocusRef: (ref: string | null) => void
   done: boolean
 }) {
-  const rawId = useId()
-  const hatch = `fz-hatch-${rawId.replace(/[^a-zA-Z0-9_-]/g, '')}`
-  const placement = useMemo(() => placeBar(bar, cut, width), [bar, cut, width])
+  const t = useT(es)
+  const fmt = useFormat()
+  const measure = useMeasure()
+  const placement = useMemo(() => placeBar(bar, cut, width, { metrics, format: measure, ids }), [bar, cut, width, metrics, measure, ids])
   const [hover, setHover] = useState<HoverState | null>(null)
-  const height = BAR_HEIGHT + CAPTION_ROW
+  const H = metrics.barHeight
+  const height = H + metrics.captionRow
   const reusable = placement.remainder?.reusable ?? false
+  const pieces = bar.cuts.map((c) => `${measure(c.length)} ${c.label}`).join(', ')
+  const ariaLabel = t(bar.fromOffcut ? 'bars.ariaOffcut' : 'bars.aria', {
+    n: index,
+    length: measure(bar.barLength),
+    pieces,
+    remainder: measure(bar.remainder),
+  })
 
   return (
-    <div className={cn('relative transition-opacity duration-200', done && 'opacity-45')}>
+    <div className={cn('relative transition-opacity duration-180', done && 'opacity-45')}>
       <svg
         width={placement.width}
         height={height}
         viewBox={`0 0 ${placement.width} ${height}`}
         role="img"
-        aria-label={`Barra ${index}${bar.fromOffcut ? ' (retazo)' : ''} de ${mm(bar.barLength)} mm: ${bar.cuts
-          .map((c) => `${mm(c.length)} ${c.label}`)
-          .join(', ')}; sobrante ${mm(bar.remainder)} mm`}
+        aria-label={ariaLabel}
         className="block overflow-visible"
         onPointerLeave={() => setHover(null)}
       >
-        <defs>
-          <pattern id={hatch} width={6} height={6} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <rect width={6} height={6} fill="var(--paper-0)" />
-            <line x1={0} y1={0} x2={0} y2={6} stroke="var(--paper-350)" strokeWidth={1.2} />
-          </pattern>
-        </defs>
-        <rect x={0.5} y={0.5} width={placement.width - 1} height={BAR_HEIGHT - 1} rx={2} fill="var(--paper-0)" stroke="var(--paper-350)" />
-        {placement.trimStart ? <rect x={0.5} y={0.5} width={placement.trimStart.w} height={BAR_HEIGHT - 1} fill={`url(#${hatch})`} /> : null}
+        {/* Toda la barra en tono de hoja: lo que no es pieza (despuntes, sobrante) se ve como lo que queda. */}
+        <rect x={0} y={0} width={placement.width} height={H} rx={2} fill="var(--dk-hover)" />
+        {placement.trimStart ? (
+          <rect x={0} y={0} width={placement.trimStart.w} height={H} fill="var(--dk-pressed)">
+            <title>{t('bars.trim')}</title>
+          </rect>
+        ) : null}
         {placement.trimEnd ? (
-          <rect x={placement.trimEnd.x - 0.5} y={0.5} width={placement.trimEnd.w} height={BAR_HEIGHT - 1} fill={`url(#${hatch})`} />
+          <rect x={placement.trimEnd.x} y={0} width={placement.trimEnd.w} height={H} fill="var(--dk-pressed)">
+            <title>{t('bars.trim')}</title>
+          </rect>
         ) : null}
         {placement.remainder ? (
           <g>
-            <rect x={placement.remainder.x} y={0.5} width={placement.remainder.w - 0.5} height={BAR_HEIGHT - 1} fill={`url(#${hatch})`} />
             {placement.remainder.showText ? (
               <text
                 x={placement.remainder.x + placement.remainder.w / 2}
-                y={BAR_HEIGHT / 2 + 4.5}
+                y={H / 2 + metrics.measureSmall * 0.36}
                 textAnchor="middle"
-                fontSize={12}
-                fontWeight={600}
-                fill="var(--paper-600)"
-                paintOrder="stroke"
-                stroke="var(--paper-0)"
-                strokeWidth={3}
+                fontSize={metrics.measureSmall}
+                fontWeight={500}
+                fill="var(--dk-fg)"
                 className="tabular"
               >
-                {mm(placement.remainder.length)}
+                {measure(placement.remainder.length)}
               </text>
             ) : null}
             {placement.remainder.showCaption ? (
               <text
                 x={placement.remainder.x + placement.remainder.w / 2}
-                y={BAR_HEIGHT + 13}
+                y={H + metrics.label + 2}
                 textAnchor="middle"
-                fontSize={LABEL_SIZE}
-                fill={reusable ? 'var(--ok-600)' : 'var(--paper-600)'}
+                fontSize={metrics.label}
+                fill={reusable ? 'var(--dk-fg)' : 'var(--dk-fg-muted)'}
               >
-                {reusable ? 'retazo para guardar' : 'sobrante'}
+                {reusable ? t('bars.keep') : t('bars.waste')}
               </text>
             ) : null}
           </g>
         ) : null}
         {placement.pieces.map((p) => {
-          const meta = p.cut.ref ? windows.get(p.cut.ref) : undefined
           const dim = focusRef !== null && p.cut.ref !== focusRef
           const active = hover?.piece.n === p.n
           return (
             <g
               key={p.n}
               opacity={dim ? 0.22 : 1}
-              className="cursor-pointer transition-opacity duration-160"
+              className="cursor-pointer transition-opacity duration-140"
               onPointerEnter={() => setHover({ key: `${index}-${p.n}`, piece: p })}
               onClick={() => onFocusRef(focusRef === p.cut.ref ? null : (p.cut.ref ?? null))}
             >
-              <polygon
-                points={piecePolygon(p)}
-                fill={meta?.tint ?? '#EEEAE3'}
-                stroke={INK}
-                strokeWidth={active ? 1.6 : 0.75}
-                strokeLinejoin="round"
-              />
+              {/* El filo del color de la hoja separa dos piezas seguidas; la elegida se marca con el azul del dibujo. */}
+              <polygon points={piecePolygon(p, 0, H)} fill={active ? 'var(--dk-select)' : 'var(--dk-accent)'} stroke="var(--dk-canvas)" strokeWidth={1.5} strokeLinejoin="round" />
               {p.measure && !p.measure.vertical ? (
                 <text
                   x={p.x + p.w / 2}
-                  y={BAR_HEIGHT / 2 + p.measure.size * 0.36}
+                  y={H / 2 + p.measure.size * 0.36}
                   textAnchor="middle"
                   fontSize={p.measure.size}
-                  fontWeight={650}
-                  fill={INK}
-                  className="tabular"
+                  fontWeight={500}
+                  fill={active ? '#FFFFFF' : 'var(--dk-fg-on-accent)'}
                   style={{ fontVariantNumeric: 'tabular-nums' }}
                 >
-                  {mm(p.cut.length)}
+                  {measure(p.cut.length)}
                 </text>
               ) : null}
               {p.measure && p.measure.vertical ? (
                 <text
-                  transform={`translate(${p.x + p.w / 2 + p.measure.size * 0.36} ${BAR_HEIGHT / 2}) rotate(-90)`}
+                  transform={`translate(${p.x + p.w / 2 + p.measure.size * 0.36} ${H / 2}) rotate(-90)`}
                   textAnchor="middle"
                   fontSize={p.measure.size}
-                  fontWeight={650}
-                  fill={INK}
+                  fontWeight={500}
+                  fill={active ? '#FFFFFF' : 'var(--dk-fg-on-accent)'}
                 >
-                  {mm(p.cut.length)}
+                  {measure(p.cut.length)}
                 </text>
               ) : null}
               {!p.measure && p.w >= 8 ? (
-                <text x={p.x + p.w / 2} y={BAR_HEIGHT / 2 + 4} textAnchor="middle" fontSize={10} fontWeight={700} fill={INK}>
+                <text x={p.x + p.w / 2} y={H / 2 + 4} textAnchor="middle" fontSize={10} fontWeight={500} fill={active ? '#FFFFFF' : 'var(--dk-fg-on-accent)'}>
                   {p.n}
                 </text>
               ) : null}
               {p.caption ? (
-                <text x={p.x + p.w / 2} y={BAR_HEIGHT + 13} textAnchor="middle" fontSize={LABEL_SIZE} fill="var(--paper-900)">
+                <text x={p.x + p.w / 2} y={H + metrics.label + 2} textAnchor="middle" fontSize={metrics.label} fill="var(--dk-fg)">
                   {p.caption}
                 </text>
               ) : null}
@@ -308,28 +318,31 @@ const BarRow = memo(function BarRow({
         })}
       </svg>
 
-      {hover ? <PieceCard hover={hover} width={placement.width} windows={windows} /> : null}
+      {hover ? <PieceCard hover={hover} width={placement.width} windows={windows} id={ids?.[hover.piece.n - 1]} /> : null}
 
-      <div className="mt-0.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-meta text-paper-600 tabular">
+      <div className={cn('mt-0.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-fg-muted tabular', metrics === BAR_METRICS.large ? 'text-table' : 'text-meta', done && 'line-through')}>
         <span>
-          {bar.fromOffcut ? 'Retazo de bodega' : `Barra de ${mm(bar.barLength)} mm`} · piezas {mm(bar.used)} mm · se pierden {mm(bar.kerfLoss)} mm en cortes
+          {[
+            bar.fromOffcut ? t('bars.fromStock') : t('bars.barOf', { length: measure(bar.barLength) }),
+            t('bars.used', { used: measure(bar.used) }),
+            t('bars.kerf', { kerf: measure(bar.kerfLoss) }),
+          ].join(' · ')}
         </span>
         <span>
-          Sobrante <strong className="font-semibold text-paper-900">{mm(bar.remainder)} mm</strong>
-          {reusable ? <span className="text-ok-600"> · guardar</span> : null} · {formatNumber(bar.yieldPct, 1)} %
+          <T ns={es} k="bars.remainder" values={{ b: <strong className="font-medium text-fg-strong" />, value: measure(bar.remainder) }} />
+          {reusable ? <span className="font-medium text-fg"> · {t('bars.keepShort')}</span> : null} · {fmt.pct(bar.yieldPct, 1)}
         </span>
       </div>
       {placement.hidden.length > 0 ? (
-        <p className="mt-1 text-meta leading-[18px] text-paper-600">
-          <span>Piezas cortas: </span>
+        <p className="mt-1 text-meta text-fg-muted">
+          <span>{t('bars.short')} </span>
           {placement.hidden.map((p, i) => (
             <span key={p.n}>
               {i > 0 ? ' · ' : ''}
-              <span className="text-paper-900">
-                ({p.n}) <strong className="font-semibold tabular">{mm(p.cut.length)}</strong>
+              <span className="text-fg">
+                ({p.n}) <strong className="font-semibold tabular">{measure(p.cut.length)}</strong>
               </span>{' '}
-              {p.cut.ref ? `${p.cut.ref} · ` : ''}
-              {sideOf(p.cut)}
+              {ids?.[p.n - 1]?.code ?? (p.cut.ref ? `${p.cut.ref} · ` : '')} {ids?.[p.n - 1]?.side ?? sideOf(p.cut)}
             </span>
           ))}
         </p>
@@ -338,37 +351,35 @@ const BarRow = memo(function BarRow({
   )
 })
 
-function angleText(start?: number, end?: number): string {
-  const f = (a?: number) => `${formatNumber(a ?? 90, 1)}°`
-  return `${f(start)} · ${f(end)}`
-}
-
-function PieceCard({ hover, width, windows }: { hover: HoverState; width: number; windows: ReadonlyMap<string, WindowMeta> }) {
+function PieceCard({ hover, width, windows, id }: { hover: HoverState; width: number; windows: ReadonlyMap<string, WindowMeta>; id?: BarPieceId }) {
+  const t = useT(es)
+  const fmt = useFormat()
+  const measure = useMeasure()
   const { piece } = hover
   const meta = piece.cut.ref ? windows.get(piece.cut.ref) : undefined
   const center = piece.x + piece.w / 2
-  const cardW = 200
+  const cardW = 208
   const left = Math.max(0, Math.min(width - cardW, center - cardW / 2))
-  const side = sideOf(piece.cut)
+  const side = id?.side ?? sideOf(piece.cut)
+  const angle = (a?: number) => `${fmt.number(a ?? 90, { maxDecimals: 1 })}°`
   return (
     <div
       role="status"
-      className="pointer-events-none absolute bottom-full z-10 mb-1.5 rounded-md border border-paper-200 bg-paper-0 px-3 py-2 shadow-float"
+      className="pointer-events-none absolute bottom-full z-10 mb-1.5 rounded-md bg-raised px-3 py-2 shadow-float"
       style={{ left, width: cardW }}
     >
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-h3 font-semibold tracking-[-0.01em] text-paper-900 tabular">{mm(piece.cut.length)}</span>
-        <span className="text-meta text-paper-600">mm · pieza {piece.n}</span>
+        <span className="text-h3 font-medium text-fg-strong tabular">{measure(piece.cut.length)}</span>
+        <span className="text-meta text-fg-muted">{t('bars.piece', { n: piece.n })}</span>
       </div>
-      <div className="mt-0.5 flex items-center gap-1.5 text-[13px] text-paper-900">
-        {meta ? <span aria-hidden className="size-2.5 shrink-0 rounded-[3px] border border-paper-900/40" style={{ background: meta.tint }} /> : null}
-        <span className="truncate">
-          {piece.cut.ref ? <strong className="font-semibold">{piece.cut.ref}</strong> : null}
+      <div className="mt-0.5 flex items-center gap-1.5 text-table text-fg">
+                <span className="truncate">
+          {id?.code || piece.cut.ref ? <strong className="code-id font-semibold">{id?.code ?? piece.cut.ref}</strong> : null}
           {side ? ` · ${workshopSideWords(side)}` : ''}
         </span>
       </div>
-      {meta?.name ? <div className="truncate text-meta text-paper-600">{meta.name}</div> : null}
-      <div className="mt-0.5 text-meta text-paper-600 tabular">Cortes {angleText(piece.cut.angleStart, piece.cut.angleEnd)}</div>
+      {meta?.name ? <div className="truncate text-meta text-fg-muted">{meta.name}</div> : null}
+      <div className="mt-0.5 text-meta text-fg-muted tabular">{t('bars.angles', { angles: `${angle(piece.cut.angleStart)} · ${angle(piece.cut.angleEnd)}` })}</div>
     </div>
   )
 }

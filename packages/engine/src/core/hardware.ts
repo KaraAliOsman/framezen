@@ -1,20 +1,60 @@
-import type { HardwareRule, OpeningKind } from '../types'
+import type { HardwareRule, OpeningKind, SlidingSystem } from '../types'
 import { formatNumber } from './format'
 
 /** A qué se aplica una regla de herraje: aperturas de hoja, paño fijo o paneles de corredera. */
-export type HardwareTargetKind = OpeningKind | 'sliding_moving' | 'sliding_fixed'
+export type HardwareTargetKind = OpeningKind | 'sliding_moving' | 'sliding_fixed' | 'lift_slide_moving' | 'lift_slide_fixed' | 'vertical_moving' | 'vertical_fixed'
+
+/** Datos de la hoja que filtran reglas más allá de su apertura. */
+export interface HardwareTarget {
+  /** Hoja pasiva (francesa o plegable). */
+  passive?: boolean
+  /** Secuencia del oscilobatiente (sin dato = gira primero). */
+  sequence?: 'turn_first' | 'tilt_first'
+}
+
+const SLIDING_TARGETS: Partial<Record<HardwareTargetKind, { system: SlidingSystem; fixed: boolean }>> = {
+  sliding_moving: { system: 'standard', fixed: false },
+  sliding_fixed: { system: 'standard', fixed: true },
+  lift_slide_moving: { system: 'lift_slide', fixed: false },
+  lift_slide_fixed: { system: 'lift_slide', fixed: true },
+  vertical_moving: { system: 'vertical', fixed: false },
+  vertical_fixed: { system: 'vertical', fixed: true },
+}
+
+/**
+ * Aperturas de v4 que una regla de corredera estándar podía listar y que, por compatibilidad,
+ * siguen tomando las hojas móviles. Las aperturas nuevas (pivotantes, osciloparalela, paralela,
+ * plegable) nunca contaminan una corredera.
+ */
+const LEGACY_MOVING = new Set<OpeningKind>(['casement', 'tilt_turn', 'tilt', 'awning', 'door'])
 
 /**
  * Convención de `HardwareRule.openings`:
  * - practicables: aplica a las aperturas listadas; lista vacía = toda hoja que abre (no fijos);
- * - corredera: una hoja móvil toma toda regla cuya lista esté vacía o tenga alguna apertura
- *   distinta de 'fixed'; un panel fijo toma solo las reglas que incluyen 'fixed'.
+ * - corredera: una hoja móvil toma toda regla cuya lista esté vacía o tenga alguna apertura de v4
+ *   distinta de 'fixed'; un panel fijo toma solo las reglas que incluyen 'fixed';
+ * - `systems`: sin dato, la regla es de corredera estándar (nunca aplica a una elevadora); con dato,
+ *   solo a paneles de esos sistemas (y nunca a hojas de practicable);
+ * - `leaf` y `sequence` filtran por hoja activa/pasiva y por secuencia del oscilobatiente.
  */
-export function ruleApplies(rule: HardwareRule, kind: HardwareTargetKind): boolean {
+export function ruleApplies(rule: HardwareRule, kind: HardwareTargetKind, target: HardwareTarget = {}): boolean {
   const openings = rule.openings ?? []
-  if (kind === 'sliding_moving') return openings.length === 0 || openings.some((k) => k !== 'fixed')
-  if (kind === 'sliding_fixed' || kind === 'fixed') return openings.includes('fixed')
-  return openings.length === 0 || openings.includes(kind)
+  const systems = Array.isArray(rule.systems) && rule.systems.length > 0 ? rule.systems : undefined
+  if (rule.leaf === 'active' && target.passive) return false
+  if (rule.leaf === 'passive' && !target.passive) return false
+  if (rule.sequence) {
+    const sequence = target.sequence === 'tilt_first' ? 'tilt_first' : 'turn_first'
+    if (rule.sequence !== sequence) return false
+  }
+  const sliding = SLIDING_TARGETS[kind]
+  if (sliding) {
+    if (systems ? !systems.includes(sliding.system) : sliding.system !== 'standard') return false
+    if (sliding.fixed) return openings.includes('fixed')
+    return openings.length === 0 || openings.some((k) => LEGACY_MOVING.has(k))
+  }
+  if (systems) return false
+  if (kind === 'fixed') return openings.includes('fixed')
+  return openings.length === 0 || openings.includes(kind as OpeningKind)
 }
 
 const has = (n: number | undefined): n is number => typeof n === 'number' && Number.isFinite(n)
@@ -48,8 +88,8 @@ export interface HardwareEvaluation {
   noRules: boolean
 }
 
-export function evaluateHardware(rules: HardwareRule[], kind: HardwareTargetKind, w: number, h: number): HardwareEvaluation {
-  const applicable = rules.filter((r) => ruleApplies(r, kind))
+export function evaluateHardware(rules: HardwareRule[], kind: HardwareTargetKind, w: number, h: number, target: HardwareTarget = {}): HardwareEvaluation {
+  const applicable = rules.filter((r) => ruleApplies(r, kind, target))
   const out: HardwareEvaluation = { matched: [], noRules: applicable.length === 0 }
   const hRanged = applicable.filter((r) => has(r.minHeight) || has(r.maxHeight))
   if (hRanged.length > 0 && !hRanged.some((r) => inHeight(r, h))) {
@@ -128,16 +168,38 @@ export function rangesText(ranges: HardwareRange[]): string {
  * 300» (más chica que todo). Sin bordes claros, la cobertura completa.
  */
 export function gapText(ranges: HardwareRange[], value: number): string {
+  const { below, above } = gapBounds(ranges, value)
+  if (below !== undefined && above !== undefined) return `cubre hasta ${limit(below)} y desde ${limit(above)}`
+  if (below !== undefined) return `cubre hasta ${limit(below)}`
+  if (above !== undefined) return `cubre desde ${limit(above)}`
+  return `cubre ${rangesText(ranges)}`
+}
+
+/** Los bordes del hueco donde cae `value`: el máximo más cercano por debajo y el mínimo más cercano por encima. */
+export function gapBounds(ranges: HardwareRange[], value: number): { below?: number; above?: number } {
   let below: number | undefined
   let above: number | undefined
   for (const [a, b] of ranges) {
     if (has(b) && b < value && (below === undefined || b > below)) below = b
     if (has(a) && a > value && (above === undefined || a < above)) above = a
   }
-  if (below !== undefined && above !== undefined) return `cubre hasta ${limit(below)} y desde ${limit(above)}`
-  if (below !== undefined) return `cubre hasta ${limit(below)}`
-  if (above !== undefined) return `cubre desde ${limit(above)}`
-  return `cubre ${rangesText(ranges)}`
+  return { below, above }
+}
+
+/** El mismo hueco como datos de aviso (`hardware_out_of_range`): bordes redondeados a la decena, como `gapText`. */
+export type GapCoverage =
+  | { coverage: 'between'; below: number; above: number }
+  | { coverage: 'upto'; below: number }
+  | { coverage: 'from'; above: number }
+  /** Sin bordes claros (no ocurre con rangos válidos): el aviso lo dice sin cifras. */
+  | { coverage: 'any' }
+
+export function gapCoverage(ranges: HardwareRange[], value: number): GapCoverage {
+  const { below, above } = gapBounds(ranges, value)
+  if (below !== undefined && above !== undefined) return { coverage: 'between', below: humanLimit(below), above: humanLimit(above) }
+  if (below !== undefined) return { coverage: 'upto', below: humanLimit(below) }
+  if (above !== undefined) return { coverage: 'from', above: humanLimit(above) }
+  return { coverage: 'any' }
 }
 
 export const HARDWARE_KIND_NAMES: Record<HardwareTargetKind, string> = {
@@ -147,6 +209,15 @@ export const HARDWARE_KIND_NAMES: Record<HardwareTargetKind, string> = {
   tilt: 'oscilantes',
   awning: 'proyectantes',
   door: 'puertas',
+  pivot_v: 'pivotantes verticales',
+  pivot_h: 'pivotantes horizontales',
+  tilt_slide: 'osciloparalelas',
+  parallel_slide: 'correderas paralelas',
+  folding: 'hojas plegables',
   sliding_moving: 'hojas de corredera',
   sliding_fixed: 'paños fijos de corredera',
+  lift_slide_moving: 'hojas de corredera elevadora',
+  lift_slide_fixed: 'paños fijos de corredera elevadora',
+  vertical_moving: 'hojas de guillotina',
+  vertical_fixed: 'paños fijos de guillotina',
 }

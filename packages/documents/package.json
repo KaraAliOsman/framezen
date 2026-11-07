@@ -1,18 +1,26 @@
 {
-  "name": "@framezen/documents",
-  "version": "4.0.0",
+  "name": "@dekopen/documents",
+  "version": "5.0.0",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@fontsource-variable/fraunces": "^5.3.0",
+    "@dekopen/engine": "5.0.0",
+    "@dekopen/shared": "5.0.0",
+    "@fontsource-variable/archivo": "^5.3.0",
+    "@fontsource-variable/hanken-grotesk": "^5.3.0",
     "@fontsource-variable/inter-tight": "^5.3.0",
-    "@framezen/engine": "4.0.0",
-    "@framezen/shared": "4.0.0",
+    "@fontsource-variable/literata": "^5.3.0",
+    "@fontsource-variable/overpass": "^5.3.0",
+    "@fontsource-variable/public-sans": "^5.3.0",
+    "@fontsource-variable/schibsted-grotesk": "^5.3.0",
+    "@fontsource-variable/source-sans-3": "^5.3.1",
+    "@fontsource-variable/source-serif-4": "^5.3.1",
     "qrcode": "^1.5.4"
   },
   "peerDependencies": {
@@ -26,6 +34,7 @@
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "pdfjs-dist": "^6.5.438",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   }

@@ -1,7 +1,44 @@
 # Avisos de terceros
 
-Framezen incluye código de terceros bajo las licencias que se indican aquí. Cada aviso
+DEKOPEN incluye código de terceros bajo las licencias que se indican aquí. Cada aviso
 se reproduce completo, como piden sus licencias.
+
+---
+
+## Funnel Sans y Funnel Display — tipografía de la interfaz
+
+- Proyecto: Funnel (https://github.com/Dicotype/Funnel), distribuida en
+  `@fontsource-variable/funnel-sans` y `@fontsource-variable/funnel-display`.
+- Copyright 2023 The Funnel Project Authors.
+- Licencia: SIL Open Font License 1.1 (https://openfontlicense.org). El texto completo va en
+  cada paquete.
+- Dónde se usa: toda la interfaz web y, convertido a trazados, el logotipo de DEKOPEN
+  (`apps/web/src/brand/logo.ts`).
+
+---
+
+## Tipografías de los documentos
+
+Se incrustan en los PDF de cotización y catálogo. Todas bajo SIL Open Font License 1.1
+(https://openfontlicense.org); el texto completo va en cada paquete `@fontsource-variable/*`.
+
+- Hanken Grotesk: Copyright 2021 The Hanken Grotesk Project Authors.
+- Public Sans: Copyright 2015 The Public Sans Project Authors.
+- Archivo: Copyright 2020 The Archivo Project Authors.
+- Source Sans 3 y Source Serif 4: Copyright Adobe (https://github.com/adobe-fonts).
+- Literata: Copyright 2017 The Literata Project Authors.
+- Overpass: Copyright 2021 The Overpass Project Authors.
+- Schibsted Grotesk: Copyright 2023 The Schibsted-Grotesk Project Authors.
+
+---
+
+## PDF.js y fflate — lectura de archivos en el asistente
+
+- PDF.js (`pdfjs-dist`): Copyright Mozilla y colaboradores. Licencia Apache 2.0
+  (https://www.apache.org/licenses/LICENSE-2.0).
+- fflate: Copyright 2020 Arjun Barrett. Licencia MIT (https://github.com/101arrowz/fflate).
+- Dónde se usan: `apps/web/src/features/assistant/attachments/`. Se cargan solo al adjuntar un
+  PDF o un archivo de oficina.
 
 ---
 
@@ -47,11 +84,11 @@ a React 19 + SVG + `requestAnimationFrame`, y se modificó:
   máscara únicos) con pintado imperativo y pausa fuera de pantalla.
 
 `engine/director.ts`, `engine/still.ts`, `runtime.ts`, `labels.ts` y `MarcoShowcase.tsx` son
-código propio de Framezen.
+código propio de DEKOPEN.
 
 ### Diseño propio
 
-El diseño de Marco y de Framezen es propio: nombre, color tinta de la marca, ojos blancos,
+El diseño de Marco y de DEKOPEN es propio: nombre, color tinta de la marca, ojos blancos,
 pose de reposo que mira al usuario, estados del asistente (escuchando, pensando,
 trabajando, listo, aprobación, error), anillos y pastilla ámbar. No reproduce el aspecto
 del avatar que bloub recrea, y no se usan imágenes, nombres ni marcas de bloub ni de

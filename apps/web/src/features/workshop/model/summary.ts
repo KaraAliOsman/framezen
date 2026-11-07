@@ -1,7 +1,7 @@
 /**
  * Totales y avisos de una OT a partir de los datos de taller del motor.
  */
-import type { Warning, WorkshopData } from '@framezen/engine'
+import type { Warning, WorkshopData } from '@dekopen/engine'
 
 export interface WorkshopTotals {
   /** Ventanas distintas (ítems) y unidades a fabricar. */
@@ -42,6 +42,8 @@ export interface WorkshopNotice {
   message: string
   /** Ventana a la que se refiere (si aplica). */
   ref?: string
+  /** El aviso del motor completo (para mostrarlo en el idioma de la interfaz con el glosario). */
+  warning: Warning
 }
 
 /** Avisos de precio: son de la oficina, no del taller. */
@@ -59,7 +61,7 @@ export function workshopNotices(data: Pick<WorkshopData, 'windows' | 'optimizati
     const key = `${ref ?? ''}|${w.message}`
     if (seen.has(key)) return
     seen.add(key)
-    out.push({ level: w.level, message: w.message, ...(ref ? { ref } : {}) })
+    out.push({ level: w.level, message: w.message, ...(ref ? { ref } : {}), warning: w })
   }
   for (const window of data.windows) for (const w of window.bom.warnings ?? []) push(w, window.ref)
   for (const w of data.optimization.warnings ?? []) push(w)

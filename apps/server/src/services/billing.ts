@@ -1,5 +1,5 @@
 import { and, count, eq, gte, sql } from 'drizzle-orm'
-import { PLANS, TRIAL_CREDITS, TRIAL_DAYS, planFeatures, planSeats, type BillingState } from '@framezen/shared'
+import { PLANS, TRIAL_CREDITS, TRIAL_DAYS, planFeatures, planSeats, type BillingState } from '@dekopen/shared'
 import type { Db } from '../db/client'
 import { aiUsage, memberships, subscriptions } from '../db/schema'
 import { newId } from '../lib/crypto'

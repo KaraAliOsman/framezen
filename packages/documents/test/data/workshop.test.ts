@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
 import { describe, expect, it } from 'vitest'
-import { createDesign, DEFAULT_CUT, DEFAULT_PRICING, evaluateQuote, toSawCsv } from '@framezen/engine'
-import type { Org, OrgSettings, Quote, WorkOrder } from '@framezen/shared'
+import { createDesign, DEFAULT_CUT, DEFAULT_PRICING, evaluateQuote, toSawCsv } from '@dekopen/engine'
+import type { Org, OrgSettings, Quote, WorkOrder } from '@dekopen/shared'
 import {
   buildWorkshopDocInput,
   calendarDate,
@@ -18,7 +18,17 @@ import {
 } from '../../src/data/workshop'
 import { WORKSHOP_DOCUMENTS, WorkshopDocument, sampleWorkshopCatalog, workshopCostSummary } from '../../src/workshop'
 
-const catalog = sampleWorkshopCatalog()
+// El limitador de la muestra no tiene precio y sus líneas no traen todos los herrajes: aquí se completan
+// para que las ventanas tengan venta (lo que no tiene precio o herraje queda fuera del total).
+const catalog = (() => {
+  const c = sampleWorkshopCatalog()
+  const hardware = c.items.find((i) => i.kind === 'hardware')!
+  return {
+    ...c,
+    items: c.items.map((i) => (i.price > 0 ? i : { ...i, price: 1500 })),
+    lines: c.lines.map((l) => ({ ...l, hardwareRules: [...l.hardwareRules, { id: 'prueba-herraje', openings: [], itemId: hardware.id, qty: 2 }] })),
+  }
+})()
 
 function design(typology: string, lineId: string, width: number, height: number, colorId = 'blanco') {
   return createDesign(typology, { lineId, width, height, colorId, glassId: 'dvh-4124' })
@@ -182,6 +192,20 @@ describe('buildWorkshopDocInput', () => {
     })
     const out = buildWorkshopDocInput({ quote, org, catalog, settings, workOrder })
     expect(out.data.windows.map((w) => w.ref)).toEqual(['V1', 'V1-2', 'V3'])
+  })
+
+  it('a producción va solo lo elegido: ni el opcional sin marcar ni la alternativa descartada', () => {
+    const quote = makeQuote({
+      items: [
+        { id: 'i1', ref: 'V1', qty: 1, design: design('casement', 'andino-60', 700, 1100) },
+        { id: 'i2', ref: 'V2', qty: 1, design: design('casement', 'andino-60', 800, 1100), role: 'alternative', altGroup: 'Dormitorio', included: false },
+        { id: 'i3', ref: 'V3', qty: 1, design: design('casement', 'andino-60', 900, 1100), role: 'alternative', altGroup: 'Dormitorio', included: true },
+        { id: 'i4', ref: 'V4', qty: 1, design: design('casement', 'andino-60', 600, 1100), role: 'optional', included: false },
+        { id: 'i5', ref: 'V5', qty: 1, design: design('casement', 'andino-60', 600, 900), role: 'optional', included: true },
+      ],
+    })
+    const { data } = buildWorkshopDocInput({ quote, org, catalog, settings, workOrder })
+    expect(data.windows.map((w) => w.ref)).toEqual(['V1', 'V3', 'V5'])
   })
 
   it('una cotización vacía no se cae', () => {

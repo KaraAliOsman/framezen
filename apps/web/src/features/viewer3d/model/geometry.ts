@@ -1,4 +1,4 @@
-import type { Rect } from '@framezen/engine'
+import type { Rect } from '@dekopen/engine'
 import { BoxGeometry, BufferGeometry, ExtrudeGeometry, Path, Shape, Vector2, type UVGenerator } from 'three'
 import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
@@ -24,8 +24,12 @@ export function toModelZ(space: ModelSpace, z: number): number {
   return z - space.depth / 2
 }
 
-/** Una vuelta de veta cada 600 mm; la veta corre a lo largo de la pieza. */
-const GRAIN_SCALE = 1 / 600
+/**
+ * UV en metros (1 unidad = 1000 mm) con la veta a lo largo de la pieza: `u` corre a lo largo y `v` a lo
+ * ancho. La repetición física (escala del foliado en mm) la fija cada textura con `repeat`, así el foliado
+ * exterior y el interior pueden tener escalas distintas sobre la misma geometría.
+ */
+const UV_UNIT = 1 / 1000
 
 function grainUV(alongX: boolean): UVGenerator {
   return {
@@ -33,7 +37,7 @@ function grainUV(alongX: boolean): UVGenerator {
       return [a, b, c].map((i) => {
         const x = vertices[i * 3]
         const y = vertices[i * 3 + 1]
-        return alongX ? new Vector2(y * GRAIN_SCALE, x * GRAIN_SCALE) : new Vector2(x * GRAIN_SCALE, y * GRAIN_SCALE)
+        return alongX ? new Vector2(x * UV_UNIT, y * UV_UNIT) : new Vector2(y * UV_UNIT, x * UV_UNIT)
       })
     },
     generateSideWallUV(_geometry, vertices, a, b, c, d) {
@@ -41,7 +45,7 @@ function grainUV(alongX: boolean): UVGenerator {
         const x = vertices[i * 3]
         const y = vertices[i * 3 + 1]
         const z = vertices[i * 3 + 2]
-        return alongX ? new Vector2((y + z) * GRAIN_SCALE, x * GRAIN_SCALE) : new Vector2((x + z) * GRAIN_SCALE, y * GRAIN_SCALE)
+        return alongX ? new Vector2(x * UV_UNIT, (y + z) * UV_UNIT) : new Vector2(y * UV_UNIT, (x + z) * UV_UNIT)
       })
     },
   }
@@ -108,6 +112,34 @@ export function extrudePolygon(points: Vector2[], z0: number, z1: number, option
   return geometry
 }
 
+/** Contorno rectangular en el espacio del modelo. */
+export function rectPath(space: ModelSpace, rect: Rect): Vector2[] {
+  return rectBand(space, rect).points
+}
+
+/** Crece (o encoge, con `by` negativo) un polígono por sus bisectrices. Acepta cualquier sentido de giro. */
+export function offsetPolygon(points: Vector2[], by: number): Vector2[] {
+  const n = points.length
+  let area = 0
+  for (let i = 0; i < n; i++) {
+    const a = points[i]
+    const b = points[(i + 1) % n]
+    area += a.x * b.y - b.x * a.y
+  }
+  const outward = area >= 0 ? 1 : -1
+  return points.map((p, i) => {
+    const a = p.clone().sub(points[(i - 1 + n) % n]).normalize()
+    const b = points[(i + 1) % n].clone().sub(p).normalize()
+    const na = new Vector2(a.y, -a.x)
+    const nb = new Vector2(b.y, -b.x)
+    const bisector = na.add(nb)
+    if (bisector.lengthSq() < 1e-8) return p.clone()
+    bisector.normalize()
+    const scale = 1 / Math.max(0.3, bisector.dot(nb))
+    return p.clone().addScaledVector(bisector, by * outward * scale)
+  })
+}
+
 /** Caja alineada a los ejes del modelo (centro y tamaño en mm). */
 export function boxAt(cx: number, cy: number, cz: number, sx: number, sy: number, sz: number): BufferGeometry | null {
   if (!(sx > 0 && sy > 0 && sz > 0)) return null
@@ -141,7 +173,7 @@ export function roundedRectPoints(width: number, height: number, radius: number,
  * Convierte un path SVG en mm (y hacia abajo) en contornos del modelo.
  * Devuelve el contorno exterior de cada forma; null si no se puede leer.
  */
-export function outlineToModel(space: ModelSpace, d: string | undefined, divisions = 48): Vector2[][] | null {
+export function outlineToModel(space: ModelSpace, d: string | undefined, divisions = 32): Vector2[][] | null {
   if (!d || typeof DOMParser === 'undefined') return null
   try {
     const svg = `<svg xmlns="http://www.w3.org/2000/svg"><path d="${d.replace(/"/g, '')}"/></svg>`
@@ -178,10 +210,14 @@ export function mergeAndDispose(geometries: BufferGeometry[]): BufferGeometry | 
     if (flat !== geometry) geometry.dispose()
     flat.clearGroups()
     for (const name of Object.keys(flat.attributes)) {
-      if (name !== 'position' && name !== 'normal' && name !== 'uv') flat.deleteAttribute(name)
+      if (name !== 'position' && name !== 'normal' && name !== 'uv' && name !== 'color') flat.deleteAttribute(name)
     }
     return flat
   })
+  // Todas deben traer lo mismo para fusionarse; `color` (oclusión horneada) solo sobrevive si todas lo traen.
+  if (prepared.some((geometry) => !geometry.getAttribute('color'))) {
+    for (const geometry of prepared) geometry.deleteAttribute('color')
+  }
   if (prepared.length === 1) return prepared[0]
   const merged = mergeGeometries(prepared, false)
   for (const geometry of prepared) geometry.dispose()

@@ -6,7 +6,7 @@
  * paquete es público; nunca copies aquí precios netos reales, ni con un factor encima).
  * Las medidas de corte reproducen los casos dorados de la investigación (pauta 60 mm:
  * soldadura 3, descuento de marco 44, traslapo 8, holgura 5, travesaño 20), con las
- * correcciones de Framezen: travesaño de los dos fijos presente e ingletes reales en el
+ * correcciones de DEKOPEN: travesaño de los dos fijos presente e ingletes reales en el
  * trapecio. No dependen del motor: así la galería funciona aunque cambie el cálculo.
  */
 import type {
@@ -32,7 +32,7 @@ import type {
   Warning,
   WindowDesign,
   WorkshopWindow,
-} from '@framezen/engine'
+} from '@dekopen/engine'
 import type { WorkshopDocumentData } from './types'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -799,23 +799,29 @@ function optimizeSample(windows: WorkshopWindow[], settings: CutSettings): Optim
     const list = pieces.filter((p) => p.key === key).sort((a, b) => b.length - a.length)
     const first = list[0]?.piece
     const capacity = settings.barLength - settings.trimStart - settings.trimEnd
-    const bins: { cuts: FlatPiece[]; used: number }[] = []
+    // Como el optimizador: el disco ocupa más en el eje si la pieza termina en inglete.
+    const disc = (p: FlatPiece) => {
+      const angle = p.piece.angleEnd
+      return angle >= 89.95 ? settings.kerf : Math.ceil((settings.kerf * 10) / Math.sin((angle * Math.PI) / 180) - 1e-6) / 10
+    }
+    const bins: { cuts: FlatPiece[]; used: number; kerf: number }[] = []
     for (const p of list) {
-      const bin = bins.find((b) => b.used + (b.cuts.length + 1) * settings.kerf + p.length <= capacity)
+      const bin = bins.find((b) => b.used + b.kerf + disc(p) + p.length <= capacity)
       if (bin) {
         bin.cuts.push(p)
         bin.used += p.length
-      } else bins.push({ cuts: [p], used: p.length })
+        bin.kerf += disc(p)
+      } else bins.push({ cuts: [p], used: p.length, kerf: disc(p) })
     }
     const bars: Bar[] = bins.map((b) => {
       let offset = settings.trimStart
       const cuts: BarCut[] = b.cuts.map((p) => {
         const c: BarCut = { length: p.length, label: p.label, ref: p.ref, offset, angleStart: p.piece.angleStart, angleEnd: p.piece.angleEnd }
-        offset += p.length + settings.kerf
+        offset = Math.round((offset + p.length + disc(p)) * 10) / 10
         return c
       })
       const used = Math.round(b.used * 10) / 10
-      const kerfLoss = b.cuts.length * settings.kerf
+      const kerfLoss = Math.round(b.kerf * 10) / 10
       return {
         key,
         barLength: settings.barLength,

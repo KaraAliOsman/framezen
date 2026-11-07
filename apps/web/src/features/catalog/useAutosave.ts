@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { humanError } from '../../lib/api'
+import { translate } from '../../lib/i18n'
 import { toast, type SaveStatus } from '../../ui'
+import es from './i18n/es'
 import { enqueueAutosave, registerAutosaveOwner, syncAutosaveGuard, type AutosaveOwner } from './autosaveQueue'
 
 export interface Autosave<T> {
@@ -61,7 +63,7 @@ export function useAutosave<T>(save: (value: T) => Promise<unknown>, delay = 600
       onFailed: (err, willRetry) => {
         if (!mounted.current) {
           // Ya no hay pantalla que lo muestre: el servidor rechazó el dato, se avisa igual.
-          if (!willRetry) toast.error(`No se guardó tu último cambio. ${humanError(err)}`)
+          if (!willRetry) toast.error(translate(es, 'autosave.failed', { reason: humanError(err) }))
           return
         }
         setError(err)

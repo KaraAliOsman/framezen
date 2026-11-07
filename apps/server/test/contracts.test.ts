@@ -10,8 +10,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Hono } from 'hono'
 import { eq } from 'drizzle-orm'
-import { SAMPLE_CATALOG } from '@framezen/catalog'
-import type { Catalog, Line } from '@framezen/engine'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
+import type { Catalog, Line } from '@dekopen/engine'
 import type {
   CatalogBrandsResponse,
   CatalogResponse,
@@ -22,7 +22,7 @@ import type {
   Quote,
   QuoteStats,
   SendQuoteResponse,
-} from '@framezen/shared'
+} from '@dekopen/shared'
 import { bootstrap } from '../src/bootstrap'
 import { loadConfig, runningFromBundle } from '../src/config'
 import type { AppEnv } from '../src/context'
@@ -153,7 +153,7 @@ describe('GET /api/quotes/stats', () => {
 
     clock = new Date('2026-11-10T15:00:00Z')
     stats = (await agent.get<QuoteStats>('/api/quotes/stats')).body
-    expect(stats.soldThisMonth).toEqual({ count: 0, total: 0 })
+    expect(stats.soldThisMonth).toEqual({ count: 0, total: 0, inProduction: 0 })
     expect(stats.soldLastMonth.count).toBe(1)
     expect(stats.soldLastMonth.total).toBeGreaterThan(0)
     expect(stats.followUps).toHaveLength(1)
@@ -310,8 +310,8 @@ describe('configuración de arranque', () => {
     expect(dev.production).toBe(false)
     expect(dev.webDist).toBeNull()
     expect(loadConfig({ NODE_ENV: 'development' }, root, true).webDist).toBeNull()
-    expect(loadConfig({ NODE_ENV: 'production', APP_URL: 'https://app.framezen.cl/', ALLOW_DEV_BILLING: '1', MAIL_TO_CONSOLE: '1' }, root, false)).toMatchObject({
-      appUrl: 'https://app.framezen.cl',
+    expect(loadConfig({ NODE_ENV: 'production', APP_URL: 'https://app.dekopen.cl/', ALLOW_DEV_BILLING: '1', MAIL_TO_CONSOLE: '1' }, root, false)).toMatchObject({
+      appUrl: 'https://app.dekopen.cl',
       secureCookies: true,
       webDist: join(root, 'apps/web/dist'),
     })
@@ -320,11 +320,11 @@ describe('configuración de arranque', () => {
   it('en producción no arranca en modo inseguro por falta de configuración', () => {
     // Sin nada: cobro 'dev' (planes gratis), cookie sin Secure y enlaces secretos al log → no arranca.
     expect(() => loadConfig({ NODE_ENV: 'production' }, root, false)).toThrow(/APP_URL[\s\S]*FLOW_API_KEY[\s\S]*RESEND_API_KEY/)
-    expect(() => loadConfig({ NODE_ENV: 'production', APP_URL: 'http://app.framezen.cl', FLOW_API_KEY: 'k', FLOW_SECRET_KEY: 's', RESEND_API_KEY: 're' }, root, false)).toThrow(
+    expect(() => loadConfig({ NODE_ENV: 'production', APP_URL: 'http://app.dekopen.cl', FLOW_API_KEY: 'k', FLOW_SECRET_KEY: 's', RESEND_API_KEY: 're' }, root, false)).toThrow(
       /https/,
     )
     expect(() => loadConfig({ PORT: '8080' }, root, true)).toThrow(/producción/)
-    const full = loadConfig({ NODE_ENV: 'production', APP_URL: 'https://app.framezen.cl', FLOW_API_KEY: 'k', FLOW_SECRET_KEY: 's', RESEND_API_KEY: 're' }, root, false)
+    const full = loadConfig({ NODE_ENV: 'production', APP_URL: 'https://app.dekopen.cl', FLOW_API_KEY: 'k', FLOW_SECRET_KEY: 's', RESEND_API_KEY: 're' }, root, false)
     expect(full).toMatchObject({ billingProvider: 'flow', secureCookies: true, resendApiKey: 're', trustProxyHops: 1, signupPerHour: 10 })
     // Desarrollo: nada es obligatorio y X-Forwarded-For no se cree (no hay proxy).
     expect(loadConfig({}, root, false)).toMatchObject({ trustProxyHops: 0 })

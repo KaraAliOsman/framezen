@@ -9,8 +9,11 @@ import type {
   LayoutSlidingPanel,
   WindowDesign,
 } from '../types'
+import { assemblyLayout, isAssembly } from './assembly'
 import { createContext, profileForRole, type EngineContext } from './context'
+import { FOLD_GAP_MM, ROLLER_SHUTTER_GUIDE_MM, SILL_DRAWING_MM } from './defaults'
 import { mm1 } from './format'
+import { chordAlong, clipRing, regularChamfer } from './shapes'
 import { cellSpecs, slidingSpec } from './specs'
 
 /**
@@ -18,6 +21,7 @@ import { cellSpecs, slidingSpec } from './specs'
  * Puro y barato: se recalcula en cada cambio del editor.
  */
 export function computeLayout(design: WindowDesign, catalog: Catalog): Layout {
+  if (isAssembly(design)) return assemblyLayout(design, catalog, computeLayout)
   const ctx = createContext(design, catalog)
   const { W, H } = ctx
   const layout: Layout = {
@@ -46,23 +50,33 @@ export function computeLayout(design: WindowDesign, catalog: Catalog): Layout {
   if (ctx.tree.sliding) slidingLayout(ctx, layout)
   else treeLayout(ctx, layout)
   shapeDimensions(ctx, layout)
+  attachments(ctx, layout)
   return layout
 }
 
 function treeLayout(ctx: EngineContext, layout: Layout): void {
   const specs = cellSpecs(ctx)
   const french = profileForRole(ctx, 'french_mullion')
+  const innerRing = ctx.shape ? ctx.shape.ring(ctx.frameFace) : undefined
 
   for (const d of ctx.tree.dividers) {
     const vertical = d.dir === 'vertical'
-    const face = d.kind === 'french' ? (french?.face ?? 2 * ctx.base.sashOverlap) : ctx.mullionFace
+    const face = d.kind === 'french' ? (french?.face ?? 2 * ctx.base.sashOverlap) : d.kind === 'fold' ? FOLD_GAP_MM : ctx.mullionFace
     // Tramo visible: entre caras vistas del marco o de los travesaños que lo limitan.
     const startEdge = vertical ? d.box.y0 : d.box.x0
     const endEdge = vertical ? d.box.y1 : d.box.x1
     const limit = vertical ? ctx.H : ctx.W
-    const start = startEdge <= 0.05 ? ctx.frameFace : startEdge + ctx.mullionFace / 2
+    let start = startEdge <= 0.05 ? ctx.frameFace : startEdge + ctx.mullionFace / 2
     const endFace = vertical && endEdge >= limit - 0.05 && ctx.threshold ? ctx.thresholdFace : ctx.frameFace
-    const end = endEdge >= limit - 0.05 ? limit - endFace : endEdge - ctx.mullionFace / 2
+    let end = endEdge >= limit - 0.05 ? limit - endFace : endEdge - ctx.mullionFace / 2
+    if (innerRing) {
+      // En una forma, el travesaño visible llega al contorno interior del marco.
+      const chord = chordAlong(innerRing, d.dir, d.axis)
+      if (chord) {
+        start = Math.max(start, chord.from)
+        end = Math.min(end, chord.to)
+      }
+    }
     const length = Math.max(0, end - start)
     const m: LayoutMullion = {
       nodeId: d.node.id,
@@ -96,7 +110,7 @@ function treeLayout(ctx: EngineContext, layout: Layout): void {
   }
 
   const singleShapePane = !!ctx.shape && specs.length === 1 && specs[0].type === 'fixed'
-  for (const spec of specs) {
+  for (const [index, spec] of specs.entries()) {
     layout.cells.push({ nodeId: spec.nodeId, rect: spec.visible, path: spec.cell.path })
     if (spec.type === 'fixed') {
       const pane: LayoutPane = {
@@ -107,6 +121,11 @@ function treeLayout(ctx: EngineContext, layout: Layout): void {
         glassId: spec.glassId,
       }
       if (singleShapePane && ctx.shape) pane.outline = ctx.shape.inset(ctx.frameFace).path
+      else if (innerRing && ctx.shapeFit[index] === 'clip') {
+        // Paño fijo recortado por la forma (sobreluz en arco, cabeza del frontón…).
+        const region = clipRing(innerRing, spec.visible)
+        if (region) pane.outline = region.path
+      }
       layout.panes.push(pane)
       continue
     }
@@ -119,6 +138,8 @@ function treeLayout(ctx: EngineContext, layout: Layout): void {
       fill: spec.fill,
     }
     if (spec.handle) sash.handle = spec.handle
+    if (spec.passive) sash.passive = true
+    if (spec.zocalo) sash.zocalo = { panel: spec.zocalo.panelRect, bar: spec.zocalo.barRect }
     layout.sashes.push(sash)
     layout.panes.push({
       nodeId: spec.nodeId,
@@ -127,6 +148,8 @@ function treeLayout(ctx: EngineContext, layout: Layout): void {
       fill: spec.fill,
       glassId: spec.glassId,
     })
+    // El zócalo es un segundo paño de la misma hoja (el vidrio queda primero).
+    if (spec.zocalo) layout.panes.push({ nodeId: spec.nodeId, kind: 'sash', glassRect: spec.zocalo.panelRect, fill: 'panel', glassId: spec.glassId })
   }
 }
 
@@ -135,6 +158,8 @@ function slidingLayout(ctx: EngineContext, layout: Layout): void {
   const node = ctx.tree.sliding
   if (!spec || !node) return
   layout.rails = spec.rails
+  if (ctx.isLiftSlide) layout.slidingSystem = 'lift_slide'
+  else if (ctx.isVerticalSlide) layout.slidingSystem = 'vertical'
   for (const p of spec.panels) {
     const panel: LayoutSlidingPanel = {
       panelId: p.panel.id,
@@ -167,5 +192,37 @@ function shapeDimensions(ctx: EngineContext, layout: Layout): void {
   } else if (shape.kind === 'arch' && Number.isFinite(shape.rise) && shape.rise > 0) {
     const rise = Math.min(shape.rise, H)
     layout.dimensions.push({ axis: 'y', from: 0, to: mm1(rise), value: mm1(rise), level: 1 })
+  } else if (shape.kind === 'gable' && Number.isFinite(shape.shoulderHeight) && shape.shoulderHeight > 0 && shape.shoulderHeight < H - 0.05) {
+    // Alto de los hombros (lados verticales), como cota informativa.
+    layout.dimensions.push({ axis: 'y', from: mm1(H - shape.shoulderHeight), to: mm1(H), value: mm1(shape.shoulderHeight), level: 1 })
+  } else if (shape.kind === 'octagon') {
+    const c = typeof shape.chamfer === 'number' && Number.isFinite(shape.chamfer) && shape.chamfer > 0 ? shape.chamfer : regularChamfer(ctx.W, H)
+    layout.dimensions.push({ axis: 'x', from: 0, to: mm1(c), value: mm1(c), level: 1 })
   }
+}
+
+/** Persiana, mosquitero y alféizar para el dibujo (medidas de dibujo, ver defaults). */
+function attachments(ctx: EngineContext, layout: Layout): void {
+  const { W, H, extras } = ctx
+  const out: NonNullable<Layout['attachments']> = {}
+  if (extras.rollerShutter) {
+    const box = extras.rollerShutter.boxHeight
+    const g = Math.min(ROLLER_SHUTTER_GUIDE_MM, W / 4)
+    out.rollerShutter = {
+      type: extras.rollerShutter.type,
+      operation: extras.rollerShutter.operation,
+      box: { x: 0, y: mm1(-box), w: mm1(W), h: mm1(box) },
+      guides: [
+        { x: 0, y: 0, w: mm1(g), h: mm1(H) },
+        { x: mm1(W - g), y: 0, w: mm1(g), h: mm1(H) },
+      ],
+    }
+  }
+  if (extras.insectScreen) out.insectScreen = { type: extras.insectScreen.type }
+  // El vierteaguas de la línea se ve igual que un alféizar.
+  if (extras.sill || ctx.design.extras?.frameAddons?.some((a) => a.kind === 'sill_profile')) {
+    const { overhang, height } = SILL_DRAWING_MM
+    out.sill = { rect: { x: -overhang, y: mm1(H), w: mm1(W + 2 * overhang), h: height } }
+  }
+  if (Object.keys(out).length > 0) layout.attachments = out
 }

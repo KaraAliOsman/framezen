@@ -23,13 +23,38 @@ test('enviar, versión B, portal sin sesión: pedir cambios, PDF y aceptar', asy
   await page.getByRole('button', { name: 'Enviar al cliente' }).click()
   const dialog = page.getByRole('dialog', { name: 'Enviar al cliente' })
   await expect(dialog).toBeVisible()
+
+  // El formato predeterminado es PDF: «Preparar PDF» genera y descarga el archivo.
+  await expect(dialog.getByRole('radio', { name: 'PDF' })).toBeChecked()
+  const pdfDownload = page.waitForEvent('download', { timeout: 60_000 })
+  await dialog.getByRole('button', { name: 'Preparar PDF' }).click()
+  const sentPdf = await pdfDownload
+  expect(sentPdf.suggestedFilename()).toMatch(/\.pdf$/)
+  await expect(dialog.getByText(/PDF descargado/)).toBeVisible()
+  // Volver a bajar el archivo desde el mismo diálogo.
+  const pdfAgain = page.waitForEvent('download', { timeout: 60_000 })
+  await dialog.getByRole('button', { name: 'Descargar de nuevo' }).click()
+  expect((await pdfAgain).suggestedFilename()).toMatch(/\.pdf$/)
+  await shot(page, 'portal-00-enviar-pdf')
+  await dialog.getByRole('button', { name: 'Listo' }).click()
+
+  // «Descargar PDF» también está en «Más acciones» del editor.
+  const menuPdf = page.waitForEvent('download', { timeout: 60_000 })
+  await page.getByRole('button', { name: 'Más acciones' }).click()
+  await page.getByRole('menuitem', { name: 'Descargar PDF' }).click()
+  expect((await menuPdf).suggestedFilename()).toMatch(/\.pdf$/)
+
+  // Otro formato: «Enlace web» crea el enlace del portal.
+  await page.getByRole('button', { name: 'Enviar al cliente' }).click()
+  await dialog.getByRole('radio', { name: 'Enlace web' }).click()
+  await dialog.getByRole('button', { name: 'Crear enlace' }).click()
   const linkInput = dialog.getByLabel('Enlace del cliente')
   await expect(linkInput).toHaveValue(/\/c\/[\w-]+/, { timeout: 20_000 })
   const linkA = await linkInput.inputValue()
-  await dialog.getByRole('button', { name: 'Copiar' }).click()
+  await dialog.getByRole('button', { name: 'Copiar', exact: true }).click()
   await expect(dialog.getByRole('button', { name: 'Copiado' })).toBeVisible()
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(linkA)
-  await expect(dialog.getByLabel('Mensaje para el cliente')).toHaveValue(/Casa Soto · Temuco/)
+  await expect(dialog).toContainText(/Casa Soto · Temuco/)
   await shot(page, 'portal-01-enviar')
   await dialog.getByRole('button', { name: 'Listo' }).click()
   await expect(page.getByText(/Enviada/).first()).toBeVisible()
@@ -44,7 +69,9 @@ test('enviar, versión B, portal sin sesión: pedir cambios, PDF y aceptar', asy
   const totalB = await footerTotal(page)
   await waitSaved(page)
   await page.getByRole('button', { name: 'Enviar al cliente' }).click()
+  await dialog.getByRole('radio', { name: 'Enlace web' }).click()
   await expect(dialog).toContainText(/versión B/)
+  await dialog.getByRole('button', { name: /Enviar versión B/ }).click()
   const linkB = await dialog.getByLabel('Enlace del cliente').inputValue()
   expect(new URL(linkB).pathname).toBe(new URL(linkA).pathname)
   await dialog.getByRole('button', { name: 'Listo' }).click()
@@ -93,7 +120,7 @@ test('enviar, versión B, portal sin sesión: pedir cambios, PDF y aceptar', asy
 
   // PDF desde el portal.
   const dl = portal.waitForEvent('download', { timeout: 60_000 }).catch(() => null)
-  await portal.getByRole('button', { name: 'Descargar PDF' }).click()
+  await portal.getByRole('button', { name: 'Descargar PDF' }).first().click()
   const pdf = await dl
   expect(pdf, 'el cliente puede descargar el PDF').not.toBeNull()
   if (pdf) expect(pdf.suggestedFilename()).toMatch(/\.pdf$/)
@@ -103,6 +130,13 @@ test('enviar, versión B, portal sin sesión: pedir cambios, PDF y aceptar', asy
   const accept = portal.getByRole('dialog', { name: 'Aceptar cotización' })
   await accept.getByLabel('Tu nombre').fill('Pedro Soto')
   await accept.getByLabel(/RUT/).fill('12.345.678-9') // dígito verificador dudoso: solo aviso
+  // Sin marcar la casilla de revisión no se acepta: avisa y no llama a la API.
+  const accepted = portal.waitForResponse((r) => r.url().includes('/accept') && r.request().method() === 'POST', { timeout: 1500 }).catch(() => null)
+  await accept.getByRole('button', { name: 'Acepto la cotización' }).click()
+  await expect(accept.getByText('Marca la casilla para confirmar que lo revisaste.')).toBeVisible()
+  expect(await accepted, 'sin la casilla no se envía la aceptación').toBeNull()
+  await accept.getByRole('checkbox', { name: /Revisé las medidas/ }).check()
+  await expect(accept.getByText('Marca la casilla para confirmar que lo revisaste.')).toHaveCount(0)
   await accept.getByRole('button', { name: 'Acepto la cotización' }).click()
   await expect(portal.getByRole('dialog', { name: 'Cotización aceptada' })).toBeVisible()
   await shot(portal, 'portal-03-aceptada')
@@ -121,6 +155,9 @@ test('enviar, versión B, portal sin sesión: pedir cambios, PDF y aceptar', asy
   expect(q.status).toBe('accepted')
   expect(q.acceptedBy?.name).toBe('Pedro Soto')
   await page.goto('/inicio')
-  await expect(page.getByText(/Pedro Soto/).first()).toBeVisible()
+  // Inicio muestra la tarea de aceptación («Pedro aceptó la cotización»); aceptar cierra el aviso «pidió cambios».
+  await expect(page.getByRole('heading', { name: /Pedro aceptó la cotización/ })).toBeVisible()
+  await expect(page.getByText('Aceptada', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText(/pidió cambios/)).toHaveCount(0)
   await shot(page, 'portal-04-inicio-tras-aceptar')
 })

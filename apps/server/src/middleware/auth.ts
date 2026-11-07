@@ -1,18 +1,26 @@
 import { createMiddleware } from 'hono/factory'
 import { eq } from 'drizzle-orm'
-import { planFeatures } from '@framezen/shared'
+import { planFeatures } from '@dekopen/shared'
 import type { AppDeps, AppEnv } from '../context'
 import { subscriptions } from '../db/schema'
 import { forbidden, unauthorized } from '../lib/errors'
+import { resolveLocale } from '../lib/i18n'
 import { assertWritable } from '../services/billing/guard'
 import { resolveSession } from '../services/session'
 
-/** Exige sesión válida y deja `auth` (usuario, organización, rol) en el contexto. */
+/**
+ * Exige sesión válida y deja `auth` (usuario, organización, rol) en el contexto, y el idioma de la
+ * petición ya con la sesión (user.locale ?? Accept-Language ?? org.locale ?? 'es'). Si otra capa ya
+ * resolvió la sesión en esta petición, no la vuelve a consultar.
+ */
 export const requireAuth = (deps: AppDeps) =>
   createMiddleware<AppEnv>(async (c, next) => {
-    const auth = await resolveSession(c, deps)
-    if (!auth) throw unauthorized()
-    c.set('auth', auth)
+    if (!c.get('auth')) {
+      const auth = await resolveSession(c, deps)
+      if (!auth) throw unauthorized()
+      c.set('auth', auth)
+      c.set('locale', resolveLocale({ user: auth.user.locale, header: c.req.header('accept-language'), org: auth.org.locale }))
+    }
     await next()
   })
 

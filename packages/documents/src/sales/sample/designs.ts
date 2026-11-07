@@ -1,4 +1,4 @@
-import type { DesignNode, LeafNode, Opening, Shape, SlidingPanel, TypologyId, WindowDesign } from '@framezen/engine'
+import type { DesignNode, LeafNode, Opening, Shape, SlidingPanel, TypologyId, WindowDesign } from '@dekopen/engine'
 
 /**
  * Diseños de ejemplo para la galería de plantillas y las pruebas. No reemplazan a

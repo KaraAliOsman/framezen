@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { Catalog, Profile } from '@framezen/engine'
-import type { Quote } from '@framezen/shared'
+import type { Catalog, Profile } from '@dekopen/engine'
+import type { Quote } from '@dekopen/shared'
 import { item, sampleDesign, signup, startServer, type TestServer } from './helpers'
 
 let server: TestServer

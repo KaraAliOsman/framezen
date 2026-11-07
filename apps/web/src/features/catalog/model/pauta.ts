@@ -2,8 +2,11 @@
  * Pauta de corte explicada para personas: qué es cada valor, a qué parte de la ventana afecta y
  * un ejemplo con medidas calculadas por el motor real (nunca fórmulas propias de la interfaz).
  */
-import { computeBom, createDesign, type Catalog, type CutPiece, type Line, type Pauta } from '@framezen/engine'
+import { computeBom, createDesign, type Catalog, type CutPiece, type Line, type Pauta } from '@dekopen/engine'
+import type { Locale } from '@dekopen/shared'
+import { translate } from '../../../lib/i18n'
 import { patchLineInCatalog, type LinePatch } from '../api'
+import es from '../i18n/es'
 
 export type PautaKey = 'weld' | 'frameDeduction' | 'sashOverlap' | 'sashWidth' | 'sashDeduction' | 'glassGap' | 'mullionDeduction'
 export type ReinforcementKey = 'frame' | 'sash' | 'mullion'
@@ -17,23 +20,27 @@ export interface PautaFieldCopy {
   rule: string
 }
 
-export const PAUTA_FIELDS: PautaFieldCopy[] = [
-  { key: 'frameDeduction', label: 'Descuento de marco', help: 'De la medida exterior a la luz, por lado.', rule: 'luz = medida − 2 × descuento' },
-  { key: 'sashOverlap', label: 'Traslapo de hoja', help: 'Cuánto monta la hoja sobre la luz, por lado.', rule: 'hoja = luz + 2 × traslapo' },
-  { key: 'sashWidth', label: 'Ancho de hoja', help: 'Cara vista de la hoja. En correderas define el cruce entre hojas.', rule: 'cara visible de la hoja' },
-  { key: 'sashDeduction', label: 'Descuento de hoja', help: 'De la hoja al vidrio, por lado.', rule: 'vidrio = hoja − 2 × (descuento + holgura)' },
-  { key: 'glassGap', label: 'Holgura de vidrio', help: 'Juego que se deja al vidrio, por lado.', rule: 'se resta en cada lado del vidrio' },
-  { key: 'weld', label: 'Soldadura', help: 'Lo que se come la soldadora en cada extremo del perfil.', rule: 'corte = medida + 2 × soldadura' },
-  { key: 'mullionDeduction', label: 'Descuento de travesaño', help: 'Desde el eje del travesaño hasta la luz, por lado.', rule: 'luz junto al travesaño = eje − descuento' },
-]
+/** Valores de la pauta en el orden en que se editan. */
+export const PAUTA_KEYS: readonly PautaKey[] = ['frameDeduction', 'sashOverlap', 'sashWidth', 'sashDeduction', 'glassGap', 'weld', 'mullionDeduction']
+export const REINFORCEMENT_KEYS: readonly ReinforcementKey[] = ['frame', 'sash', 'mullion']
 
-export const REINFORCEMENT_FIELDS: { key: ReinforcementKey; label: string; help: string }[] = [
-  { key: 'frame', label: 'Refuerzo de marco', help: 'El acero del marco mide el corte menos este valor.' },
-  { key: 'sash', label: 'Refuerzo de hoja', help: 'El acero de la hoja mide el corte menos este valor.' },
-  { key: 'mullion', label: 'Refuerzo de travesaño', help: 'El acero del travesaño mide su largo menos este valor.' },
-]
+/** Campos de la pauta con su explicación, en el idioma de la interfaz (o el indicado). */
+export function pautaFields(locale?: Locale): PautaFieldCopy[] {
+  return PAUTA_KEYS.map((key) => ({
+    key,
+    label: translate(es, `pauta.field.${key}.label`, undefined, locale),
+    help: translate(es, `pauta.field.${key}.help`, undefined, locale),
+    rule: translate(es, `pauta.field.${key}.rule`, undefined, locale),
+  }))
+}
 
-export const PAUTA_FIELD_BY_KEY = Object.fromEntries(PAUTA_FIELDS.map((f) => [f.key, f])) as Record<PautaKey, PautaFieldCopy>
+export function reinforcementFields(locale?: Locale): { key: ReinforcementKey; label: string; help: string }[] {
+  return REINFORCEMENT_KEYS.map((key) => ({
+    key,
+    label: translate(es, `pauta.steel.${key}.label`, undefined, locale),
+    help: translate(es, `pauta.steel.${key}.help`, undefined, locale),
+  }))
+}
 
 export interface PautaMeasure {
   id: string
@@ -57,8 +64,14 @@ export interface PautaExample {
 
 const findCut = (cuts: CutPiece[], test: (c: CutPiece) => boolean) => cuts.find(test)
 
+type MeasureId = keyof (typeof es)['pauta']['measure']
+
 /** Medidas de una ventana de ejemplo con la pauta indicada, calculadas por `computeBom`. */
-export function pautaExample(catalog: Catalog, line: Line, patch: LinePatch = {}): PautaExample | null {
+export function pautaExample(catalog: Catalog, line: Line, patch: LinePatch = {}, locale?: Locale): PautaExample | null {
+  const copy = (id: MeasureId) => ({
+    label: translate(es, `pauta.measure.${id}.label`, undefined, locale),
+    rule: translate(es, `pauta.measure.${id}.rule`, undefined, locale),
+  })
   const cat = patchLineInCatalog(catalog, line.id, patch)
   const colorId = line.colorIds[0] ?? catalog.colors[0]?.id ?? 'blanco'
   const glassId = catalog.glass.find((g) => g.kind === 'dvh')?.id ?? catalog.glass[0]?.id ?? 'vidrio'
@@ -72,11 +85,11 @@ export function pautaExample(catalog: Catalog, line: Line, patch: LinePatch = {}
       const sashW = findCut(bom.cuts, (c) => c.kind === 'profile' && c.role === 'sliding_sash' && (c.side === 'top' || c.side === 'bottom'))
       const sashH = findCut(bom.cuts, (c) => c.kind === 'profile' && c.role === 'sliding_sash' && (c.side === 'left' || c.side === 'right'))
       const glass = bom.glass[0]
-      if (frame) measures.push({ id: 'frame', label: 'Marco (corte)', value: frame.length, rule: 'medida + 2 × soldadura', uses: ['weld'] })
-      if (sashW) measures.push({ id: 'sash-w', label: 'Hoja, ancho (corte)', value: sashW.length, rule: '(luz + 2 × traslapo + ancho de hoja) ÷ 2', uses: ['frameDeduction', 'sashOverlap', 'sashWidth', 'weld'] })
-      if (sashH) measures.push({ id: 'sash-h', label: 'Hoja, alto (corte)', value: sashH.length, rule: 'luz + 2 × traslapo', uses: ['frameDeduction', 'sashOverlap', 'weld'] })
-      if (glass) measures.push({ id: 'glass', label: 'Vidrio de hoja', value: glass.width, size: { width: glass.width, height: glass.height }, rule: 'hoja − 2 × (descuento + holgura)', uses: ['sashDeduction', 'glassGap'] })
-      return { title: 'Corredera 2 hojas', width, height, measures }
+      if (frame) measures.push({ id: 'frame', ...copy('frame'), value: frame.length, uses: ['weld'] })
+      if (sashW) measures.push({ id: 'sash-w', ...copy('sashW'), value: sashW.length, uses: ['frameDeduction', 'sashOverlap', 'sashWidth', 'weld'] })
+      if (sashH) measures.push({ id: 'sash-h', ...copy('sashH'), value: sashH.length, uses: ['frameDeduction', 'sashOverlap', 'weld'] })
+      if (glass) measures.push({ id: 'glass', ...copy('slidingGlass'), value: glass.width, size: { width: glass.width, height: glass.height }, uses: ['sashDeduction', 'glassGap'] })
+      return { title: translate(es, 'pauta.titleSliding', undefined, locale), width, height, measures }
     }
     const width = 1200
     const height = 1200
@@ -89,14 +102,14 @@ export function pautaExample(catalog: Catalog, line: Line, patch: LinePatch = {}
     const sashSteel = findCut(bom.cuts, (c) => c.kind === 'reinforcement' && c.nodeId !== 'frame')
     const glass = bom.glass[0]
     const fixedGlass = fixedBom.glass[0]
-    if (frame) measures.push({ id: 'frame', label: 'Marco (corte)', value: frame.length, rule: 'medida + 2 × soldadura', uses: ['weld'] })
-    if (fixedGlass) measures.push({ id: 'fixed-glass', label: 'Vidrio de paño fijo', value: fixedGlass.width, size: { width: fixedGlass.width, height: fixedGlass.height }, rule: 'luz − 2 × holgura', uses: ['frameDeduction', 'glassGap'] })
-    if (sash) measures.push({ id: 'sash', label: 'Hoja (corte)', value: sash.length, rule: 'luz + 2 × traslapo + 2 × soldadura', uses: ['frameDeduction', 'sashOverlap', 'weld'] })
-    if (glass) measures.push({ id: 'glass', label: 'Vidrio de hoja', value: glass.width, size: { width: glass.width, height: glass.height }, rule: 'hoja − 2 × (descuento + holgura)', uses: ['frameDeduction', 'sashOverlap', 'sashDeduction', 'glassGap'] })
-    if (bead) measures.push({ id: 'bead', label: 'Junquillo de hoja', value: bead.length, rule: 'hoja − descuento de junquillo', uses: ['sashDeduction'] })
-    if (frameSteel) measures.push({ id: 'frame-steel', label: 'Refuerzo de marco', value: frameSteel.length, rule: 'corte del marco − refuerzo', uses: ['reinforcement.frame'] })
-    if (sashSteel) measures.push({ id: 'sash-steel', label: 'Refuerzo de hoja', value: sashSteel.length, rule: 'corte de la hoja − refuerzo', uses: ['reinforcement.sash'] })
-    return { title: 'Ventana de abatir', width, height, measures }
+    if (frame) measures.push({ id: 'frame', ...copy('frame'), value: frame.length, uses: ['weld'] })
+    if (fixedGlass) measures.push({ id: 'fixed-glass', ...copy('fixedGlass'), value: fixedGlass.width, size: { width: fixedGlass.width, height: fixedGlass.height }, uses: ['frameDeduction', 'glassGap'] })
+    if (sash) measures.push({ id: 'sash', ...copy('sash'), value: sash.length, uses: ['frameDeduction', 'sashOverlap', 'weld'] })
+    if (glass) measures.push({ id: 'glass', ...copy('glass'), value: glass.width, size: { width: glass.width, height: glass.height }, uses: ['frameDeduction', 'sashOverlap', 'sashDeduction', 'glassGap'] })
+    if (bead) measures.push({ id: 'bead', ...copy('bead'), value: bead.length, uses: ['sashDeduction'] })
+    if (frameSteel) measures.push({ id: 'frame-steel', ...copy('frameSteel'), value: frameSteel.length, uses: ['reinforcement.frame'] })
+    if (sashSteel) measures.push({ id: 'sash-steel', ...copy('sashSteel'), value: sashSteel.length, uses: ['reinforcement.sash'] })
+    return { title: translate(es, 'pauta.titleCasement', undefined, locale), width, height, measures }
   } catch {
     return null
   }
@@ -105,7 +118,7 @@ export function pautaExample(catalog: Catalog, line: Line, patch: LinePatch = {}
 /** Una pauta parcial (puertas, hoja interior) mezclada sobre la base, solo con las claves presentes. */
 export function presentKeys(p: Partial<Pauta> | undefined): PautaKey[] {
   if (!p) return []
-  return PAUTA_FIELDS.map((f) => f.key).filter((k) => typeof p[k] === 'number')
+  return PAUTA_KEYS.filter((k) => typeof p[k] === 'number')
 }
 
 /** Aplica un valor a una pauta (incluye los descuentos de refuerzo anidados). */

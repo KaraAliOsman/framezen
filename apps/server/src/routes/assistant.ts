@@ -1,10 +1,10 @@
 /**
  * POST /api/assistant/chat — Marco (AssistantRequest → AssistantResponse, contrato extendido en
- * @framezen/shared/assistant) y GET /api/assistant/status (modo y saldo). Exige sesión (se monta con `authed` en app.ts).
+ * @dekopen/shared/assistant) y GET /api/assistant/status (modo y saldo). Exige sesión (se monta con `authed` en app.ts).
  */
 import { Hono } from 'hono'
 import { z } from 'zod'
-import type { AssistantChatRequest } from '@framezen/shared'
+import type { AssistantChatRequest } from '@dekopen/shared'
 import type { AppDeps, AppEnv } from '../context'
 import { HttpError } from '../lib/errors'
 import { readBody } from '../lib/http'
@@ -54,7 +54,7 @@ export function assistantRoutes(deps: AppDeps, options: AssistantRouteOptions = 
 
   const aiConfig = () => (options.ai ?? (() => aiConfigFromEnv(process.env)))()
 
-  app.get('/status', async (c) => c.json(await assistantStatus(deps, c.get('auth'), aiConfig())))
+  app.get('/status', async (c) => c.json(await assistantStatus(deps, c.get('auth'), aiConfig(), options.fetch ? { fetch: options.fetch } : {})))
 
   app.post('/chat', async (c) => {
     const auth = c.get('auth')

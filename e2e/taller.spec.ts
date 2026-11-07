@@ -21,8 +21,11 @@ test('pasar a taller, pestañas de la OT, avance y PDF de taller', async ({ page
   await page.locator('textarea[aria-label="Nombre de la obra"]').fill('Obra taller · Los Ángeles')
   await waitSaved(page)
 
-  // Directo desde borrador (nada obligatorio): crea la OT y abre su página.
-  await page.getByRole('button', { name: 'Pasar a taller' }).click()
+  // Directo desde borrador (nada obligatorio): la primaria del borrador es «Enviar al cliente», así que
+  // «Pasar a taller» está en «Más acciones». Crea la OT y abre su página.
+  await expect(page.getByRole('button', { name: 'Pasar a taller' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Más acciones' }).click()
+  await page.getByRole('menuitem', { name: 'Pasar a taller' }).click()
   await page.waitForURL(/\/taller\/[^/]+$/, { timeout: 20_000 })
   await expect(page.getByText(/Creamos la OT N° \d+/)).toBeVisible()
   const orderId = new URL(page.url()).pathname.split('/').pop()!

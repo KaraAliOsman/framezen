@@ -11,20 +11,165 @@ import {
   computeLayout,
   designName,
   evaluateQuote,
+  includedLineIds,
+  matchTypology,
   safeLayout,
+  type AssemblyKind,
+  type Bom,
   type Catalog,
+  type Color,
   type CutSettings,
   type DesignNode,
+  type GlassKind,
   type Id,
   type Layout,
+  type LayoutAssemblyPlan,
+  type Material,
   type PricingSettings,
   type QuoteEvaluation,
+  type QuoteLineRole,
   type QuoteTotals,
   type WindowDesign,
-} from '@framezen/engine'
-import type { Client, DocumentPrefs, Org, Quote, QuoteTemplateId } from '@framezen/shared'
+  type WindowExtras,
+} from '@dekopen/engine'
+import {
+  cleanSeededPrefs,
+  isTemplateId,
+  migrateQuoteDocOverrides,
+  type Client,
+  type DocTemplate,
+  type DocumentPrefs,
+  type Locale,
+  type Org,
+  type Quote,
+  type QuoteDocOverridesV2,
+  type QuoteTemplateId,
+} from '@dekopen/shared'
+import { pdfPaymentDetails, type PaymentSettings } from '@dekopen/shared'
 import type { DocClient, DocOrg } from '../base/types'
 import type { QuoteDocData, QuoteDocItem } from '../sales/types'
+
+// ── Datos v5 (aditivos: un QuoteDocData v4 sigue siendo válido) ─────────────────
+
+/** Color tal como lo necesita el documento (nombre del catálogo, sin traducir). */
+export interface QuoteDocColor {
+  id: string
+  name: string
+  hex: string
+  code?: string
+  texture?: Color['texture']
+}
+
+export interface QuoteDocGlass {
+  id: string
+  name: string
+  kind: GlassKind
+  thickness?: number
+  composition?: string
+}
+
+export interface QuoteDocLine {
+  id: string
+  /** «PVC Proline PRO6004»: el nombre completo (taller, listas internas). */
+  name: string
+  /** Solo la línea: «PRO6004». Es lo que dice el documento: la marca va con su logo. */
+  series?: string
+  brand?: string
+  brandId?: string
+  material: Material
+  depth?: number
+  chambers?: number
+  description?: string
+}
+
+/** Ventana del documento con lo que necesitan las plantillas v5 (todo opcional). */
+export interface QuoteDocItemV5 extends QuoteDocItem {
+  /** Tipología reconocida por el motor (para nombrarla en el idioma del documento). */
+  typologyId?: string
+  colorOut?: QuoteDocColor
+  /** Solo si difiere del exterior (bicolor). */
+  colorIn?: QuoteDocColor
+  /** Vidrios distintos de la ventana (el primero es el principal). */
+  glasses?: QuoteDocGlass[]
+  line?: QuoteDocLine
+  extras?: WindowExtras
+  /** Herrajes del despiece (nombres del catálogo, sin repetir). */
+  hardware?: string[]
+  /** Piso o nivel. */
+  floor?: string
+  /** Medida de vano cargada por el taller (mm). */
+  rough?: { width?: number; height?: number }
+  /** Base (sin dato), opcional o alternativa. */
+  role?: QuoteLineRole
+  altGroup?: string
+  /** Cuenta en el total. Solo se informa cuando no es una línea base. */
+  included?: boolean
+  /** Descuento de la línea en %. `unitPrice` queda de lista; `total` ya viene descontado. */
+  lineDiscountPct?: number
+  /**
+   * Le falta precio (ver `ItemPrice.pending`): `all` = la ventana entera, fuera del total; `partial` =
+   * en un conjunto, solo `pendingParts`. Nunca se imprime como $0 ni como incluida.
+   */
+  pending?: 'all' | 'partial'
+  /** Unidades y uniones de un conjunto que faltan por precio. */
+  pendingParts?: { kind: 'unit' | 'joint'; label: string }[]
+  /** Conjunto de ventanas (acopladas, esquina, bay, bow). */
+  assembly?: QuoteDocAssembly
+}
+
+/** Conjunto tal como lo muestra el documento: sus unidades, sus uniones y su planta. */
+export interface QuoteDocAssembly {
+  kind: AssemblyKind
+  units: { id: string; width: number; height: number; typologyId?: string; design: WindowDesign }[]
+  joints: { label: string; angle: number; kind: 'coupler' | 'corner_post' | 'variable_post'; missing: boolean }[]
+  plan?: LayoutAssemblyPlan
+}
+
+/** Cómo se agrupan las ventanas. */
+export type QuoteDocGroupBy = 'room' | 'floor' | 'line'
+
+/** Grupo de ventanas (recinto, piso o línea) con su subtotal ya calculado desde las cifras del motor. */
+export interface QuoteDocGroup {
+  key: string
+  /** Nombre tal como lo escribió el taller ('' = sin recinto o sin piso). */
+  label: string
+  refs: string[]
+  /** Suma de los totales netos de sus ventanas (cifras del motor, antes de descuento e impuesto). */
+  subtotal: number
+  units: number
+}
+
+/** Contexto v5 del documento: idioma, moneda, plantilla, ajustes y recursos. */
+export interface QuoteDocDocument {
+  /** Idioma del documento ya resuelto (cotización → organización → español). */
+  locale?: Locale
+  /** Moneda ISO 4217 de la organización (CLP por defecto). */
+  currency?: string
+  /** Rótulo del impuesto («IVA», «VAT»). */
+  taxLabel?: string
+  /** Tasa del impuesto en % (la de `pricing.ivaPct`). */
+  taxRate?: number
+  /** `OrgSettings.documents` (capa de organización). */
+  orgPrefs?: Partial<DocumentPrefs>
+  /** `Quote.documentOverrides` crudo (v1 o v2). */
+  overrides?: unknown
+  /** Plantilla elegida ya cargada (diseño predefinido o plantilla de la organización). */
+  template?: DocTemplate
+  /** Imágenes subidas que usa la plantilla (id de recurso → data URL). */
+  assets?: Record<string, string>
+  /** Texturas subidas que usan los colores (id de recurso → data URL). */
+  textures?: Record<string, string>
+  /** Ventanas agrupadas por recinto, con subtotales del motor. */
+  groups?: QuoteDocGroup[]
+  /** Ventanas agrupadas por piso y por línea (`groups` es por recinto). */
+  groupsByFloor?: QuoteDocGroup[]
+  groupsByLine?: QuoteDocGroup[]
+}
+
+export interface QuoteDocDataV5 extends QuoteDocData {
+  items: QuoteDocItemV5[]
+  document?: QuoteDocDocument
+}
 
 /**
  * Textos propios de una cotización. Además de cualquier preferencia del documento, admite
@@ -34,9 +179,17 @@ export type QuoteDocOverrides = Partial<DocumentPrefs> & { notes?: string }
 
 /** Ajustes mínimos de la organización que necesita el documento. */
 export interface QuoteDocSettings {
+  /** Datos de pago del taller: solo se imprimen si eligió `showInPdf`. */
+  payments?: PaymentSettings
   pricing?: Partial<PricingSettings>
   cut?: Partial<CutSettings>
   documents?: Partial<DocumentPrefs>
+  /** Idioma de documentos de la organización (`OrgSettings.locale`). */
+  locale?: Locale
+  /** Moneda de la organización (`OrgSettings.currency`). */
+  currency?: string
+  /** Rótulo del impuesto (`OrgSettings.taxLabel`). */
+  taxLabel?: string
 }
 
 export interface BuildQuoteDocInput {
@@ -54,9 +207,16 @@ export interface BuildQuoteDocInput {
   evaluation?: QuoteEvaluation
   /** Geometría para el dibujo (por defecto `computeLayout` del motor, a prueba de fallos). */
   layout?: (design: WindowDesign, catalog: Catalog) => Layout
+  /** Plantilla ya cargada (p. ej. la plantilla propia de la organización elegida). */
+  template?: DocTemplate
+  /** Imágenes de la plantilla (id de recurso → data URL), resueltas dentro de la organización. */
+  assets?: Record<string, string>
+  /** Texturas subidas de los colores (id de recurso → data URL). */
+  textures?: Record<string, string>
+  /** Fuerza el idioma del documento (si no: el de la cotización, luego el de la organización). */
+  locale?: Locale
 }
 
-const TEMPLATES: readonly QuoteTemplateId[] = ['esencial', 'galeria', 'compacta', 'editorial']
 
 /**
  * Preferencias neutras para completar ajustes parciales. Los textos por defecto reales los
@@ -77,7 +237,7 @@ export const QUOTE_DOC_FALLBACK_PREFS: DocumentPrefs = Object.freeze({
   conditions: '',
   paymentTerms: '',
   warranty: '',
-  validityDays: 15,
+  validityDays: 0,
   leadTimeText: '',
 }) as DocumentPrefs
 
@@ -119,15 +279,15 @@ export function parseQuoteValidityDays(value: unknown): number | null {
  * Combina las preferencias de la organización con las de la cotización. Ignora valores vacíos
  * o de tipo incorrecto (los datos guardados pueden venir de versiones anteriores).
  */
-export function mergeQuoteDocPrefs(base?: Partial<DocumentPrefs> | null, overrides?: QuoteDocOverrides | null): DocumentPrefs {
+export function mergeQuoteDocPrefs(base?: Partial<DocumentPrefs> | null, overrides?: QuoteDocOverrides | QuoteDocOverridesV2 | Record<string, unknown> | null): DocumentPrefs {
   const out: DocumentPrefs = { ...QUOTE_DOC_FALLBACK_PREFS }
-  for (const source of [base, overrides]) {
-    if (!isRecord(source)) continue
-    const s = source as Record<string, unknown>
-    if (typeof s.quoteTemplate === 'string' && (TEMPLATES as readonly string[]).includes(s.quoteTemplate)) {
-      out.quoteTemplate = s.quoteTemplate as QuoteTemplateId
-    }
-    if (s.catalogTemplate === 'vitrina' || s.catalogTemplate === 'ficha' || s.catalogTemplate === 'lookbook') out.catalogTemplate = s.catalogTemplate
+  for (const raw of [base ? cleanSeededPrefs(base) : base, overrides] as unknown[]) {
+    if (!isRecord(raw)) continue
+    // Ajustes v2 (`{ v: 2, texts, templateId… }`) se leen como sus equivalentes v4.
+    const s = (raw.v === 2 ? v2AsPrefs(raw) : raw) as Record<string, unknown>
+    // Plantilla: diseño predefinido, id v4 o plantilla propia (id validado; se resuelve al dibujar).
+    if (isTemplateId(s.quoteTemplate)) out.quoteTemplate = s.quoteTemplate as QuoteTemplateId
+    if (isTemplateId(s.catalogTemplate)) out.catalogTemplate = s.catalogTemplate as DocumentPrefs['catalogTemplate']
     if (s.font === 'instrument' || s.font === 'serif' || s.font === 'grotesk') out.font = s.font
     if (s.paper === 'letter' || s.paper === 'a4') out.paper = s.paper
     for (const key of BOOLEAN_KEYS) if (typeof s[key] === 'boolean') out[key] = s[key] as boolean
@@ -142,6 +302,27 @@ export function mergeQuoteDocPrefs(base?: Partial<DocumentPrefs> | null, overrid
   // El acento vacío vuelve al color de la organización.
   if (!out.accent) delete out.accent
   for (const key of ['signatureName', 'footer'] as const) if (!out[key]) delete out[key]
+  return out
+}
+
+/** Ajustes por cotización v2 → claves v4 equivalentes (textos, validez, plantilla, papel, acento, interruptores). */
+function v2AsPrefs(raw: Record<string, unknown>): Record<string, unknown> {
+  const { overrides } = migrateQuoteDocOverrides(raw)
+  const out: Record<string, unknown> = { ...(overrides.texts ?? {}) }
+  if (overrides.validityDays !== undefined) out.validityDays = overrides.validityDays
+  if (overrides.templateId) out.quoteTemplate = overrides.templateId
+  if (overrides.page?.size) out.paper = overrides.page.size === 'A4' ? 'a4' : 'letter'
+  const accent = overrides.theme?.palette?.accent
+  if (accent) out.accent = accent
+  const d = overrides.itemDisplay
+  if (d) {
+    if (d.showUnitPrices !== undefined) out.showUnitPrice = d.showUnitPrices
+    if (d.showArea !== undefined) out.showArea = d.showArea
+    if (d.showGlass !== undefined) out.showGlass = d.showGlass
+    if (d.showSystem !== undefined) out.showLine = d.showSystem
+    if (d.showSwatches !== undefined) out.showColorSwatch = d.showSwatches
+    if (d.drawingView !== undefined) out.showExteriorView = d.drawingView !== 'interior'
+  }
   return out
 }
 
@@ -250,15 +431,123 @@ function defaultLayout(design: WindowDesign, catalog: Catalog): Layout {
 
 /** Nota visible para el cliente (vive en documentOverrides.notes). */
 export function quoteClientNotes(quote: Pick<Quote, 'documentOverrides'>): string | undefined {
-  const overrides = quote.documentOverrides as QuoteDocOverrides | undefined
-  return trimmed(overrides?.notes)
+  const raw = quote.documentOverrides as Record<string, unknown> | undefined
+  if (isRecord(raw) && raw.v === 2) return trimmed(migrateQuoteDocOverrides(raw).overrides.texts?.clientNote)
+  return trimmed((raw as QuoteDocOverrides | undefined)?.notes)
+}
+
+/** Color del catálogo para el documento (o nada si el id no existe). */
+export function quoteDocColorOf(id: Id | undefined, catalog: Catalog): QuoteDocColor | undefined {
+  if (!id) return undefined
+  const color = catalog.colors?.find((c) => c.id === id)
+  if (!color) return undefined
+  const out: QuoteDocColor = { id: color.id, name: color.name?.trim() || color.id, hex: color.hex }
+  if (color.code) out.code = color.code
+  if (color.texture) out.texture = color.texture
+  return out
+}
+
+/** Vidrios distintos de la ventana con su composición (el principal primero). */
+export function quoteDocGlasses(design: WindowDesign, catalog: Catalog): QuoteDocGlass[] {
+  const ids = design.root ? glassIdsOf(design.root, design.glassId, []) : [design.glassId]
+  const unique = [...new Set(ids.length ? ids : [design.glassId])]
+  const out: QuoteDocGlass[] = []
+  for (const id of unique) {
+    const glass = catalog.glass?.find((g) => g.id === id)
+    if (!glass) continue
+    const doc: QuoteDocGlass = { id: glass.id, name: glass.name?.trim() || glass.id, kind: glass.kind }
+    if (Number.isFinite(glass.thickness) && glass.thickness > 0) doc.thickness = glass.thickness
+    if (glass.composition?.trim()) doc.composition = glass.composition.trim()
+    out.push(doc)
+  }
+  return out
+}
+
+/** Línea del sistema con sus datos técnicos verificados (profundidad, cámaras). */
+export function quoteDocLineOf(design: WindowDesign, catalog: Catalog): QuoteDocLine | undefined {
+  const line = catalog.lines?.find((l) => l.id === design.lineId)
+  if (!line) return undefined
+  const out: QuoteDocLine = { id: line.id, name: quoteDocLine(design, catalog) || line.name, material: line.material, brandId: line.brandId }
+  const brand = catalog.brands?.find((b) => b.id === line.brandId)?.name?.trim()
+  if (brand && !/gen[eé]ric/i.test(brand) && !/ejemplo/i.test(brand)) out.brand = brand
+  const series = lineSeries(line.name, brand)
+  if (series) out.series = series
+  if (Number.isFinite(line.depth) && (line.depth ?? 0) > 0) out.depth = line.depth
+  if (Number.isFinite(line.chambers) && (line.chambers ?? 0) > 0) out.chambers = line.chambers
+  if (line.description?.trim()) out.description = line.description.trim()
+  return out
+}
+
+/** Conjunto ya resuelto por el motor, sin dibujar nada aquí. */
+export function quoteDocAssembly(layout: Layout): QuoteDocAssembly | undefined {
+  const asm = layout.assembly
+  if (!asm) return undefined
+  const out: QuoteDocAssembly = {
+    kind: asm.kind,
+    units: asm.units.map((u) => {
+      const typologyId = safeValue(() => matchTypology(u.design))
+      return { id: u.unitId, width: u.rect.w, height: u.rect.h, design: u.design, ...(typologyId ? { typologyId } : {}) }
+    }),
+    joints: asm.joints.map((j) => ({ label: j.label, angle: j.angle, kind: j.kind, missing: j.status === 'missing' })),
+  }
+  if (asm.plan) out.plan = asm.plan
+  return out
+}
+
+/** La línea sin la marca delante: «Proline PRO6004» → «PRO6004». La marca va con su logo. */
+export function lineSeries(name: string | undefined, brand: string | undefined): string {
+  const clean = name?.trim() ?? ''
+  if (!brand || !clean.toLowerCase().startsWith(`${brand.toLowerCase()} `)) return clean
+  return clean.slice(brand.length).trim()
+}
+
+/** Herrajes del despiece, sin repetir (nombres del catálogo; nunca cantidades ni códigos internos). */
+export function quoteDocHardware(bom: Pick<Bom, 'items'> | undefined): string[] {
+  const names = new Set<string>()
+  for (const line of bom?.items ?? []) {
+    if (line?.kind !== 'hardware') continue
+    const name = line.name?.trim()
+    if (name) names.add(name)
+    if (names.size >= 8) break
+  }
+  return [...names]
+}
+
+type GroupableItem = Pick<QuoteDocItem, 'ref' | 'location' | 'total' | 'qty'> & Pick<QuoteDocItemV5, 'floor' | 'line' | 'included' | 'assembly'>
+
+/**
+ * Ventanas por recinto, piso o línea (en el orden en que aparecen) con su subtotal: la suma de los
+ * totales netos de cada ventana que cuenta en el total (cifras del motor). La plantilla nunca suma: lee
+ * estos grupos.
+ */
+export function quoteDocGroups(items: readonly GroupableItem[], by: QuoteDocGroupBy = 'room'): QuoteDocGroup[] {
+  const groups = new Map<string, QuoteDocGroup>()
+  for (const item of items) {
+    const label = (by === 'floor' ? item.floor : by === 'line' ? (item.line?.series ?? item.line?.name) : item.location)?.trim() ?? ''
+    const key = label.toLocaleLowerCase('es')
+    let group = groups.get(key)
+    if (!group) {
+      group = { key: key || '-', label, refs: [], subtotal: 0, units: 0 }
+      groups.set(key, group)
+    }
+    group.refs.push(item.ref)
+    if (item.included === false) continue
+    group.subtotal += Math.round(item.total)
+    group.units += item.qty * Math.max(1, item.assembly?.units.length ?? 1)
+  }
+  return [...groups.values()]
+}
+
+/** Los tres agrupamientos del documento. */
+function allGroups(items: readonly GroupableItem[]): Pick<QuoteDocDocument, 'groups' | 'groupsByFloor' | 'groupsByLine'> {
+  return { groups: quoteDocGroups(items), groupsByFloor: quoteDocGroups(items, 'floor'), groupsByLine: quoteDocGroups(items, 'line') }
 }
 
 /**
- * Arma los datos de la cotización para cualquiera de las cuatro plantillas.
+ * Arma los datos de la cotización para cualquier plantilla (v4 o v5).
  * Nunca lanza: un diseño roto se dibuja como contorno y se cotiza con avisos del motor.
  */
-export function buildQuoteDocData(input: BuildQuoteDocInput): QuoteDocData {
+export function buildQuoteDocData(input: BuildQuoteDocInput): QuoteDocDataV5 {
   const { quote, catalog, settings } = input
   const items = Array.isArray(quote.items) ? quote.items : []
   const extras = Array.isArray(quote.extras) ? quote.extras : []
@@ -267,8 +556,10 @@ export function buildQuoteDocData(input: BuildQuoteDocInput): QuoteDocData {
     evaluateQuote({ items, extras, discountPct: quote.discountPct ?? 0, pricing: quote.pricing }, catalog, settings.pricing ?? {}, { cut: settings.cut })
   const byId = new Map(evaluation.items.map((e) => [e.id, e]))
   const toLayout = input.layout ?? defaultLayout
+  // Una evaluación inyectada puede venir de otro motor en pruebas: la regla de qué cuenta es una sola.
+  const counted = includedLineIds([...items.filter(Boolean), ...extras.filter(Boolean)])
 
-  const docItems: QuoteDocItem[] = []
+  const docItems: QuoteDocItemV5[] = []
   for (const item of items) {
     if (!item || typeof item !== 'object' || !item.design || typeof item.design !== 'object') continue
     const qty = Number.isFinite(item.qty) ? item.qty : 0
@@ -282,7 +573,7 @@ export function buildQuoteDocData(input: BuildQuoteDocInput): QuoteDocData {
     const height = finiteOr0(design.height)
     const area = evaluated?.bom.area ?? (width * height) / 1_000_000
     // Una ventana rota no tumba el documento: cada dato descriptivo cae a vacío por separado.
-    const docItem: QuoteDocItem = {
+    const docItem: QuoteDocItemV5 = {
       id: item.id,
       ref: item.ref || '',
       qty,
@@ -305,10 +596,45 @@ export function buildQuoteDocData(input: BuildQuoteDocInput): QuoteDocData {
     const notes = trimmed(item.notes)
     if (notes) docItem.notes = notes
     if (price?.manual) docItem.manual = true
+    // Datos v5: cada uno a prueba de fallos, por separado.
+    const typologyId = safeValue(() => matchTypology(design))
+    if (typologyId) docItem.typologyId = typologyId
+    const colorOut = safeValue(() => quoteDocColorOf(design.colorId, catalog))
+    if (colorOut) docItem.colorOut = colorOut
+    if (design.colorInId && design.colorInId !== design.colorId) {
+      const colorIn = safeValue(() => quoteDocColorOf(design.colorInId, catalog))
+      if (colorIn) docItem.colorIn = colorIn
+    }
+    const glasses = safeValue(() => quoteDocGlasses(design, catalog))
+    if (glasses?.length) docItem.glasses = glasses
+    const line = safeValue(() => quoteDocLineOf(design, catalog))
+    if (line) docItem.line = line
+    if (design.extras && typeof design.extras === 'object') docItem.extras = { ...design.extras }
+    const hardware = quoteDocHardware(evaluated?.bom)
+    if (hardware.length) docItem.hardware = hardware
+    const floor = trimmed(item.floor)
+    if (floor) docItem.floor = floor
+    if (item.rough && (item.rough.width || item.rough.height)) docItem.rough = { ...item.rough }
+    if (item.role && item.role !== 'base') {
+      docItem.role = item.role
+      const altGroup = trimmed(item.altGroup)
+      if (altGroup) docItem.altGroup = altGroup
+      docItem.included = counted.has(item.id)
+    }
+    if (price?.lineDiscountPct) docItem.lineDiscountPct = price.lineDiscountPct
+    if (price?.pending?.length) {
+      docItem.pending = (price.totalNet ?? 0) > 0 ? 'partial' : 'all'
+      // Las uniones sin pieza en el catálogo no tienen precio propio: solo vienen en `pending`.
+      const parts = (price.units ?? []).filter((u) => u.pending).map((u) => ({ kind: u.kind, label: u.label }))
+      for (const p of price.pending) if (p.code === 'joint_missing') parts.push({ kind: 'joint', label: p.ref.replace(/^unión\s+/, '') })
+      if (parts.length) docItem.pendingParts = parts
+    }
+    const assembly = safeValue(() => quoteDocAssembly(docItem.layout))
+    if (assembly) docItem.assembly = assembly
     docItems.push(docItem)
   }
 
-  const prefs = mergeQuoteDocPrefs(settings.documents, quote.documentOverrides as QuoteDocOverrides | undefined)
+  const prefs = mergeQuoteDocPrefs(settings.documents, quote.documentOverrides)
   const client = input.client === null ? undefined : quoteDocClient(input.client ?? quote.client)
   const date = quoteDocDate(input.date ?? quote.sentAt ?? quote.updatedAt ?? quote.createdAt) || quoteDocDate(new Date(0))
 
@@ -320,13 +646,32 @@ export function buildQuoteDocData(input: BuildQuoteDocInput): QuoteDocData {
   }
   const validUntil = trimmed(quote.validUntil)
   if (validUntil) docQuote.validUntil = quoteDocDate(validUntil)
+  const siteAddress = trimmed(quote.siteAddress)
+  if (siteAddress) docQuote.siteAddress = siteAddress
   const notes = quoteClientNotes(quote)
   if (notes) docQuote.notes = notes
   if (quote.acceptedBy?.name) docQuote.acceptedBy = { ...quote.acceptedBy }
   const portalUrl = trimmed(input.portalUrl)
   if (portalUrl) docQuote.portalUrl = portalUrl
 
-  const data: QuoteDocData = {
+  const overrides = migrateQuoteDocOverrides(quote.documentOverrides ?? null).overrides
+  const locale = input.locale ?? overrides.locale ?? settings.locale
+  const document: QuoteDocDocument = {
+    currency: (settings.currency || 'CLP').toUpperCase(),
+    orgPrefs: settings.documents ?? {},
+    overrides: quote.documentOverrides ?? null,
+    ...allGroups(docItems),
+  }
+  if (locale) document.locale = locale
+  const taxLabel = trimmed(settings.taxLabel)
+  if (taxLabel) document.taxLabel = taxLabel
+  const taxRate = evaluation.pricing?.ivaPct ?? settings.pricing?.ivaPct
+  if (typeof taxRate === 'number' && Number.isFinite(taxRate)) document.taxRate = taxRate
+  if (input.template) document.template = input.template
+  if (input.assets && Object.keys(input.assets).length) document.assets = { ...input.assets }
+  if (input.textures && Object.keys(input.textures).length) document.textures = { ...input.textures }
+
+  const data: QuoteDocDataV5 = {
     org: quoteDocOrg(input.org),
     quote: docQuote,
     items: docItems,
@@ -334,13 +679,16 @@ export function buildQuoteDocData(input: BuildQuoteDocInput): QuoteDocData {
     extras: extras.map((e) => ({ ...e })),
     prefs,
     catalog,
+    document,
   }
   if (client) data.client = client
+  const paymentDetails = pdfPaymentDetails(settings.payments)
+  if (paymentDetails) data.paymentDetails = paymentDetails
   return data
 }
 
 /** Precio fijado por ítem (id del ítem de la cotización → neto unitario y total). */
-export type PinnedItemPrices = Record<string, { unitNet: number; totalNet: number }>
+export type PinnedItemPrices = Record<string, { unitNet: number; totalNet: number; pending?: boolean }>
 
 /**
  * Cifras congeladas al enviar (portal): el cliente ve exactamente lo que se le mandó, aunque
@@ -359,9 +707,20 @@ export function pinQuoteDocPrices(data: QuoteDocData, quote: Pick<Quote, 'items'
     source ??= sourceItems.find((i) => !used.has(i.id) && i.ref === docItem.ref && Number.isFinite(i.qty) && i.qty > 0)
     if (source) used.add(source.id)
     const pinned = source ? itemPrices?.[source.id] : undefined
-    return pinned ? { ...docItem, unitPrice: pinned.unitNet, total: pinned.totalNet } : docItem
+    if (!pinned) return docItem
+    const fixed: QuoteDocItemV5 = { ...docItem, unitPrice: pinned.unitNet, total: pinned.totalNet }
+    // Lo fijado manda: si al enviar tenía precio, hoy no pasa a pendiente porque cambió el catálogo.
+    if (pinned.totalNet > 0 && !pinned.pending) {
+      delete fixed.pending
+      delete fixed.pendingParts
+    }
+    return fixed
   })
-  return { ...data, items, ...(totals ? { totals: { ...totals, cost: 0, marginPct: 0 } } : {}) }
+  const out = { ...data, items, ...(totals ? { totals: { ...totals, cost: 0, marginPct: 0 } } : {}) }
+  // Los subtotales por recinto siguen a los precios fijados.
+  const doc = (data as QuoteDocDataV5).document
+  if (doc) (out as QuoteDocDataV5).document = { ...doc, ...allGroups(items) }
+  return out
 }
 
 function safeName(design: WindowDesign): string {
@@ -370,6 +729,14 @@ function safeName(design: WindowDesign): string {
     return typeof name === 'string' && name ? name : 'Ventana'
   } catch {
     return 'Ventana'
+  }
+}
+
+function safeValue<T>(read: () => T): T | undefined {
+  try {
+    return read()
+  } catch {
+    return undefined
   }
 }
 

@@ -6,7 +6,9 @@ import { memberships, orgs, passwordResets, sessions, users } from '../db/schema
 import { dummyPasswordHash, hashPassword, newId, randomToken, sha256, verifyPassword } from '../lib/crypto'
 import { HttpError, badRequest, conflict, isUniqueViolation, unauthorized } from '../lib/errors'
 import { readBody } from '../lib/http'
-import { sendInBackground, simpleHtml } from '../lib/mail'
+import { sendInBackground } from '../lib/mail'
+import { headerLocale } from '../lib/i18n/locale'
+import { mailLocale, passwordResetMail } from '../services/mail'
 import { emailSchema, nameSchema, passwordSchema } from '../lib/schemas'
 import { logActivity } from '../services/activity'
 import { createOrgWithOwner } from '../services/orgs'
@@ -53,7 +55,7 @@ export function authRoutes(deps: AppDeps) {
         orgId,
         actor: { userId, name: body.name },
         kind: 'org.created',
-        text: `${body.name} creó la cuenta de ${body.company}. ¡Bienvenido a Framezen!`,
+        text: `${body.name} creó la cuenta de ${body.company}. ¡Bienvenido a DEKOPEN!`,
         subject: { type: 'org', id: orgId },
       })
       const auth = await loadAuth(deps, userId, orgId)
@@ -84,7 +86,7 @@ export function authRoutes(deps: AppDeps) {
     deps.limits.login.reset(key)
     deps.limits.loginAccount.reset(body.email)
     const orgId = await pickOrg(deps, user.id, user.lastOrgId)
-    if (!orgId) throw new HttpError(403, 'no_org', 'Tu usuario ya no pertenece a ninguna empresa en Framezen. Pide una invitación nueva al dueño de la cuenta.')
+    if (!orgId) throw new HttpError(403, 'no_org', 'Tu usuario ya no pertenece a ninguna empresa en DEKOPEN. Pide una invitación nueva al dueño de la cuenta.')
     await createSession(c, deps, user.id, orgId)
     return c.json(await buildMe(deps, await loadAuth(deps, user.id, orgId)))
   })
@@ -107,23 +109,12 @@ export function authRoutes(deps: AppDeps) {
     await deps.db.insert(passwordResets).values({ id: newId(), userId: user.id, tokenHash: sha256(token), createdAt: now, expiresAt: new Date(now.getTime() + RESET_TTL_MS) })
     // La web abre «Contraseña nueva» en /restablecer/:token (/recuperar es la pantalla que pide el correo).
     const url = `${deps.config.appUrl}/restablecer/${encodeURIComponent(token)}`
-    const lines = [
-      `Hola, ${user.name.split(' ')[0]}:`,
-      'Recibimos una solicitud para cambiar la contraseña de tu cuenta en Framezen. Usa este enlace para crear una nueva (vale por una hora):',
-    ]
+    // En el idioma de la persona (o el que pide su navegador): services/mail.
+    const locale = mailLocale(user.locale, headerLocale(c.req.header('accept-language')))
+    const mail = passwordResetMail(locale, { firstName: user.name.split(' ')[0] || user.name, url })
     // Sin esperar al proveedor: si la respuesta tardara solo cuando la cuenta existe, el tiempo
     // delataría qué correos tienen cuenta.
-    sendInBackground(
-      deps.mailer,
-      deps.logger,
-      {
-        to: user.email,
-        subject: 'Crea una contraseña nueva para Framezen',
-        text: `${lines.join('\n\n')}\n\n${url}\n\nSi no fuiste tú, ignora este correo: tu contraseña sigue igual.`,
-        html: simpleHtml([...lines, 'Si no fuiste tú, ignora este correo: tu contraseña sigue igual.'], { label: 'Crear contraseña nueva', url }),
-      },
-      'el correo de recuperación',
-    )
+    sendInBackground(deps.mailer, deps.logger, { to: user.email, ...mail }, 'el correo de recuperación')
     return c.json(response)
   })
 

@@ -2,7 +2,7 @@
  * Mover la selección con las flechas, según lo que se ve (en vista exterior izquierda y derecha
  * se invierten, por eso trabaja con rectángulos ya mapeados a pantalla).
  */
-import type { Rect } from '@framezen/engine'
+import type { Rect } from '@dekopen/engine'
 
 export type ArrowDirection = 'left' | 'right' | 'up' | 'down'
 

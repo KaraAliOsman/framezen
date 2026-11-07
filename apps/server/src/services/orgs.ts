@@ -1,5 +1,5 @@
-import type { Catalog, Glass, Id, Line } from '@framezen/engine'
-import type { Defaults } from '@framezen/shared'
+import type { Catalog, Glass, Id, Line } from '@dekopen/engine'
+import type { Defaults } from '@dekopen/shared'
 import type { AppDeps } from '../context'
 import type { Db } from '../db/client'
 import { memberships, orgCatalog, orgSettings, orgs, subscriptions, users } from '../db/schema'

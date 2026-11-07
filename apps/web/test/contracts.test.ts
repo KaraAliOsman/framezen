@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BillingState, OrgSettings, Quote } from '@framezen/shared'
+import type { BillingState, OrgSettings, Quote } from '@dekopen/shared'
 import { api, ApiRequestError, conflictBody } from '../src/lib/api'
 import { mergeSettings } from '../src/lib/hooks'
 import { describePlan } from '../src/lib/plan'

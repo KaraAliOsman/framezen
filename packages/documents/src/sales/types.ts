@@ -1,5 +1,6 @@
-import type { Brand, Catalog, Layout, Line, QuoteExtra, QuoteTotals, TypologyId, WindowDesign } from '@framezen/engine'
-import type { CatalogTemplateId, DocumentPrefs, QuoteTemplateId } from '@framezen/shared'
+import type { Brand, Catalog, Layout, Line, QuoteExtra, QuoteTotals, TypologyId, WindowDesign } from '@dekopen/engine'
+import type { CatalogTemplateId, DocumentPrefs, QuoteTemplateId } from '@dekopen/shared'
+import type { PdfPaymentDetails } from '@dekopen/shared'
 import type { DocClient, DocOrg } from '../base/types'
 
 export type { QuoteTemplateId, CatalogTemplateId }
@@ -33,6 +34,8 @@ export interface QuoteDocItem {
 }
 
 export interface QuoteDocData {
+  /** Datos de pago que el taller eligió imprimir (cuentas, enlaces, instrucciones, abono). */
+  paymentDetails?: PdfPaymentDetails
   org: DocOrg
   client?: DocClient
   quote: {
@@ -43,6 +46,8 @@ export interface QuoteDocData {
     /** Fecha de emisión (ISO). */
     date: string
     validUntil?: string
+    /** Dirección de instalación, si difiere de la del cliente. */
+    siteAddress?: string
     /** Notas para el cliente. */
     notes?: string
     /** Aceptación en línea registrada en el portal. */
@@ -70,6 +75,9 @@ export type QuoteDocField =
   | 'footer'
   | 'title'
   | 'notes'
+  | 'includes'
+  | 'excludes'
+  | 'docTitle'
 
 export interface QuoteDocumentProps {
   data: QuoteDocData
@@ -108,9 +116,4 @@ export interface CatalogDocData {
   date?: string
 }
 
-export interface CatalogDocumentProps {
-  template: CatalogTemplateId
-  data: CatalogDocData
-  withStyles?: boolean
-  className?: string
-}
+// `CatalogDocumentProps` (diseño, plantilla propia, idioma, texturas…) se exporta desde ./catalog.

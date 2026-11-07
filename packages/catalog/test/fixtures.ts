@@ -93,7 +93,7 @@ function ficha(product: (typeof ANDINA_PRODUCTS)[number], brand: string) {
 
 /** Crea una carpeta temporal con listas de precios y pautas inventadas. Devuelve su ruta. */
 export function createSyntheticSource(): string {
-  const root = mkdtempSync(join(tmpdir(), 'framezen-catalog-'))
+  const root = mkdtempSync(join(tmpdir(), 'dekopen-catalog-'))
   const items = join(root, 'items')
   mkdirSync(items, { recursive: true })
   writeFileSync(join(items, 'MisPrecios_15012026_0900.csv'), csv(ANDINA_ROWS))

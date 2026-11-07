@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactElement } from 'react'
-import { computeLayout } from '@framezen/engine'
+import { computeLayout } from '@dekopen/engine'
 import { renderDocumentHtml, renderDocumentHtmlAsync, renderStaticMarkupInSlices } from '../src/render'
 import { CATALOG_TEMPLATES, CatalogDocument, QUOTE_TEMPLATES, QuoteDocument, SAMPLE_CATALOG_DOC, buildSampleQuoteDoc } from '../src/sales'
 import { WORKSHOP_DOCUMENTS, WorkshopDocument, sampleWorkshopData, workshopLabelCount } from '../src/workshop'

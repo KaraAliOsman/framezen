@@ -9,7 +9,7 @@ import type {
   LayoutSlidingPanel,
   Rect,
   WindowDesign,
-} from '@framezen/engine'
+} from '@dekopen/engine'
 import { defaultHandle, shapeOutlines } from '../../drawing/geometry'
 
 /**

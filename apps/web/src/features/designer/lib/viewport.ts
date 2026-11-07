@@ -4,8 +4,8 @@
  * el paneo es solo una traslación. Las capas propias del lienzo usan el mismo `Viewport` del
  * paquete documents, así que calzan al píxel con el dibujo.
  */
-import type { Layout, Rect } from '@framezen/engine'
-import { computeViewport, mapRect, visibleDimensions, type DrawingView, type Viewport } from '@framezen/documents'
+import type { Layout, Rect } from '@dekopen/engine'
+import { computeViewport, mapRect, visibleDimensions, type DrawingView, type Viewport } from '@dekopen/documents'
 
 export const MIN_ZOOM = 0.5
 export const MAX_ZOOM = 8

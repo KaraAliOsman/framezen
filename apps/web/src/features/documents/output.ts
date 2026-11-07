@@ -1,41 +1,23 @@
 /**
- * Salida de documentos desde el navegador: fuentes de los documentos (Fraunces, Inter Tight y
- * JetBrains Mono además de Instrument Sans, las mismas que incrusta el PDF), impresión en un marco oculto y descarga del PDF del servidor con
- * respaldo a imprimir si el servidor no lo genera.
+ * Salida de documentos desde el navegador: impresión en un marco oculto (con las mismas fuentes que
+ * incrusta el PDF) y descarga del PDF del servidor con respaldo a imprimir si el servidor no lo genera.
  */
 import type { ReactElement } from 'react'
-import { documentFontFaces, renderDocumentHtmlAsync, type DocTheme } from '@framezen/documents'
-import instrumentUrl from '@fontsource-variable/instrument-sans/files/instrument-sans-latin-wdth-normal.woff2?url'
-import frauncesUrl from '@fontsource-variable/fraunces/files/fraunces-latin-opsz-normal.woff2?url'
-import interTightUrl from '@fontsource-variable/inter-tight/files/inter-tight-latin-wght-normal.woff2?url'
-import monoUrl from '@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2?url'
-import monoMediumUrl from '@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2?url'
+import { renderDocumentHtmlAsync, type DocTheme } from '@dekopen/documents'
+import { intlTag, type Locale } from '@dekopen/shared'
+import { documentTemplateFontCss } from './fonts'
 
-function absolute(url: string): string {
-  try {
-    return new URL(url, window.location.href).href
-  } catch {
-    return url
-  }
-}
-
-/** @font-face de los documentos (para la vista previa y para imprimir). */
+/** @font-face de los documentos (vista previa e impresión). */
 export function documentFontCss(): string {
-  return documentFontFaces({
-    instrument: absolute(instrumentUrl),
-    fraunces: absolute(frauncesUrl),
-    interTight: absolute(interTightUrl),
-    mono: absolute(monoUrl),
-    monoMedium: absolute(monoMediumUrl),
-  })
+  return documentTemplateFontCss()
 }
 
 /**
  * Imprime un documento React en un marco oculto (no lo bloquean los bloqueadores de ventanas).
  * El HTML se arma por tramos: un documento grande no congela la pestaña mientras se prepara.
  */
-export async function printDocument(element: ReactElement, options: { title: string; theme?: DocTheme }): Promise<void> {
-  const html = await renderDocumentHtmlAsync(element, { title: options.title, theme: options.theme, fontCss: documentFontCss(), lang: 'es-CL' })
+export async function printDocument(element: ReactElement, options: { title: string; theme?: DocTheme; locale?: Locale }): Promise<void> {
+  const html = await renderDocumentHtmlAsync(element, { title: options.title, theme: options.theme, fontCss: documentFontCss(), lang: intlTag(options.locale ?? 'es') })
   const frame = document.createElement('iframe')
   frame.setAttribute('aria-hidden', 'true')
   frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none'

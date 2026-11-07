@@ -1,49 +1,60 @@
+import { useT } from '../../lib/i18n'
 import { Dialog, DialogContent, Kbd } from '../../ui'
+import es from '../i18n/es'
+import { useAssistantName } from './useAssistantName'
 
-const GROUPS: { title: string; items: { combo: string[]; label: string }[] }[] = [
+type ShortcutKey = keyof typeof es.shortcuts
+
+/** Claves de i18n (no textos): se traducen al dibujar. */
+const GROUPS: { title: ShortcutKey; items: { combo: string[]; label: ShortcutKey | 'assistant' }[] }[] = [
   {
-    title: 'En toda la app',
+    title: 'global',
     items: [
-      { combo: ['mod+k'], label: 'Buscar o ejecutar un comando' },
-      { combo: ['/'], label: 'Buscar' },
-      { combo: ['mod+j'], label: 'Abrir o cerrar a Marco' },
-      { combo: ['['], label: 'Contraer o expandir la barra lateral' },
-      { combo: ['?'], label: 'Ver estos atajos' },
+      { combo: ['mod+k'], label: 'palette' },
+      { combo: ['/'], label: 'search' },
+      { combo: ['mod+j'], label: 'assistant' },
+      { combo: ['['], label: 'sidebar' },
+      { combo: ['?'], label: 'help' },
+      { combo: ['c'], label: 'newQuote' },
     ],
   },
   {
-    title: 'En una cotización',
+    title: 'quote',
     items: [
-      { combo: ['a'], label: 'Agregar ventana' },
-      { combo: ['d'], label: 'Duplicar la ventana elegida' },
-      { combo: ['delete'], label: 'Eliminar (con deshacer)' },
-      { combo: ['1'], label: 'Elegir la ventana 1 a 9' },
-      { combo: ['mod+z'], label: 'Deshacer' },
-      { combo: ['shift+mod+z'], label: 'Rehacer' },
+      { combo: ['a'], label: 'addWindow' },
+      { combo: ['d'], label: 'duplicate' },
+      { combo: ['delete'], label: 'remove' },
+      { combo: ['1'], label: 'pick' },
+      { combo: ['mod+z'], label: 'undo' },
+      { combo: ['shift+mod+z'], label: 'redo' },
     ],
   },
   {
-    title: 'En medidas',
+    title: 'measures',
     items: [
-      { combo: ['up', 'down'], label: 'Sumar o restar 10 mm (Shift: 100 mm)' },
-      { combo: ['enter'], label: 'Confirmar; acepta «1200x1500» para ancho y alto' },
+      { combo: ['up', 'down'], label: 'nudge' },
+      { combo: ['enter'], label: 'confirm' },
     ],
   },
 ]
 
 export function ShortcutsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const t = useT(es)
+  const assistantName = useAssistantName({ enabled: open })
+  const label = (key: ShortcutKey) =>
+    key === 'assistant' ? (assistantName ? t('shortcuts.assistant', { name: assistantName }) : t('shortcuts.assistantGeneric')) : t(`shortcuts.${key}`)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="Atajos de teclado" description="Todo se puede hacer con el mouse; esto es para ir más rápido." size="md">
+      <DialogContent title={t('shortcuts.title')} size="md">
         <div className="flex flex-col gap-6">
           {GROUPS.map((group) => (
             <section key={group.title}>
-              <h3 className="mb-2 text-meta font-medium text-paper-600">{group.title}</h3>
-              <ul className="divide-y divide-paper-200 rounded-md border border-paper-200">
+              <h3 className="mb-2 text-meta font-medium text-fg-muted">{t(`shortcuts.${group.title}`)}</h3>
+              <ul className="divide-y divide-divider rounded-md border border-divider">
                 {group.items.map((item) => (
-                  <li key={item.label} className="flex h-10 items-center justify-between gap-4 px-3">
-                    <span className="text-paper-900">{item.label}</span>
-                    <span className="flex items-center gap-1">
+                  <li key={item.label} className="flex min-h-10 items-center justify-between gap-4 px-3 py-2">
+                    <span className="text-fg">{label(item.label)}</span>
+                    <span className="flex shrink-0 items-center gap-1">
                       {item.combo.map((c) => (
                         <Kbd key={c} combo={c} />
                       ))}

@@ -1,8 +1,12 @@
 /**
  * Dictado por voz con la Web Speech API (Chrome, Edge, Safari). Si el navegador no la tiene, el
- * botón no aparece. Español de Chile; entrega el texto final y el parcial mientras hablas.
+ * botón no aparece. Escucha en el idioma de la interfaz (es-CL, en-US, pt-BR…); entrega el texto
+ * final y el parcial mientras hablas.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { intlTag } from '@dekopen/shared'
+import { useLocale, useT } from '../../lib/i18n'
+import es from './i18n/es'
 
 interface SpeechAlternative {
   transcript: string
@@ -43,6 +47,9 @@ export function useDictation(options: { onFinal(text: string): void; lang?: stri
   const [interim, setInterim] = useState('')
   const [problem, setProblem] = useState<string | null>(null)
   const recognition = useRef<SpeechRecognitionLike | null>(null)
+  const { locale } = useLocale()
+  const t = useT(es)
+  const lang = options.lang ?? intlTag(locale)
   const onFinal = useRef(options.onFinal)
   onFinal.current = options.onFinal
   const supported = isDictationSupported()
@@ -55,7 +62,7 @@ export function useDictation(options: { onFinal(text: string): void; lang?: stri
     const Ctor = speechCtor()
     if (!Ctor || recognition.current) return
     const rec = new Ctor()
-    rec.lang = options.lang ?? 'es-CL'
+    rec.lang = lang
     rec.continuous = false
     rec.interimResults = true
     rec.onresult = (event) => {
@@ -69,9 +76,9 @@ export function useDictation(options: { onFinal(text: string): void; lang?: stri
       setInterim(partial.trim())
     }
     rec.onerror = (event) => {
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') setProblem('Dale permiso al micrófono en tu navegador para dictar.')
-      else if (event.error === 'no-speech') setProblem('No te escuché. Prueba de nuevo, más cerca del micrófono.')
-      else if (event.error && event.error !== 'aborted') setProblem('El dictado no está disponible ahora. Puedes escribir igual.')
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') setProblem(t('dictation.denied'))
+      else if (event.error === 'no-speech') setProblem(t('dictation.noSpeech'))
+      else if (event.error && event.error !== 'aborted') setProblem(t('dictation.unavailable'))
     }
     rec.onend = () => {
       recognition.current = null
@@ -85,9 +92,9 @@ export function useDictation(options: { onFinal(text: string): void; lang?: stri
       setListening(true)
     } catch {
       recognition.current = null
-      setProblem('El dictado no está disponible ahora. Puedes escribir igual.')
+      setProblem(t('dictation.unavailable'))
     }
-  }, [options.lang])
+  }, [lang, t])
 
   useEffect(() => () => recognition.current?.abort(), [])
 

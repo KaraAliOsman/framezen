@@ -17,6 +17,8 @@ export interface AppConfig {
   flowApiKey?: string
   flowSecretKey?: string
   flowApiUrl?: string
+  /** Clave maestra para cifrar las llaves de cobro de cada taller (PAYMENT_KEYS_SECRET). Sin ella, Flow del taller queda apagado. */
+  paymentKeysSecret?: string
   logRequests: boolean
   /**
    * Proxies de confianza delante del servidor que agregan su IP de origen al final de
@@ -106,11 +108,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, root = findRepo
     // La web compilada se sirve en producción (o si se indica WEB_DIST explícitamente).
     webDist: (production || Boolean(env.WEB_DIST)) && existsSync(join(webDist, 'index.html')) ? webDist : null,
     resendApiKey: env.RESEND_API_KEY || undefined,
-    mailFrom: env.MAIL_FROM || 'Framezen <hola@framezen.cl>',
+    mailFrom: env.MAIL_FROM || 'DEKOPEN <hola@dekopen.cl>',
     billingProvider: env.FLOW_API_KEY && env.FLOW_SECRET_KEY ? 'flow' : 'dev',
     flowApiKey: env.FLOW_API_KEY || undefined,
     flowSecretKey: env.FLOW_SECRET_KEY || undefined,
     flowApiUrl: env.FLOW_API_URL || undefined,
+    paymentKeysSecret: (env.PAYMENT_KEYS_SECRET?.length ?? 0) >= 32 ? env.PAYMENT_KEYS_SECRET : undefined,
     logRequests: env.NODE_ENV !== 'test',
   }
 }
@@ -122,7 +125,7 @@ export function defaultConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     production: false,
     secureCookies: false,
     webDist: null,
-    mailFrom: 'Framezen <hola@framezen.cl>',
+    mailFrom: 'DEKOPEN <hola@dekopen.cl>',
     billingProvider: 'dev',
     logRequests: false,
     trustProxyHops: 0,

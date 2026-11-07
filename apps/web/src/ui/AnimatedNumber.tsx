@@ -29,7 +29,7 @@ export function AnimatedNumber({
     }
     const controls = animate(fromRef.current, value, {
       duration,
-      ease: [0.2, 0, 0, 1],
+      ease: [0.23, 1, 0.32, 1],
       onUpdate: (latest) => {
         fromRef.current = latest
         setShown(latest)
@@ -45,20 +45,18 @@ export function AnimatedNumber({
   )
 }
 
-/** Destello `--ink-50` de 600 ms cuando cambia `trigger` (p. ej. un total). Solo opacidad. */
+/** Destello de señal (700 ms) cuando cambia `trigger` (p. ej. un total). Solo opacidad. */
 export function Flash({ trigger, children, className }: { trigger: unknown; children: ReactNode; className?: string }) {
   const [key, setKey] = useState(0)
-  const first = useRef(true)
+  const previous = useRef(trigger)
   useEffect(() => {
-    if (first.current) {
-      first.current = false
-      return
-    }
+    if (previous.current === trigger) return
+    previous.current = trigger
     setKey((k) => k + 1)
   }, [trigger])
   return (
     <span className={cn('relative isolate inline-block rounded-xs', className)}>
-      {key > 0 ? <span key={key} aria-hidden className="fz-flash-layer absolute -inset-x-1 inset-y-0 -z-10 rounded-xs bg-ink-50" /> : null}
+      {key > 0 ? <span key={key} aria-hidden className="fz-flash-layer absolute -inset-x-1 inset-y-0 -z-10 rounded-xs bg-signal-wash" /> : null}
       {children}
     </span>
   )

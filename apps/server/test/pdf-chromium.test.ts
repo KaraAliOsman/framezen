@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import type { Browser } from 'playwright-core'
-import { buildSampleQuoteDoc } from '@framezen/documents'
-import { computeLayout } from '@framezen/engine'
+import { buildSampleQuoteDoc } from '@dekopen/documents'
+import { computeLayout } from '@dekopen/engine'
 import { ChromiumPdfRenderer, PdfUnavailableError, pdfTimeoutFor } from '../src/services/pdf/browser'
 import { renderQuoteDocument } from '../src/services/pdf/render'
 
@@ -36,8 +36,8 @@ describe('Chromium real (playwright-core)', () => {
     // Fuentes incrustadas en el PDF: TrueType/CFF (FontFile2/3) o, en Skia reciente (m156+), las
     // fuentes variables como Type3 con subconjunto («AAAAAA+Instrument-Sans»).
     expect(pdf.toString('latin1')).toMatch(/FontFile2|FontFile3|\/Subtype\s*\/Type3/)
-    // …y es la de los documentos (Instrument Sans), no una de respaldo del sistema.
-    expect(pdf.toString('latin1')).toMatch(/\/FontName\s*\/[A-Z]{6}\+Instrument-?Sans/)
+    // …y es la de los documentos, no una de respaldo del sistema.
+    expect(pdf.toString('latin1')).toMatch(/\/FontName\s*\/[A-Z]{6}\+(Literata|SourceSans)/)
     // Tamaño Carta (612 × 792 pt) por el @page del documento.
     expect(pdf.toString('latin1')).toMatch(/MediaBox\s*\[0 0 612 792\]/)
 

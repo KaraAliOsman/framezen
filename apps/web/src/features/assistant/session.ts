@@ -1,20 +1,21 @@
 /**
- * La conversación con Marco es de una sesión: una persona dentro de una empresa. En un PC de taller
- * compartido, quien entra después en la misma pestaña no debe ver lo que otra persona le pidió a
- * Marco (costos, márgenes) ni reenviar ese historial a la IA bajo su propia sesión.
+ * La conversación con el asistente es de una sesión: una persona dentro de una empresa. En un PC de
+ * taller compartido, quien entra después en la misma pestaña no debe ver lo que otra persona le pidió
+ * (costos, márgenes) ni seguir su conversación bajo su propia sesión.
  *
- * - Al montar con sesión, la conversación se asocia a `usuarioId:empresaId`; si era de otra, se descarta.
+ * - Al montar con sesión, la vista se asocia a `usuarioId:empresaId`; si era de otra, se descarta.
  * - Al terminar la sesión (salir, sesión vencida), se olvida todo, también lo guardado en la pestaña.
  */
 import { useEffect, useLayoutEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import type { Me } from '@framezen/shared'
+import type { Me } from '@dekopen/shared'
 import { useAssistantStore } from '../../lib/stores'
 import { qk } from '../../lib/queryClient'
 import { declinePendingApprovals, undoRegistry } from './conversation'
-import { useMarcoStore } from './store'
+import { useAssistantPanel } from './store'
+import { useAssistantUi } from './uiState'
 
-export function marcoOwner(me: Pick<Me, 'user' | 'org'> | null | undefined): string | null {
+export function assistantOwner(me: Pick<Me, 'user' | 'org'> | null | undefined): string | null {
   return me ? `${me.user.id}:${me.org.id}` : null
 }
 
@@ -25,29 +26,30 @@ function forgetInMemory(): void {
 }
 
 /** Asocia la conversación a la sesión vigente; si era de otra persona o empresa, la descarta. */
-export function bindMarcoSession(owner: string): void {
-  if (useMarcoStore.getState().bindSession(owner)) forgetInMemory()
+export function bindAssistantSession(owner: string): void {
+  if (useAssistantPanel.getState().bindSession(owner)) forgetInMemory()
 }
 
-/** Fin de sesión: Marco olvida la conversación, el borrador y lo guardado en la pestaña. */
-export function endMarcoSession(): void {
+/** Fin de sesión: el asistente olvida la conversación, el borrador y lo guardado en la pestaña. */
+export function endAssistantSession(): void {
   forgetInMemory()
-  useMarcoStore.getState().clearSession()
-  useMarcoStore.persist.clearStorage()
+  useAssistantPanel.getState().clearSession()
+  useAssistantPanel.persist.clearStorage()
   useAssistantStore.setState({ open: false, pendingPrompt: null })
+  useAssistantUi.setState({ editor: null, memoryOpen: false })
 }
 
 /**
  * Engancha la conversación a la sesión. `stop` corta un turno en curso cuando la sesión termina,
  * para que una respuesta tardía no vuelva a escribir en el panel.
  */
-export function useMarcoSession(me: Pick<Me, 'user' | 'org'> | null, stop: () => void): void {
+export function useAssistantSession(me: Pick<Me, 'user' | 'org'> | null, stop: () => void): void {
   const client = useQueryClient()
-  const owner = marcoOwner(me)
+  const owner = assistantOwner(me)
 
   // Antes de pintar y antes de cualquier envío: nunca se ve ni se manda una conversación ajena.
   useLayoutEffect(() => {
-    if (owner) bindMarcoSession(owner)
+    if (owner) bindAssistantSession(owner)
   }, [owner])
 
   // El panel solo vive con sesión: si se desmonta porque ya no hay sesión, se olvida todo.
@@ -55,8 +57,14 @@ export function useMarcoSession(me: Pick<Me, 'user' | 'org'> | null, stop: () =>
     () => () => {
       if (client.getQueryData<Me | null>(qk.me)) return
       stop()
-      endMarcoSession()
+      endAssistantSession()
     },
     [client, stop],
   )
 }
+
+/** Alias de compatibilidad (v4). */
+export const marcoOwner = assistantOwner
+export const bindMarcoSession = bindAssistantSession
+export const endMarcoSession = endAssistantSession
+export const useMarcoSession = useAssistantSession

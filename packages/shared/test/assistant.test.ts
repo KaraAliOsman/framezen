@@ -9,6 +9,8 @@ import {
   foldSpanish,
   formatMillimeters,
   isUndoCommand,
+  normalizeAgentCall,
+  parseAgentToolArgs,
   parseLocalCommand,
   parseNumberToken,
   parseSpokenSize,
@@ -394,5 +396,65 @@ describe('parseLocalCommand · respuestas sin herramientas', () => {
     expect(new Set(calls.map((c) => c.name + calls.indexOf(c))).size).toBe(2)
     const raw = parseLocalCommand('agrega una corredera de 1500x1200 y descuento 5%')
     if ('toolCalls' in raw) expect(new Set(raw.toolCalls.map((c) => c.id)).size).toBe(2)
+  })
+})
+
+describe('normalizeAgentCall · herramientas del motor de comandos locales', () => {
+  const ok = (name: string, args: Record<string, unknown>) => {
+    const call = normalizeAgentCall(name, args)
+    expect(call, name).not.toBeNull()
+    const parsed = parseAgentToolArgs(call!.name, call!.args)
+    expect(parsed.ok, `${name} → ${call!.name} ${JSON.stringify(call!.args)}`).toBe(true)
+    return call!
+  }
+
+  it('el N° visible y los ids de la cotización se traducen al contrato del agente', () => {
+    expect(ok('set_discount', { percent: 10, number: 412 })).toEqual({ name: 'update_quote', args: { quoteNumber: 412, discount: 10 } })
+    expect(ok('delete_quote', { quoteId: 'q1', number: 412 }).args).toEqual({ quoteId: 'q1', quoteNumber: 412 })
+    expect(ok('duplicate_quote', { number: 7 }).args).toEqual({ quoteNumber: 7 })
+    expect(ok('create_work_order', { number: 7 }).name).toBe('create_work_order')
+  })
+
+  it('cotización: notas, plantilla, idioma, estado y compartir', () => {
+    expect(ok('set_quote_notes', { text: 'Entrega en marzo' }).args).toEqual({ notes: 'Entrega en marzo' })
+    expect(ok('set_quote_template', { templateId: 'hogar' }).args).toEqual({ template: 'hogar' })
+    expect(ok('set_quote_locale', { locale: 'en' }).args).toEqual({ document_locale: 'en' })
+    expect(ok('set_quote_status', { status: 'sent', number: 3 }).args).toEqual({ quoteNumber: 3, status: 'sent' })
+    expect(ok('share_quote_link', {}).name).toBe('share_quote_link')
+  })
+
+  it('ventanas: quita lo que el esquema estricto no admite y traduce accesorios y secuencia', () => {
+    const call = ok('add_window', {
+      typology: 'tilt_turn',
+      width: 1000,
+      height: 1200,
+      qty: 2,
+      colorId: 'c-nogal',
+      color: 'Nogal',
+      lineId: 'l1',
+      glassId: 'g1',
+      extras: { rollerShutter: { type: 'monoblock' }, insectScreen: null, sill: true },
+      sequence: 'tilt_first',
+    })
+    expect(call.args).toMatchObject({ typology: 'tilt_turn', color: 'Nogal', qty: 2 })
+    expect(call.args).not.toHaveProperty('colorId')
+    expect(call.args.accessories).toEqual({ roller_shutter: { type: 'monoblock', operation: 'crank' }, insect_screen: false, sill: true })
+    expect(call.args.openings).toEqual([{ kind: 'tilt_turn', sequence: 'tilt_first' }])
+    expect(ok('update_window', { all: true, color: 'Blanco', number: 9 }).args).toEqual({ quoteNumber: 9, all: true, color: 'Blanco' })
+  })
+
+  it('ajustes: el idioma de los documentos va a ajustes y la moneda sola, a precios', () => {
+    expect(ok('update_settings', { document_locale: 'fr' })).toEqual({ name: 'update_settings', args: { document_locale: 'fr' } })
+    expect(ok('update_settings', { currency: 'USD' })).toEqual({ name: 'update_pricing', args: { currency: 'USD' } })
+  })
+
+  it('memoria y clientes', () => {
+    expect(ok('remember', { content: 'margen 30', scope: 'org' }).args).toEqual({ content: 'margen 30', scope: 'org' })
+    expect(ok('forget', { query: 'margen' }).name).toBe('forget')
+    expect(ok('create_client', { name: 'Soto', email: 'a@b.cl' }).args).toEqual({ name: 'Soto', email: 'a@b.cl' })
+  })
+
+  it('un nombre desconocido es null (nada se ejecuta)', () => {
+    expect(normalizeAgentCall('drop_database', {})).toBeNull()
   })
 })

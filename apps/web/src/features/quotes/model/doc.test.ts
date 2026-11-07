@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { createDesign } from '@framezen/engine'
-import { SAMPLE_DEFAULTS } from '@framezen/catalog'
-import type { Quote } from '@framezen/shared'
+import { createDesign } from '@dekopen/engine'
+import { SAMPLE_DEFAULTS } from '@dekopen/catalog'
+import type { Quote } from '@dekopen/shared'
 import {
   clipText,
   composeQuote,
   deepEqual,
   docFromQuote,
   isAutoSequence,
+  mergeDocs,
   metaFromQuote,
   nextRef,
   normalizeDoc,
   QUOTE_LIMITS,
+  removeItemOp,
   saveBody,
   setDocumentOverrideOp,
   updateItemOp,
@@ -42,7 +44,7 @@ describe('documento de la cotización', () => {
       discountPct: 120,
       pricing: {},
       notes: '   ',
-      documentOverrides: {},
+      documentOverrides: { v: 2 },
     })
     expect(doc).toEqual({
       title: 'Casa',
@@ -66,7 +68,7 @@ describe('documento de la cotización', () => {
       items: [{ id: 'a', ref: 'V1', qty: 1, design }],
       extras: [],
       discountPct: 5,
-      documentOverrides: { intro: 'Hola' },
+      documentOverrides: { v: 2, texts: { intro: 'Hola' } },
       revision: 0,
       version: 2,
       createdAt: '2026-10-31T00:00:00.000Z',
@@ -110,7 +112,7 @@ describe('documento de la cotización', () => {
         items: [{ id: 'a', ref: 'REFERENCIA-MUY-LARGA-123', qty: 250_000, design, name: long(300), location: long(250), notes: long(5000), manualUnitPrice: 2e10 }],
         extras: [{ id: 'x', label: long(50_000), amount: -3e10 }],
         discountPct: 0,
-        pricing: { marginPct: 120, marginMode: 'markup' },
+        pricing: { marginPct: 800, marginMode: 'markup' },
         notes: long(25_000),
       },
       { status: 'draft', version: 1 },
@@ -135,11 +137,67 @@ describe('documento de la cotización', () => {
     expect(normalizeDoc({ title: text, items: [], extras: [], discountPct: 0 }).title).toBe('a'.repeat(199))
   })
 
-  it('textos del documento: undefined vuelve al de la organización', () => {
+  it('textos del documento: null vuelve al de la plantilla; vacío es una decisión', () => {
     const doc = { title: '', items: [], extras: [], discountPct: 0 }
-    const withIntro = setDocumentOverrideOp(doc, { intro: 'Hola', quoteTemplate: 'galeria' })
-    expect(withIntro.documentOverrides).toEqual({ intro: 'Hola', quoteTemplate: 'galeria' })
-    const cleared = setDocumentOverrideOp(setDocumentOverrideOp(withIntro, { intro: undefined }), { quoteTemplate: undefined })
+    const withIntro = setDocumentOverrideOp(doc, { texts: { intro: 'Hola' }, templateId: 'hogar', locale: 'en' })
+    expect(withIntro.documentOverrides).toEqual({ v: 2, texts: { intro: 'Hola' }, templateId: 'hogar', locale: 'en' })
+    // Sin cambios: el mismo documento (no entra al historial).
+    expect(setDocumentOverrideOp(withIntro, { texts: { intro: 'Hola' } })).toBe(withIntro)
+    // «Sin condiciones» se guarda tal cual (texto vacío).
+    expect(setDocumentOverrideOp(withIntro, { texts: { conditions: '' } }).documentOverrides?.texts).toEqual({ intro: 'Hola', conditions: '' })
+    const cleared = setDocumentOverrideOp(setDocumentOverrideOp(withIntro, { texts: { intro: null } }), { templateId: null, locale: null })
     expect(cleared.documentOverrides).toBeUndefined()
+  })
+
+  it('ajustes v1 (cotizaciones de antes) se leen como v2 sin perder nada', () => {
+    const quote = {
+      id: 'q',
+      number: 1,
+      title: '',
+      status: 'draft',
+      items: [],
+      extras: [],
+      discountPct: 0,
+      revision: 0,
+      version: 1,
+      createdAt: '',
+      updatedAt: '',
+      documentOverrides: { intro: 'Estimado cliente', quoteTemplate: 'galeria', validityDays: 30, notes: 'Incluye sellado' },
+    } as unknown as Quote
+    expect(docFromQuote(quote).documentOverrides).toEqual({
+      v: 2,
+      templateId: 'hogar',
+      validityDays: 30,
+      texts: { intro: 'Estimado cliente', clientNote: 'Incluye sellado' },
+    })
+  })
+
+  it('borrar una ventana se lleva su nota del documento (deshacer la trae de vuelta)', () => {
+    const doc = {
+      title: '',
+      items: [
+        { id: 'a', ref: 'V1', qty: 1, design },
+        { id: 'b', ref: 'V2', qty: 1, design },
+      ],
+      extras: [],
+      discountPct: 0,
+      documentOverrides: { v: 2 as const, items: { a: { note: 'Con celosía' }, b: { note: 'Baño' } } },
+    }
+    expect(removeItemOp(doc, 'a').documentOverrides).toEqual({ v: 2, items: { b: { note: 'Baño' } } })
+    expect(removeItemOp(removeItemOp(doc, 'a'), 'b').documentOverrides).toBeUndefined()
+  })
+
+  it('fusión ante un conflicto: los ajustes del documento se toman llave por llave', () => {
+    const base = { title: 'Obra', items: [], extras: [], discountPct: 0, documentOverrides: { v: 2 as const, texts: { intro: 'Hola' } } }
+    // Aquí cambiaste la plantilla; en otra pestaña cambiaron el saludo y el idioma.
+    const local = { ...base, documentOverrides: { v: 2 as const, texts: { intro: 'Hola' }, templateId: 'memoria' } }
+    const remote = { ...base, documentOverrides: { v: 2 as const, texts: { intro: 'Estimada Carolina' }, locale: 'pt' as const } }
+    const merged = mergeDocs(base, local, remote)
+    expect(merged.clean).toBe(true)
+    expect(merged.remoteChanged).toBe(true)
+    expect(merged.doc.documentOverrides).toEqual({ v: 2, texts: { intro: 'Estimada Carolina' }, templateId: 'memoria', locale: 'pt' })
+    // El mismo texto cambiado distinto en ambos lados: la fusión no es limpia.
+    const clash = mergeDocs(base, { ...base, documentOverrides: { v: 2, texts: { intro: 'A' } } }, { ...base, documentOverrides: { v: 2, texts: { intro: 'B' } } })
+    expect(clash.clean).toBe(false)
   })
 })

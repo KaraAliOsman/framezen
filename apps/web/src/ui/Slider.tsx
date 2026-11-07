@@ -42,17 +42,17 @@ export function Slider({
         max={max}
         step={step}
         disabled={disabled}
-        className="relative flex h-5 flex-1 touch-none items-center select-none data-[disabled]:opacity-50"
+        className="group relative flex h-6 flex-1 touch-none items-center select-none data-[disabled]:opacity-45"
       >
-        <RadixSlider.Track className="relative h-1 grow overflow-hidden rounded-full bg-paper-200">
-          <RadixSlider.Range className="absolute h-full rounded-full bg-ink-600" />
+        <RadixSlider.Track className="relative h-1 grow overflow-hidden rounded-full bg-track/70">
+          <RadixSlider.Range className="absolute h-full rounded-full bg-accent" />
         </RadixSlider.Track>
         <RadixSlider.Thumb
           aria-label={ariaLabel}
-          className="block size-4 rounded-full border border-paper-350 bg-paper-0 shadow-[0_1px_2px_rgb(31_28_24/0.15)] transition-transform duration-120 ease-out hover:scale-110 active:scale-110 touch:size-6"
+          className="block size-4 rounded-full border border-control bg-white shadow-[0_1px_2px_rgb(21_22_29/0.2)] transition-[transform,box-shadow] duration-100 ease-out hover:scale-110 focus-visible:shadow-[0_0_0_4px_var(--dk-focus-ring)] focus-visible:outline-none active:scale-110 touch:size-6 dark:border-transparent dark:bg-fg"
         />
       </RadixSlider.Root>
-      {format ? <span className="min-w-12 text-right text-base text-paper-900 tabular">{format(value)}</span> : null}
+      {format ? <span className="min-w-12 text-right text-base text-fg tabular">{format(value)}</span> : null}
     </div>
   )
 }

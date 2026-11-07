@@ -42,7 +42,7 @@ describe('documentos demasiado grandes para el navegador', () => {
     expect(document.getElementById(PRINT_ROOT)).toBeNull()
     expect(fetchCalls()).toEqual(['/api/work-orders/w1/pdf?doc=labels&labels=sheet&glass=1'])
     await vi.waitFor(() => expect(error).toHaveBeenCalled())
-    expect(String(error.mock.calls[0]?.[0])).toContain('No pudimos armar el PDF en el servidor. Son 28.000 etiquetas')
+    expect(String(error.mock.calls[0]?.[0])).toContain('No pudimos armar el PDF. Son 28.000 etiquetas')
     expect(window.print).not.toHaveBeenCalled()
   })
 

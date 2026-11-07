@@ -3,9 +3,9 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryRouter, RouterProvider } from 'react-router'
-import { createDesign, DEFAULT_CUT, DEFAULT_PRICING, formatCLP } from '@framezen/engine'
-import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@framezen/catalog'
-import type { Me, Quote } from '@framezen/shared'
+import { createDesign, DEFAULT_CUT, DEFAULT_PRICING, formatCLP } from '@dekopen/engine'
+import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@dekopen/catalog'
+import type { Me, Quote } from '@dekopen/shared'
 import { RequireAuth } from '../../../lib/auth'
 import { TooltipProvider } from '../../../ui'
 import { createQueryClient } from '../../../lib/queryClient'
@@ -156,6 +156,46 @@ describe('editor de cotización', () => {
     expect(editor.get().doc.items).toHaveLength(2)
   })
 
+  it('D deja el cursor en el ancho de la copia', async () => {
+    const { editor } = setup()
+    await screen.findByRole('list', { name: 'Ventanas de la cotización' })
+    act(() => editor.select('a'))
+    fireEvent.keyDown(window, { key: 'd' })
+    await waitFor(() => expect(document.activeElement?.hasAttribute('data-item-width')).toBe(true))
+  })
+
+  it('la fila activa no dibuja filo y el botón anuncia su tecla', async () => {
+    const { editor } = setup()
+    const list = await screen.findByRole('list', { name: 'Ventanas de la cotización' })
+    act(() => editor.select('a'))
+    const row = within(list).getByRole('button', { name: /^V1, / }).parentElement!
+    expect(row.className).toContain('bg-surface')
+    expect(row.querySelector('.bg-accent')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Duplicar ventana' }).getAttribute('aria-keyshortcuts')).toBe('D')
+  })
+
+  it('Enter sobre la ventana ya elegida abre «Agregar ventana»', async () => {
+    const { editor, ui } = setup()
+    const list = await screen.findByRole('list', { name: 'Ventanas de la cotización' })
+    act(() => editor.select('a'))
+    fireEvent.keyDown(within(list).getByRole('button', { name: /^V1, / }), { key: 'Enter' })
+    expect(ui.getState().pickerOpen).toBe(true)
+  })
+
+  it('agregar varias ventanas es un solo paso de deshacer', async () => {
+    const { editor } = setup()
+    await screen.findByRole('list', { name: 'Ventanas de la cotización' })
+    act(() => {
+      editor.addItems([{ design: design('fixed', 1000, 900), qty: 2 }, { design: design('fixed', 1100, 900) }])
+    })
+    expect(editor.get().doc.items.map((i) => i.ref)).toEqual(['V1', 'V2', 'V3', 'V4'])
+    expect(editor.get().doc.items[2].qty).toBe(2)
+    act(() => {
+      editor.undo()
+    })
+    expect(editor.get().doc.items).toHaveLength(2)
+  })
+
   it('A abre la galería de tipologías', async () => {
     const { ui } = setup()
     await screen.findByRole('list', { name: 'Ventanas de la cotización' })
@@ -195,22 +235,25 @@ describe('editor de cotización', () => {
     expect(editor.get().doc.items.some((i) => i.id === id)).toBe(true)
   })
 
-  it('con Marco abierto reserva su espacio (el inspector pasa a hoja si no cabe)', async () => {
+  it('con Marco abierto la hoja le cede su lugar: el editor no reserva columna y el inspector pasa a hoja si no cabe', async () => {
+    const wide = window.matchMedia
+    window.matchMedia = ((query: string) => ({ ...wide(query), matches: /min-width/.test(query) && !query.includes('1720') })) as typeof window.matchMedia
     setup()
     await screen.findByRole('list', { name: 'Ventanas de la cotización' })
     expect(screen.getByRole('complementary', { name: 'Inspector' })).toBeTruthy()
-    expect(document.querySelector('[data-assistant-dock]')).toBeNull()
     await act(async () => {
       document.documentElement.dataset.assistant = 'open'
       await new Promise((r) => setTimeout(r, 0))
     })
-    // La prueba simula escritorio ancho (todas las min-width calzan): caben las tres columnas.
-    expect(document.querySelector('[data-assistant-dock]')).not.toBeNull()
+    // `.fz-sheet-gutter` solo cede si el editor no trae su propia columna.
+    expect(document.querySelector('[data-assistant-dock]')).toBeNull()
+    expect(screen.queryByRole('complementary', { name: 'Inspector' })).toBeNull()
     await act(async () => {
       delete document.documentElement.dataset.assistant
       await new Promise((r) => setTimeout(r, 0))
     })
-    expect(document.querySelector('[data-assistant-dock]')).toBeNull()
+    expect(screen.getByRole('complementary', { name: 'Inspector' })).toBeTruthy()
+    window.matchMedia = wide
   })
 
   it('«en todas» cambia el color de todas las ventanas en un paso con deshacer', async () => {
@@ -246,12 +289,15 @@ describe('editor de cotización', () => {
     expect(document.activeElement).toBe(rows[0])
   })
 
-  it('las acciones del pie siguen la etapa: aceptada → «Pasar a taller»; con OT → «Ver OT N° 7»', async () => {
+  it('la acción principal de la cabecera sigue la etapa: aceptada → «Pasar a taller»; con OT → «Ver OT N° 7»', async () => {
     setup({ quote: { status: 'accepted', revision: 1, sentAt: QUOTE.updatedAt } })
-    const footer = await screen.findByRole('contentinfo', { name: 'Totales' })
-    const buttons = within(footer).getAllByRole('button').map((b) => b.textContent?.trim())
+    const header = await screen.findByRole('banner', { name: 'Cotización' })
+    const buttons = within(header).getAllByRole('button').map((b) => b.textContent?.trim())
     // El primario va al final: «Pasar a taller»; «Enviar al cliente» queda como secundario.
     expect(buttons.slice(-2)).toEqual(['Enviar al cliente', 'Pasar a taller'])
+    // Los totales no llevan acciones de etapa: solo «Agregar» extras.
+    const footer = screen.getByRole('contentinfo', { name: 'Totales' })
+    expect(within(footer).queryByRole('button', { name: 'Pasar a taller' })).toBeNull()
   })
 
   it('con OT creada el editor la muestra y enlaza («Ver OT N° 7»)', async () => {
@@ -260,11 +306,10 @@ describe('editor de cotización', () => {
       prime: (client) =>
         client.setQueryData(['work-orders', { quoteId: 'q1' }], [{ id: 'w1', number: 7, quoteId: 'q1', quoteNumber: 412, title: 'Casa Pérez', status: 'open', progress: {}, createdAt: '', updatedAt: '' }]),
     })
-    const footer = await screen.findByRole('contentinfo', { name: 'Totales' })
-    expect(within(footer).getByRole('button', { name: 'Ver OT N° 7' })).toBeTruthy()
-    expect(within(footer).queryByRole('button', { name: 'Pasar a taller' })).toBeNull()
-    const column = screen.getByRole('complementary', { name: 'Obra y ventanas' })
-    expect(within(column).getByRole('link', { name: /OT N° 7/ }).getAttribute('href')).toBe('/taller/w1')
+    const header = await screen.findByRole('banner', { name: 'Cotización' })
+    expect(within(header).getByRole('button', { name: 'Ver OT N° 7' })).toBeTruthy()
+    expect(within(header).queryByRole('button', { name: 'Pasar a taller' })).toBeNull()
+    expect(within(header).getByRole('link', { name: /OT N° 7/ }).getAttribute('href')).toBe('/taller/w1')
   })
 
   it('vista Documento: sin inspector y con PDF, Copiar enlace, WhatsApp y Correo', async () => {
@@ -280,6 +325,63 @@ describe('editor de cotización', () => {
     // Escala del documento: 100 %.
     fireEvent.click(screen.getByText('100 %').closest('button')!)
     expect(ui.getState().docZoom).toBe('actual')
+  })
+
+  it('la galería de diseños dibuja esta cotización con cada diseño y elegir cambia solo esta cotización (con deshacer)', async () => {
+    const { editor, ui } = setup()
+    await screen.findByRole('list', { name: 'Ventanas de la cotización' })
+    act(() => editor.setView('document'))
+    // El botón muestra el diseño en uso y abre la galería.
+    fireEvent.click(await screen.findByRole('button', { name: /Diseño del documento: .*Ver todos los diseños/ }))
+    expect(ui.getState().templateGalleryOpen).toBe(true)
+    const dialog = await screen.findByRole('dialog', { name: 'Diseño del documento' })
+    const cards = dialog.querySelectorAll('[data-template-id]')
+    expect(cards.length).toBeGreaterThanOrEqual(5)
+    expect(within(dialog).getAllByRole('button', { pressed: true })).toHaveLength(1)
+    const other = [...cards].find((el) => el.getAttribute('aria-pressed') === 'false')!
+    const id = other.getAttribute('data-template-id')!
+    fireEvent.click(other)
+    expect(editor.get().doc.documentOverrides).toMatchObject({ v: 2, templateId: id })
+    expect(ui.getState().templateGalleryOpen).toBe(false)
+    act(() => editor.undo())
+    expect(editor.get().doc.documentOverrides?.templateId).toBeUndefined()
+  })
+
+  it('la vista Documento muestra los ajustes de esta cotización y cada cambio entra al historial', async () => {
+    const { editor } = setup()
+    await screen.findByRole('list', { name: 'Ventanas de la cotización' })
+    act(() => editor.setView('document'))
+    const aside = await screen.findByRole('complementary', { name: 'Ajustes del documento' })
+    expect(within(aside).getByText('Secciones de esta cotización')).toBeTruthy()
+    const toggle = within(aside).getAllByRole('switch')[0]
+    const before = editor.get().past.length
+    fireEvent.click(toggle)
+    await waitFor(() => expect(editor.get().doc.documentOverrides?.sections).toBeTruthy())
+    expect(editor.get().past.length).toBe(before + 1)
+  })
+
+  it('muestra completo lo que pidió el cliente y responde por WhatsApp con mensaje listo', async () => {
+    const message = `Quisiera cambiar el ancho del living a 2.000.\n\n${'Y otra cosa más larga. '.repeat(20)}Gracias.`
+    const patches: unknown[] = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (init?.method === 'PATCH') {
+        patches.push({ url, body: JSON.parse(String(init.body)) })
+        return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (/\/activity\?/.test(url)) return new Response(JSON.stringify({ items: patches.length ? [] : [{ id: 'e1', at: '2026-11-05T12:00:00.000Z', kind: 'quote.changes_requested', text: '', actor: 'Carolina Soto', meta: { message } }], total: 1 }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      return new Response(JSON.stringify({ error: { code: 'not_found', message: 'No' } }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+    })
+    setup({ quote: { status: 'sent', revision: 1, sentAt: QUOTE.updatedAt } })
+    const notice = await screen.findByRole('region', { name: 'Lo que pidió el cliente' })
+    expect(notice.textContent).toContain('Carolina Soto pidió cambios')
+    expect(notice.textContent).toContain(message)
+    const link = within(notice).getByRole('link', { name: 'Responder por WhatsApp' })
+    expect(decodeURIComponent(link.getAttribute('href') ?? '')).toContain('te mando la versión nueva')
+    fireEvent.click(within(notice).getByRole('button', { name: 'Hecho' }))
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Lo que pidió el cliente' })).toBeNull())
+    await waitFor(() => expect(patches).toEqual([{ url: expect.stringContaining('/activity/e1'), body: { pending: false } }]))
+    vi.restoreAllMocks()
   })
 
   it('avisa en línea si tus precios cambiaron desde que la enviaste y ofrece la versión nueva', async () => {
@@ -351,12 +453,12 @@ describe('enviar y copiar sin sorpresas de precio', () => {
     expect(editor.get().meta).toMatchObject({ status: 'accepted', revision: 1 })
   })
 
-  it('«Enviar al cliente» en una aceptada pide confirmar la versión B (con la diferencia) y el mensaje lleva el total del servidor', async () => {
+  it('«Enviar al cliente» en una aceptada pide confirmar la versión B (con la diferencia) y el mensaje no lleva el total', async () => {
     const serverTotal = 777_777
     const api = mockApi({
       send: () => ({
         quote: { ...QUOTE, ...ACCEPTED, status: 'sent', revision: 2, version: 3, acceptedAt: undefined, acceptedBy: undefined, totals: { ...ZERO_TOTALS, total: serverTotal } },
-        url: 'https://app.framezen.cl/c/tok',
+        url: 'https://app.dekopen.cl/c/tok',
         revision: 2,
         revisionLabel: 'B',
       }),
@@ -373,10 +475,10 @@ describe('enviar y copiar sin sorpresas de precio', () => {
     expect(api.sends()).toHaveLength(0)
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Enviar versión B' }))
-    const message = (await within(dialog).findByRole('textbox', { name: 'Mensaje para el cliente' })) as HTMLTextAreaElement
+    await within(dialog).findByRole('button', { name: 'Listo' })
     expect(api.sends()).toHaveLength(1)
-    expect(message.value).toContain(`por ${formatCLP(serverTotal)} IVA incluido`)
-    expect(message.value).not.toContain(formatCLP(live))
+    expect(dialog.textContent).not.toContain(formatCLP(serverTotal))
+    expect(dialog.textContent).not.toContain(formatCLP(live))
   })
 
   it('si tus últimos cambios no se pudieron guardar, Enviar no manda la versión vieja y dice qué corregir', async () => {
@@ -390,6 +492,8 @@ describe('enviar y copiar sin sorpresas de precio', () => {
     act(() => editor.updateItem('a', { name: 'Ventana grande del living' }))
     act(() => ui.getState().set({ sendOpen: true }))
     const dialog = await screen.findByRole('dialog')
+    expect(api.sends()).toHaveLength(0)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Preparar PDF' }))
     const alert = await within(dialog).findByRole('alert')
     expect(alert.textContent).toContain('Revisa el nombre: es demasiado largo.')
     expect(api.sends()).toHaveLength(0)
@@ -402,7 +506,7 @@ describe('enviar y copiar sin sorpresas de precio', () => {
     act(() => editor.select(null))
     const field = await screen.findByRole('spinbutton', { name: 'Recargo sobre el costo' })
     expect(screen.queryByRole('spinbutton', { name: 'Margen sobre venta' })).toBeNull()
-    expect(screen.getByRole('heading', { name: 'Recargo de esta cotización' })).toBeTruthy()
+    expect(screen.getByText('Recargo de esta cotización')).toBeTruthy()
     fireEvent.change(field, { target: { value: '35' } })
     expect(editor.get().doc.pricing).toEqual({ marginPct: 35, marginMode: 'markup' })
   })
@@ -418,9 +522,9 @@ describe('enviar y copiar sin sorpresas de precio', () => {
     await act(async () => {
       await editor.flush()
     })
-    const column = screen.getByRole('complementary', { name: 'Obra y ventanas' })
-    await waitFor(() => expect(within(column).getByRole('status').textContent).toContain('Sin conexión · no cierres esta pestaña'))
-    expect(within(column).getByRole('status').textContent).not.toContain('a salvo')
+    const header = screen.getByRole('banner', { name: 'Cotización' })
+    await waitFor(() => expect(within(header).getByRole('status').textContent).toContain('Sin conexión · no cierres esta pestaña'))
+    expect(within(header).getByRole('status').textContent).not.toContain('a salvo')
     editor.dispose()
     expect(editorSaveLabel({ status: 'offline', local: true })).toBe('Sin conexión · guardado en este equipo')
     expect(editorSaveLabel({ status: 'error', retrying: false, message: 'Revisa el nombre.' })).toBe('No pudimos guardar: Revisa el nombre.')

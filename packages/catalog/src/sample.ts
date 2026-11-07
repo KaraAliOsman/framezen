@@ -1,9 +1,9 @@
 /**
- * Catálogo de ejemplo de Framezen: original, coherente y completo para que la app
+ * Catálogo de ejemplo de DEKOPEN: original, coherente y completo para que la app
  * funcione sin los datos reales de marcas. Las medidas son plausibles para PVC y los
  * precios (CLP, barra de 5,8 m) son de referencia, marcados como «de ejemplo».
  */
-import type { BrandSettings, Catalog, Color, Glass, Line, Pauta, Profile, ProfileRole, TypologyId } from '@framezen/engine'
+import type { BrandSettings, Catalog, Color, Glass, Line, Pauta, Profile, ProfileRole, TypologyId } from '@dekopen/engine'
 import { COLOR_PALETTE } from './colors'
 import { GENERIC_BRAND, GENERIC_BRAND_ID, GENERIC_ITEMS, SAMPLE_SOURCE, genericRulesFor } from './rules'
 import { slug } from './text'
@@ -21,7 +21,11 @@ const COLOR_FACTOR: Record<(typeof COLOR_IDS)[number], number> = {
   negro: 1.72,
 }
 
-const colors: Color[] = COLOR_IDS.map((id) => COLOR_PALETTE.find((color) => color.id === id)!)
+/** Copias de la paleta (con su textura de foliado): el catálogo no comparte objetos con ella. */
+const colors: Color[] = COLOR_IDS.map((id) => {
+  const color = COLOR_PALETTE.find((candidate) => candidate.id === id)!
+  return color.texture ? { ...color, texture: { ...color.texture } } : { ...color }
+})
 
 function prices(white: number, colorless = false): Record<string, number> {
   return Object.fromEntries(COLOR_IDS.map((id) => [id, colorless ? white : Math.round((white * COLOR_FACTOR[id]) / 10) * 10]))
@@ -61,6 +65,8 @@ function defaults(lineId: string, roles: Partial<Record<ProfileRole, string>>): 
 const S60 = 'serie-60'
 const s60Pauta: Pauta = {
   weld: 3,
+  frenchGap: 10,
+  frenchMullionDeduction: 56,
   frameDeduction: 45,
   sashWidth: 78,
   sashDeduction: 58,
@@ -109,6 +115,8 @@ const s70Profiles = buildProfiles(S70, [
 const P70 = 'serie-puerta-70'
 const p70Pauta: Pauta = {
   weld: 3,
+  frenchGap: 10,
+  frenchMullionDeduction: 56,
   frameDeduction: 46,
   sashWidth: 80,
   sashDeduction: 60,
@@ -125,9 +133,40 @@ const p70Profiles = buildProfiles(P70, [
   { code: 'P70-05', name: 'Batiente de puerta doble', role: 'french_mullion', white: 33900, face: 64, reinforcement: 'P70-R3' },
   { code: 'P70-06', name: 'Umbral de aluminio', role: 'threshold', white: 18900, face: 20, colorless: true },
   { code: 'P70-07', name: 'Junquillo termopanel 20 mm', role: 'bead', white: 7200, face: 20 },
+  { code: 'P70-08', name: 'Riel de plegable de aluminio', role: 'guide', white: 8900, colorless: true },
   { code: 'P70-R3', name: 'Refuerzo de marco 1,5 mm', role: 'reinforcement', white: 13900 },
   { code: 'P70-R4', name: 'Refuerzo de hoja 1,5 mm', role: 'reinforcement', white: 12600 },
   { code: 'P70-R7', name: 'Refuerzo de hoja de puerta 2 mm', role: 'reinforcement', white: 24800 },
+])
+
+// ── Serie 85 Elevadora (HST) ─────────────────────────────────────────────────
+/**
+ * Pauta de ejemplo de una corredera elevadora (datos ilustrativos, no de un fabricante): marco de
+ * 58 mm de descuento por lado, hoja de 112 mm de cara con 90 de descuento, traslapo de 10 mm sobre
+ * la luz y suplemento de alto de 20 mm (la hoja baja sobre el umbral al cerrar). El umbral
+ * descuenta como el marco (supuesto del motor). Contrástala con la plantilla del sistema real.
+ */
+const S85 = 'serie-85-elevadora'
+const s85Pauta: Pauta = {
+  weld: 3,
+  frameDeduction: 58,
+  sashWidth: 112,
+  sashDeduction: 90,
+  sashOverlap: 10,
+  glassGap: 5,
+  mullionDeduction: 20,
+  slidingHeightAdd: 20,
+  reinforcement: { frame: 140, sash: 170 },
+}
+const s85Profiles = buildProfiles(S85, [
+  { code: 'S85E-01', name: 'Marco elevadora 2 rieles', role: 'sliding_frame', white: 68900, face: 58, reinforcement: 'S85E-R5' },
+  { code: 'S85E-02', name: 'Hoja elevadora 112', role: 'sliding_sash', white: 74900, face: 112, reinforcement: 'S85E-R6' },
+  { code: 'S85E-03', name: 'Traslapo de elevadora', role: 'interlock', white: 21900, face: 40 },
+  { code: 'S85E-04', name: 'Junquillo elevadora 24 mm', role: 'bead', white: 7900, face: 22 },
+  { code: 'S85E-05', name: 'Riel de aluminio de elevadora', role: 'guide', white: 9900, colorless: true },
+  { code: 'S85E-06', name: 'Umbral de aluminio con rotura de puente térmico', role: 'threshold', white: 38900, face: 30, colorless: true },
+  { code: 'S85E-R5', name: 'Refuerzo de marco elevadora 2 mm', role: 'reinforcement', white: 18900 },
+  { code: 'S85E-R6', name: 'Refuerzo de hoja elevadora 2 mm', role: 'reinforcement', white: 21900 },
 ])
 
 const WINDOW_TYPOLOGIES: TypologyId[] = [
@@ -147,6 +186,69 @@ const WINDOW_TYPOLOGIES: TypologyId[] = [
   'arch',
   'trapezoid',
   'triangle',
+  // v5
+  'pivot_v',
+  'pivot_h',
+  'french_casement',
+  'french_tilt_turn',
+  'fixed_tilt_turn_fixed',
+  'tilt_turn_double_transom',
+  'round',
+  'oval',
+  'pentagon',
+  'octagon',
+  'gable',
+  'arch_segmental',
+  'arch_casement',
+  // v7: combinaciones de taller
+  'casement_bottom_fixed',
+  'tilt_turn_bottom_fixed',
+  'casement_double_bottom_fixed',
+  'tilt_turn_transom',
+  'awning_transom',
+  'fixed_tilt',
+  'fixed_awning_side',
+  'casement_double_mullion',
+  'tilt_turn_fixed_tilt_turn',
+]
+
+const SLIDING_SAMPLE_TYPOLOGIES: TypologyId[] = [
+  'sliding_2',
+  'sliding_2_fixed',
+  'sliding_3',
+  'sliding_3_rail',
+  'sliding_4',
+  'sliding_mono',
+  'sliding_6',
+  'sliding_3_center_fixed',
+  'sliding_4_center_fixed',
+]
+
+const DOOR_SAMPLE_TYPOLOGIES: TypologyId[] = [
+  'door',
+  'door_double',
+  'door_sidelight',
+  'door_transom',
+  // v7: puerta hacia afuera
+  'door_out',
+  'fixed',
+  'casement',
+  'tilt_turn',
+  'casement_double',
+  // v5: puertas, terraza y plegables
+  'balcony_door',
+  'balcony_door_double',
+  'entrance_door',
+  'entrance_door_sidelights',
+  'door_double_sidelights',
+  'tilt_slide',
+  'tilt_slide_2',
+  'parallel_slide',
+  'folding_3',
+  'folding_4',
+  'folding_5',
+  'folding_6',
+  'folding_7',
 ]
 
 const lines: Line[] = [
@@ -194,7 +296,7 @@ const lines: Line[] = [
       reinforcement: 'S70C-R5',
     }),
     colorIds: [...COLOR_IDS],
-    typologyIds: ['sliding_2', 'sliding_2_fixed', 'sliding_3', 'sliding_3_rail', 'sliding_4', 'sliding_mono'],
+    typologyIds: SLIDING_SAMPLE_TYPOLOGIES,
     ...genericRulesFor('sliding'),
     source: SAMPLE_SOURCE,
     completeness: 'complete',
@@ -218,11 +320,37 @@ const lines: Line[] = [
       french_mullion: 'P70-05',
       threshold: 'P70-06',
       bead: 'P70-07',
+      guide: 'P70-08',
       reinforcement: 'P70-R3',
     }),
     colorIds: [...COLOR_IDS],
-    typologyIds: ['door', 'door_double', 'door_sidelight', 'door_transom', 'fixed', 'casement', 'tilt_turn', 'casement_double'],
+    typologyIds: DOOR_SAMPLE_TYPOLOGIES,
     ...genericRulesFor('casement'),
+    source: SAMPLE_SOURCE,
+    completeness: 'complete',
+  },
+  {
+    id: S85,
+    brandId: PROFILE_BRAND,
+    name: 'Serie 85 Elevadora',
+    kind: 'sliding',
+    material: 'pvc',
+    description: 'Corredera elevadora 85 mm, umbral de aluminio',
+    depth: 85,
+    chambers: 5,
+    pauta: s85Pauta,
+    profiles: defaults(S85, {
+      sliding_frame: 'S85E-01',
+      sliding_sash: 'S85E-02',
+      interlock: 'S85E-03',
+      bead: 'S85E-04',
+      guide: 'S85E-05',
+      threshold: 'S85E-06',
+      reinforcement: 'S85E-R5',
+    }),
+    colorIds: [...COLOR_IDS],
+    typologyIds: ['lift_slide_2', 'lift_slide_3', 'lift_slide_4'],
+    ...genericRulesFor('sliding', { liftSlide: true }),
     source: SAMPLE_SOURCE,
     completeness: 'complete',
   },
@@ -253,7 +381,7 @@ export const SAMPLE_CATALOG: Catalog = {
     { id: GLASS_BRAND, name: 'Vidrios de ejemplo', kind: 'glass', country: 'Chile', monogram: 'VE', accent: '#5C8A93' },
   ],
   lines,
-  profiles: [...s60Profiles, ...s70Profiles, ...p70Profiles],
+  profiles: [...s60Profiles, ...s70Profiles, ...p70Profiles, ...s85Profiles],
   items: GENERIC_ITEMS,
   glass,
   brandSettings,

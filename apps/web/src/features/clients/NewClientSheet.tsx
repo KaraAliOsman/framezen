@@ -2,14 +2,18 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { humanError } from '../../lib/api'
 import { useCreateClient } from '../../lib/hooks'
+import { useT } from '../../lib/i18n'
 import { Button, Field, Input, Sheet, SheetContent, Textarea, toast } from '../../ui'
-import { formatRut, rutHint } from './rut'
+import es from './i18n/es'
+import { useTaxIdRules } from './taxId'
 import { useIsPhone } from './useIsPhone'
 
 const EMPTY = { name: '', phone: '', email: '', rut: '', address: '', city: '', notes: '' }
 
 /** Cliente nuevo: solo el nombre hace falta; lo demás se completa cuando quieras. */
 export function NewClientSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const t = useT(es)
+  const tax = useTaxIdRules()
   const phone = useIsPhone()
   const navigate = useNavigate()
   const create = useCreateClient()
@@ -30,34 +34,34 @@ export function NewClientSheet({ open, onOpenChange }: { open: boolean; onOpenCh
     setTouched(true)
     if (nameMissing) return
     const body = Object.fromEntries(
-      Object.entries({ ...values, rut: values.rut ? formatRut(values.rut) : '' }).filter(([, v]) => v.trim() !== ''),
+      Object.entries({ ...values, rut: values.rut ? tax.normalize(values.rut) : '' }).filter(([, v]) => v.trim() !== ''),
     ) as typeof values
     create.mutate(body, {
       onSuccess: (client) => {
         onOpenChange(false)
-        toast.success(`Agregaste a ${client.name}`)
+        toast.success(t('sheet.added', { name: client.name }))
         navigate(`/clientes/${client.id}`)
       },
       onError: (error) => toast.error(humanError(error)),
     })
   }
 
-  const hint = rutHint(values.rut)
+  const hint = tax.hint(values.rut)
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side={phone ? 'bottom' : 'right'}
         width={440}
-        title="Nuevo cliente"
-        description="Solo hace falta el nombre. Lo demás puedes completarlo después."
+        title={t('sheet.title')}
+        description={t('sheet.description')}
         footer={
           <>
             <Button variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancelar
+              {t('sheet.cancel')}
             </Button>
-            <Button variant="primary" onClick={submit} loading={create.isPending}>
-              Guardar cliente
+            <Button variant="primary" onClick={submit} loading={create.isPending} shortcut={phone ? undefined : 'mod+enter'}>
+              {t('sheet.save')}
             </Button>
           </>
         }
@@ -68,36 +72,43 @@ export function NewClientSheet({ open, onOpenChange }: { open: boolean; onOpenCh
             e.preventDefault()
             submit()
           }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault()
+              submit()
+            }
+          }}
         >
-          <Field label="Nombre" error={touched && nameMissing ? 'Escribe el nombre de la persona o empresa.' : undefined}>
-            <Input value={values.name} onChange={set('name')} autoFocus placeholder="Pedro Soto o Constructora Andes" autoComplete="off" />
+          <Field label={t('fields.name')} error={touched && nameMissing ? t('sheet.nameRequired') : undefined}>
+            <Input value={values.name} onChange={set('name')} autoFocus placeholder={t('placeholders.name')} autoComplete="off" />
           </Field>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Teléfono" optional>
-              <Input value={values.phone} onChange={set('phone')} type="tel" placeholder="+56 9 1234 5678" autoComplete="off" />
+            <Field label={t('fields.phone')} optional>
+              <Input value={values.phone} onChange={set('phone')} type="tel" placeholder={t('placeholders.phone')} autoComplete="off" />
             </Field>
-            <Field label="Correo" optional>
-              <Input value={values.email} onChange={set('email')} type="email" placeholder="pedro@correo.cl" autoComplete="off" />
+            <Field label={t('fields.email')} optional>
+              <Input value={values.email} onChange={set('email')} type="email" placeholder={t('placeholders.email')} autoComplete="off" />
             </Field>
           </div>
-          <Field label="RUT" optional hint={hint ? <span className="text-warn-800">{hint}</span> : 'Para facturas y cotizaciones a empresas.'}>
+          <Field label={tax.label} optional hint={hint ? <span className="text-warning">{hint}</span> : t('rut.hint')}>
             <Input
               value={values.rut}
               onChange={set('rut')}
-              onBlur={() => setValues((v) => ({ ...v, rut: formatRut(v.rut) }))}
-              placeholder="12.345.678-5"
+              onBlur={() => setValues((v) => ({ ...v, rut: tax.normalize(v.rut) }))}
+              placeholder={tax.placeholder}
+              className={tax.chile ? 'code-id' : undefined}
             />
           </Field>
           <div className="grid gap-4 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-            <Field label="Dirección" optional>
-              <Input value={values.address} onChange={set('address')} placeholder="Los Aromos 1234" autoComplete="off" />
+            <Field label={t('fields.address')} optional>
+              <Input value={values.address} onChange={set('address')} placeholder={t('placeholders.address')} autoComplete="off" />
             </Field>
-            <Field label="Ciudad" optional>
-              <Input value={values.city} onChange={set('city')} placeholder="Concepción" autoComplete="off" />
+            <Field label={t('fields.city')} optional>
+              <Input value={values.city} onChange={set('city')} placeholder={t('placeholders.city')} autoComplete="off" />
             </Field>
           </div>
-          <Field label="Notas" optional>
-            <Textarea value={values.notes} onChange={set('notes')} rows={2} placeholder="Cómo llegó, qué le interesa, horario para llamar…" />
+          <Field label={t('fields.notes')} optional>
+            <Textarea value={values.notes} onChange={set('notes')} rows={2} placeholder={t('placeholders.notes')} />
           </Field>
           <button type="submit" hidden />
         </form>

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
-import type { BillingStateDetail, Me } from '@framezen/shared'
+import type { BillingStateDetail, Me } from '@dekopen/shared'
 import { RequireAuth } from '../../../lib/auth'
 import { createQueryClient } from '../../../lib/queryClient'
 import { Toaster } from '../../../ui/Toaster'
@@ -95,7 +95,7 @@ describe('Plan y facturación', () => {
     expect(screen.getByText(/^Desde el 30 de noviembre( de 2026)? pasas a Taller mensual\./)).toBeTruthy()
     expect(screen.getByText('Cambio programado')).toBeTruthy()
 
-    const taller = screen.getByRole('heading', { level: 4, name: 'Taller' }).closest('article')!
+    const taller = screen.getByRole('heading', { level: 4, name: 'Taller' }).closest('th')!
     expect(within(taller).getByText('Programado')).toBeTruthy()
     expect(within(taller).getByText(/^Desde el 30 de noviembre/)).toBeTruthy()
     expect(within(taller).queryByRole('button', { name: 'Cambiar a Taller' })).toBeNull()

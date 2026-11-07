@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react'
-import { computeLayout, type Catalog, type Layout, type WindowDesign } from '@framezen/engine'
-import { WindowThumbnail } from '@framezen/documents'
+import { computeLayout, type Catalog, type Layout, type WindowDesign } from '@dekopen/engine'
+import { WindowThumbnail } from '@dekopen/documents'
 import { cn } from '../../../lib/cn'
 
 /** Miniatura dibujada de una ventana (vista interior). Calcula la geometría si no viene. */
@@ -37,7 +37,7 @@ export const DesignThumb = memo(function DesignThumb({
       {geometry && catalog ? (
         <WindowThumbnail layout={geometry} design={design} catalog={catalog} size={size} title={title} />
       ) : (
-        <span className="block size-3/4 rounded-[3px] border border-paper-350/60 bg-[var(--color-glass)]/50" />
+        <span className="block size-3/4 rounded-xs bg-hover" />
       )}
     </span>
   )

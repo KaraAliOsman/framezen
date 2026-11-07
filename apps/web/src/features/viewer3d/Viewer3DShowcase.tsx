@@ -1,18 +1,21 @@
-import type { TypologyId } from '@framezen/engine'
+import { TYPOLOGIES, type TypologyGroup, type TypologyId } from '@dekopen/engine'
 import clsx from 'clsx'
 import { Slider, Switch, ToggleGroup } from 'radix-ui'
 import { useMemo, useState } from 'react'
+import { WindowArButton } from './ar/WindowArButton'
 import { SHOWCASE_CATALOG, SHOWCASE_TYPOLOGIES, showcaseWindow } from './showcaseData'
 import type { Viewer3DView } from './types'
 import { Window3D } from './Window3D'
 
 const mm = new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 })
 
-const GROUPS: { label: string; test: (id: TypologyId) => boolean }[] = [
-  { label: 'Ventanas', test: (id) => !id.startsWith('door') && !id.startsWith('sliding') && !['arch', 'trapezoid', 'triangle'].includes(id) },
-  { label: 'Correderas', test: (id) => id.startsWith('sliding') },
-  { label: 'Puertas', test: (id) => id.startsWith('door') },
-  { label: 'Formas especiales', test: (id) => ['arch', 'trapezoid', 'triangle'].includes(id) },
+/** Agrupa por el `group` de cada tipología del motor (no por prefijo del id). */
+const GROUPS: { label: string; group: TypologyGroup }[] = [
+  { label: 'Ventanas', group: 'window' },
+  { label: 'Puertas', group: 'door' },
+  { label: 'Correderas, elevadoras y paralelas', group: 'sliding' },
+  { label: 'Plegables', group: 'folding' },
+  { label: 'Formas especiales', group: 'shape' },
 ]
 
 function SectionLabel({ children }: { children: string }) {
@@ -85,6 +88,7 @@ export function Viewer3DShowcase() {
               view={view}
               height="min(600px, 68dvh)"
               className="rounded-[12px] border border-paper-200"
+              overlay={<WindowArButton layout={layout} design={design} catalog={catalog} title={typology?.label} />}
             />
             <p className="tabular flex flex-wrap items-center gap-x-2 text-[13px] leading-[18px] text-paper-600">
               <span className="font-medium text-paper-900">{typology?.label}</span>
@@ -121,7 +125,7 @@ export function Viewer3DShowcase() {
               className="flex flex-col gap-4"
             >
               {GROUPS.map((group) => {
-                const items = SHOWCASE_TYPOLOGIES.filter((item) => group.test(item.id))
+                const items = SHOWCASE_TYPOLOGIES.filter((item) => TYPOLOGIES.find((t) => t.id === item.id)?.group === group.group)
                 if (items.length === 0) return null
                 return (
                   <div key={group.label} className="flex flex-col gap-2">

@@ -1,17 +1,27 @@
-import { stillStep, type MarcoState } from './director'
-import { MarcoEngine, type MarcoFrame } from './engine'
+import { stillStep, type AvatarState } from './director'
+import { AvatarEngine, type AvatarDesign, type AvatarFrame } from './engine'
+import type { ExpressionId } from './expressions'
+
+export interface StillOptions {
+  eyeScale?: number
+  design?: Partial<AvatarDesign>
+  /** cara de reposo distinta (solo en estados con cara de reposo: idle, listening…) */
+  expression?: ExpressionId
+}
 
 /**
- * Frame quieto y representativo de un estado (miniaturas junto a los mensajes, toasts).
- * Determinista: misma entrada, mismo SVG. «Listo» se muestra feliz, no guiñando.
+ * Frame quieto y representativo de un estado (miniaturas junto a los mensajes, toasts,
+ * selectores del diseñador). Determinista: misma entrada, mismo SVG. «Listo» se muestra
+ * feliz, no guiñando.
  */
-export function stillFrame(state: MarcoState, options: { eyeScale?: number } = {}): MarcoFrame {
+export function stillFrame(state: AvatarState, options: StillOptions = {}): AvatarFrame {
   const step = stillStep(state)
-  const engine = new MarcoEngine({
+  const engine = new AvatarEngine({
     pose: step.pose,
-    expression: step.expression ?? 'attentive',
+    expression: options.expression && step.pose === 'rest' && step.expression === 'attentive' ? options.expression : (step.expression ?? 'attentive'),
     reducedMotion: true,
     eyeScale: options.eyeScale,
+    design: options.design,
   })
   // t = 1: antes del primer parpadeo del calendario, ojos abiertos
   return engine.sample(1)

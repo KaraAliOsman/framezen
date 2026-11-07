@@ -1,45 +1,78 @@
 /**
- * Estado del panel de Marco: conversación visible, historial para el servidor, borrador, modo y
- * créditos, y el estado del avatar. Se guarda en la pestaña (sessionStorage): recargar no pierde lo
- * escrito. Las funciones de deshacer y las aprobaciones pendientes viven en memoria.
+ * Estado del panel del asistente: asistente y conversación activos, modo elegido, la vista de la
+ * conversación (entradas, propuestas), borrador, estado del avatar y saldo. El servidor es la fuente
+ * de verdad del historial; aquí guardamos una copia en la pestaña (sessionStorage) para que recargar
+ * no pierda lo escrito ni la vista. Los deshacer de los comandos locales y las aprobaciones del
+ * ejecutor viven en memoria.
  *
  * La conversación pertenece a una sesión (`owner` = usuario:empresa, ver session.ts): si entra otra
  * persona u otra empresa en la misma pestaña se descarta entera, y sin dueño no se guarda nada.
  */
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import type { AssistantLocalReason, AssistantMessage } from '@framezen/shared'
-import type { MarcoState } from './avatar'
-import type { ApprovalView, ChatEntry } from './types'
+import type { AssistantMode, ToolRun } from '@dekopen/shared'
+import type { FaceState } from './face'
+import type { ApprovalView, ChatEntry, NoticeView } from './types'
 
-export interface MarcoStore {
+export interface CreditsView {
+  left: number
+  /** Créditos del último turno con IA. */
+  lastTurn?: number
+}
+
+export interface AssistantPanelStore {
+  /** Asistente activo (null = el predeterminado del servidor). */
+  assistantId: string | null
+  /** Conversación activa en el servidor (null = una nueva al primer mensaje). */
+  conversationId: string | null
+  /** Modo elegido para esta conversación (null = el modo por defecto del asistente). */
+  mode: AssistantMode | null
   entries: ChatEntry[]
-  /** Conversación en formato del contrato (lo que viaja al servidor). */
-  history: AssistantMessage[]
+  /** Registro de herramientas conocido (propuestas, ejecutadas, deshechas). */
+  toolRuns: Record<string, ToolRun>
+  hasMoreBefore: boolean
   draft: string
   minimized: boolean
   busy: boolean
-  marco: MarcoState
-  mode: 'ai' | 'local' | null
-  reason: AssistantLocalReason | null
-  credits: number | null
-  /** Ya saludó con la vuelta de ojos en esta sesión. */
+  face: FaceState
+  historyOpen: boolean
+  credits: CreditsView | null
+  /** Trayendo una conversación del historial. */
+  opening: boolean
+  /** Cambia cuando se reemplaza la vista por otra conversación. */
+  epoch: number
+  /** Ya saludó en esta sesión. */
   greeted: boolean
+  /** Ya vio el aviso de «Acceso total». */
+  fullAccessAck: boolean
   /** Sesión dueña de la conversación (`usuarioId:empresaId`); null = sin asociar. */
   owner: string | null
 
   setDraft(draft: string): void
   setMinimized(minimized: boolean): void
   setBusy(busy: boolean): void
-  setMarco(state: MarcoState): void
-  setMode(mode: 'ai' | 'local', reason: AssistantLocalReason | null, credits?: number | null): void
-  setCredits(credits: number | null): void
+  setFace(face: FaceState): void
+  setHistoryOpen(open: boolean): void
+  setOpening(opening: boolean): void
+  setMode(mode: AssistantMode | null): void
+  setAssistant(id: string | null): void
+  setConversation(id: string | null): void
+  setCredits(credits: CreditsView | null): void
   setGreeted(): void
+  ackFullAccess(): void
   addEntry(entry: ChatEntry): void
   updateEntry(id: string, patch: Partial<ChatEntry> | ((entry: ChatEntry) => Partial<ChatEntry>)): void
-  pushHistory(...messages: AssistantMessage[]): void
+  /** Cambia el id de una entrada (id local → id del servidor). */
+  renameEntry(from: string, to: string): void
+  addNotice(entryId: string, notice: NoticeView): void
+  upsertToolRun(run: ToolRun): void
   markReceipt(receiptId: string, patch: { undone?: boolean; undoable?: boolean }): void
   setApproval(entryId: string, approval: ApprovalView | undefined): void
+  /** Reemplaza la vista por una conversación traída del servidor. */
+  loadConversation(input: { conversationId: string; mode?: AssistantMode; entries: ChatEntry[]; toolRuns: ToolRun[]; hasMoreBefore: boolean }): void
+  /** Agrega mensajes anteriores al comienzo (paginación). */
+  prependEntries(entries: ChatEntry[], hasMoreBefore: boolean): void
+  /** Conversación nueva (mismo asistente). */
   reset(): void
   /** Asocia la conversación a una sesión. Si era de otra (o de nadie), la descarta. true si cambió. */
   bindSession(owner: string): boolean
@@ -47,40 +80,66 @@ export interface MarcoStore {
   clearSession(): void
 }
 
-const HISTORY_KEEP = 60
 const ENTRIES_KEEP = 80
+const RUNS_KEEP = 60
 
 const initial = {
+  assistantId: null as string | null,
+  conversationId: null as string | null,
+  mode: null as AssistantMode | null,
   entries: [] as ChatEntry[],
-  history: [] as AssistantMessage[],
+  toolRuns: {} as Record<string, ToolRun>,
+  hasMoreBefore: false,
   draft: '',
   minimized: false,
   busy: false,
-  marco: 'idle' as MarcoState,
-  mode: null,
-  reason: null,
-  credits: null,
+  face: 'idle' as FaceState,
+  historyOpen: false,
+  credits: null as CreditsView | null,
+  opening: false,
+  epoch: 0,
   greeted: false,
+  fullAccessAck: false,
   owner: null as string | null,
 }
 
-export const useMarcoStore = create<MarcoStore>()(
+function trimRuns(runs: Record<string, ToolRun>): Record<string, ToolRun> {
+  const list = Object.values(runs)
+  if (list.length <= RUNS_KEEP) return runs
+  const keep = list.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, RUNS_KEEP)
+  return Object.fromEntries(keep.map((r) => [r.id, r]))
+}
+
+export const useAssistantPanel = create<AssistantPanelStore>()(
   persist(
     (set, get) => ({
       ...initial,
       setDraft: (draft) => set({ draft }),
       setMinimized: (minimized) => set({ minimized }),
       setBusy: (busy) => set({ busy }),
-      setMarco: (marco) => set({ marco }),
-      setMode: (mode, reason, credits) => set((s) => ({ mode, reason, credits: credits === undefined ? s.credits : credits })),
+      setFace: (face) => set({ face }),
+      setHistoryOpen: (historyOpen) => set({ historyOpen }),
+      setOpening: (opening) => set({ opening }),
+      setMode: (mode) => set({ mode }),
+      setAssistant: (assistantId) => set({ assistantId }),
+      setConversation: (conversationId) => set({ conversationId }),
       setCredits: (credits) => set({ credits }),
       setGreeted: () => set({ greeted: true }),
+      ackFullAccess: () => set({ fullAccessAck: true }),
       addEntry: (entry) => set((s) => ({ entries: [...s.entries, entry].slice(-ENTRIES_KEEP) })),
       updateEntry: (id, patch) =>
         set((s) => ({
           entries: s.entries.map((e) => (e.id === id ? { ...e, ...(typeof patch === 'function' ? patch(e) : patch) } : e)),
         })),
-      pushHistory: (...messages) => set((s) => ({ history: [...s.history, ...messages].slice(-HISTORY_KEEP) })),
+      renameEntry: (from, to) =>
+        set((s) => (from === to || !s.entries.some((e) => e.id === from) ? s : { entries: s.entries.filter((e) => e.id !== to).map((e) => (e.id === from ? { ...e, id: to } : e)) })),
+      addNotice: (entryId, notice) =>
+        set((s) => ({
+          entries: s.entries.map((e) =>
+            e.id === entryId ? { ...e, notices: [...(e.notices ?? []).filter((n) => n.code !== notice.code || n.text !== notice.text), notice] } : e,
+          ),
+        })),
+      upsertToolRun: (run) => set((s) => ({ toolRuns: trimRuns({ ...s.toolRuns, [run.id]: { ...s.toolRuns[run.id], ...run } }) })),
       markReceipt: (receiptId, patch) =>
         set((s) => ({
           entries: s.entries.map((e) =>
@@ -88,7 +147,23 @@ export const useMarcoStore = create<MarcoStore>()(
           ),
         })),
       setApproval: (entryId, approval) => set((s) => ({ entries: s.entries.map((e) => (e.id === entryId ? { ...e, approval } : e)) })),
-      reset: () => set({ entries: [], history: [], busy: false, marco: 'idle' }),
+      loadConversation: ({ conversationId, mode, entries, toolRuns, hasMoreBefore }) =>
+        set((s) => ({
+          epoch: s.epoch + 1,
+          conversationId,
+          ...(mode ? { mode } : {}),
+          entries: entries.slice(-ENTRIES_KEEP),
+          toolRuns: trimRuns(Object.fromEntries(toolRuns.map((r) => [r.id, r]))),
+          hasMoreBefore,
+          busy: false,
+          face: 'idle' as const,
+        })),
+      prependEntries: (older, hasMoreBefore) =>
+        set((s) => {
+          const known = new Set(s.entries.map((e) => e.id))
+          return { entries: [...older.filter((e) => !known.has(e.id)), ...s.entries], hasMoreBefore }
+        }),
+      reset: () => set({ entries: [], toolRuns: {}, conversationId: null, mode: null, hasMoreBefore: false, busy: false, face: 'idle' }),
       bindSession: (owner) => {
         if (get().owner === owner) return false
         set({ ...initial, owner })
@@ -97,33 +172,42 @@ export const useMarcoStore = create<MarcoStore>()(
       clearSession: () => set({ ...initial }),
     }),
     {
-      name: 'fz-marco',
+      name: 'fz-assistant',
       storage: createJSONStorage(() => sessionStorage),
-      version: 2,
-      // v1 no sabía de quién era la conversación: se descarta en vez de mostrarla a quien entre.
-      migrate: (persisted, version) => (version < 2 ? { owner: null } : persisted) as Partial<MarcoStore>,
+      version: 3,
+      // Versiones anteriores (fz-marco) no se migran: el servidor guarda ahora el historial.
+      migrate: (persisted, version) => (version < 3 ? { owner: null } : persisted) as Partial<AssistantPanelStore>,
       // Sin sesión dueña no se guarda la conversación (p. ej. una respuesta que llega tras salir).
-      partialize: (s): Partial<MarcoStore> =>
+      partialize: (s): Partial<AssistantPanelStore> =>
         s.owner === null
           ? { owner: null }
           : {
               owner: s.owner,
+              assistantId: s.assistantId,
+              conversationId: s.conversationId,
+              mode: s.mode,
               // Recibos sin su deshacer (no sobrevive a recargar) y sin tareas a medias.
               entries: s.entries.map((e) => ({
                 ...e,
-                status: e.status === 'pending' ? ('stopped' as const) : e.status,
+                status: e.status === 'pending' || e.status === 'streaming' ? ('stopped' as const) : e.status,
                 receipts: e.receipts?.map((r) => ({ ...r, undoable: false })),
                 approval: e.approval?.status === 'pending' ? { ...e.approval, status: 'declined' as const } : e.approval,
                 steps: undefined,
               })),
-              history: s.history,
+              toolRuns: s.toolRuns,
+              hasMoreBefore: s.hasMoreBefore,
               draft: s.draft,
               minimized: s.minimized,
               greeted: s.greeted,
+              fullAccessAck: s.fullAccessAck,
             },
     },
   ),
 )
+
+/** Alias de compatibilidad (v4): el store del panel. */
+export const useMarcoStore = useAssistantPanel
+export type MarcoStore = AssistantPanelStore
 
 let idCounter = 0
 export function entryId(prefix = 'e'): string {

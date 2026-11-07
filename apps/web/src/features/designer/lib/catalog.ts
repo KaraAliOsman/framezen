@@ -2,7 +2,18 @@
  * Lecturas del catálogo para el diseñador: líneas agrupadas por marca, colores de una línea,
  * vidrios agrupados por tipo y valores por defecto. Nunca lanza con catálogos incompletos.
  */
-import type { Catalog, Color, Glass, GlassKind, Line, TypologyId } from '@framezen/engine'
+import { lineFabricates, V7_TYPOLOGY_IDS, type Catalog, type Color, type Glass, type GlassKind, type Line, type TypologyId } from '@dekopen/engine'
+import { getGlossary, getLocale, translate } from '../../../lib/i18n'
+import es from '../i18n/es'
+
+/** Orden alfabético del idioma de la interfaz (números como números: «Serie 60» antes que «Serie 100»). */
+function collator(): Intl.Collator {
+  try {
+    return new Intl.Collator(getLocale(), { numeric: true, sensitivity: 'base' })
+  } catch {
+    return new Intl.Collator('es', { numeric: true, sensitivity: 'base' })
+  }
+}
 
 export interface LineGroup {
   brandId: string
@@ -10,24 +21,25 @@ export interface LineGroup {
   lines: Line[]
 }
 
-/** Líneas agrupadas por marca (marcas y líneas en orden alfabético, en español). */
+/** Líneas agrupadas por marca (marcas y líneas en orden alfabético del idioma de la interfaz). */
 export function linesByBrand(catalog: Catalog | undefined, filter?: (line: Line) => boolean): LineGroup[] {
   const lines = (catalog?.lines ?? []).filter((l) => (filter ? filter(l) : true))
   const groups = new Map<string, LineGroup>()
   for (const line of lines) {
     const brand = catalog?.brands.find((b) => b.id === line.brandId)
     const key = brand?.id ?? line.brandId ?? 'otras'
-    if (!groups.has(key)) groups.set(key, { brandId: key, brandName: brand?.name ?? 'Otras líneas', lines: [] })
+    if (!groups.has(key)) groups.set(key, { brandId: key, brandName: brand?.name ?? translate(es, 'pickers.otherLines'), lines: [] })
     groups.get(key)!.lines.push(line)
   }
-  const collator = new Intl.Collator('es', { numeric: true, sensitivity: 'base' })
+  const order = collator()
   const out = [...groups.values()]
-  out.forEach((g) => g.lines.sort((a, b) => collator.compare(a.name, b.name)))
-  return out.sort((a, b) => collator.compare(a.brandName, b.brandName))
+  out.forEach((g) => g.lines.sort((a, b) => order.compare(a.name, b.name)))
+  return out.sort((a, b) => order.compare(a.brandName, b.brandName))
 }
 
-export function lineSupports(line: Line, typologyId: TypologyId): boolean {
-  return Array.isArray(line.typologyIds) && line.typologyIds.includes(typologyId)
+/** ¿La línea fabrica esta tipología? Las combinaciones de v7 se deducen de sus partes (ver `lineFabricates`). */
+export function lineSupports(line: Line, typologyId: TypologyId, catalog?: Catalog): boolean {
+  return lineFabricates(line, typologyId, catalog?.profiles ?? [])
 }
 
 export function findLine(catalog: Catalog | undefined, lineId: string | undefined): Line | undefined {
@@ -38,13 +50,13 @@ export function brandName(catalog: Catalog | undefined, brandId: string | undefi
   return brandId ? catalog?.brands.find((b) => b.id === brandId)?.name : undefined
 }
 
-/** «Practicable · 60 mm · 4 cámaras» */
+/** «Practicable · 60 mm · 4 cámaras» (en el idioma de la interfaz). */
 export function lineDetail(line: Line): string {
-  const kind = line.kind === 'sliding' ? 'Corredera' : 'Practicable'
-  const parts = [kind]
-  if (line.depth) parts.push(`${line.depth} mm`)
-  if (line.chambers) parts.push(`${line.chambers} cámaras`)
-  if (line.material === 'aluminum') parts.push('aluminio')
+  const g = getGlossary()
+  const parts = [g.term(line.kind === 'sliding' ? 'lineKind.sliding' : 'lineKind.casement')]
+  if (line.depth) parts.push(translate(es, 'pickers.depth', { mm: line.depth }))
+  if (line.chambers) parts.push(translate(es, 'pickers.chambers', { count: line.chambers }))
+  if (line.material === 'aluminum') parts.push(translate(es, 'pickers.aluminum'))
   return parts.join(' · ')
 }
 
@@ -58,13 +70,6 @@ export function lineColors(catalog: Catalog | undefined, lineId: string | undefi
   return list.length ? list : colors
 }
 
-const GLASS_GROUP: Record<GlassKind, string> = {
-  dvh: 'Termopanel (DVH)',
-  mono: 'Monolítico',
-  laminated: 'Laminado',
-  tempered: 'Templado',
-  other: 'Otros',
-}
 const GLASS_ORDER: GlassKind[] = ['dvh', 'mono', 'laminated', 'tempered', 'other']
 
 export interface GlassGroup {
@@ -75,11 +80,12 @@ export interface GlassGroup {
 
 export function glassGroups(catalog: Catalog | undefined): GlassGroup[] {
   const glass = catalog?.glass ?? []
-  const collator = new Intl.Collator('es', { numeric: true, sensitivity: 'base' })
+  const order = collator()
+  const glossary = getGlossary()
   return GLASS_ORDER.map((kind) => ({
     kind,
-    label: GLASS_GROUP[kind],
-    items: glass.filter((g) => (GLASS_ORDER.includes(g.kind) ? g.kind : 'other') === kind).sort((a, b) => collator.compare(a.name, b.name)),
+    label: glossary.glassKind(kind),
+    items: glass.filter((g) => (GLASS_ORDER.includes(g.kind) ? g.kind : 'other') === kind).sort((a, b) => order.compare(a.name, b.name)),
   })).filter((g) => g.items.length > 0)
 }
 
@@ -172,6 +178,9 @@ export function availableTypologies(catalog: Catalog | undefined): Set<TypologyI
   const lines = catalog?.lines ?? []
   if (lines.length === 0) return null
   const set = new Set<TypologyId>()
-  for (const l of lines) for (const t of l.typologyIds ?? []) set.add(t as TypologyId)
+  for (const l of lines) {
+    for (const t of l.typologyIds ?? []) set.add(t as TypologyId)
+    for (const t of V7_TYPOLOGY_IDS) if (lineFabricates(l, t, catalog?.profiles ?? [])) set.add(t)
+  }
   return set.size ? set : null
 }

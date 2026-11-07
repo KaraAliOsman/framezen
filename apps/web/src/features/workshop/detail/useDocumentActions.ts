@@ -1,15 +1,25 @@
 import { useCallback, useState, type ReactElement } from 'react'
-import { workshopDocumentFileName, type WorkshopDocumentKind } from '@framezen/documents'
+import { workshopDocumentFileName, type WorkshopDocumentKind } from '@dekopen/documents'
+import { translate } from '../../../lib/i18n'
 import { toast } from '../../../ui'
 import { fetchServerPdf, pdfUrl, saveBlob } from '../data'
+import es from '../i18n/es'
 import { printElement } from '../print'
 
 /** Documentos cuyas cifras cambian con los ajustes de corte (barras, sobrantes, costos). */
-export const CUT_DEPENDENT: ReadonlySet<WorkshopDocumentKind> = new Set(['cuts', 'materials', 'materials-costs', 'purchase', 'costs'])
+export const CUT_DEPENDENT: ReadonlySet<WorkshopDocumentKind> = new Set(['cuts', 'cut-order', 'materials', 'materials-costs', 'purchase', 'costs', 'labels'])
+
+/** De dónde sale el PDF cuando no es de una OT (los cortes de una cotización). */
+export interface DocumentSource {
+  url: (kind: WorkshopDocumentKind, params?: DocumentRequest['params']) => string
+  fileName: (kind: WorkshopDocumentKind, ext?: string) => string
+}
 
 export interface DocumentRequest {
   kind: WorkshopDocumentKind
   element: ReactElement
+  /** Se suma al nombre del archivo: «OT-38-Cortes-Hojas.pdf». */
+  fileSuffix?: string
   /**
    * Parámetros extra del PDF del servidor, con los nombres que lee GET /work-orders/:id/pdf
    * (`labels=sheet|roll` en etiquetas, `brandId` en compras).
@@ -34,28 +44,35 @@ export interface DocumentRequest {
  * con «Guardar como PDF», sin bloquear nada. Los documentos enormes (`serverOnly`) nunca se
  * arman en el navegador.
  */
-export function useDocumentActions({ orderId, orderNumber, simulated }: { orderId: string; orderNumber: number; simulated: boolean }) {
+export function useDocumentActions({ orderId, orderNumber, simulated, source }: { orderId: string; orderNumber: number; simulated: boolean; source?: DocumentSource }) {
   const [busy, setBusy] = useState<WorkshopDocumentKind | null>(null)
+
+  const fileName = useCallback(
+    (req: DocumentRequest) => {
+      const name = source ? source.fileName(req.kind) : workshopDocumentFileName(req.kind, orderNumber)
+      return req.fileSuffix ? name.replace(/\.pdf$/, `-${req.fileSuffix}.pdf`) : name
+    },
+    [source, orderNumber],
+  )
 
   const printInBrowser = useCallback(
     (req: DocumentRequest) => {
-      const title = workshopDocumentFileName(req.kind, orderNumber, 'pdf').replace(/\.pdf$/, '')
-      void printElement(req.element, title)
+      void printElement(req.element, fileName(req).replace(/\.pdf$/, ''))
     },
-    [orderNumber],
+    [fileName],
   )
 
   /** Baja el PDF del servidor; false si no se pudo. */
   const fromServer = useCallback(
     async (req: DocumentRequest): Promise<boolean> => {
       setBusy(req.kind)
-      const blob = await fetchServerPdf(pdfUrl(orderId, req.kind, req.params))
+      const blob = await fetchServerPdf(source ? source.url(req.kind, req.params) : pdfUrl(orderId, req.kind, req.params))
       setBusy(null)
       if (!blob) return false
-      saveBlob(blob, workshopDocumentFileName(req.kind, orderNumber))
+      saveBlob(blob, fileName(req))
       return true
     },
-    [orderId, orderNumber],
+    [orderId, source, fileName],
   )
 
   /** Simulación de corte en curso: el servidor no la conoce, su PDF saldría con otras cifras. */
@@ -65,16 +82,16 @@ export function useDocumentActions({ orderId, orderNumber, simulated }: { orderI
   const serverOnly = useCallback(
     async (req: DocumentRequest, reason: string, printing: boolean) => {
       if (simulating(req)) {
-        toast.error(`${reason} Vuelve a tus ajustes de corte para bajar el PDF del servidor.`)
+        toast.error(translate(es, 'doc.toast.simulating', { reason }))
         return
       }
       if (req.browserOnly) {
-        toast.error(`${reason} Y con estas opciones el PDF del servidor no saldría igual que en pantalla.`)
+        toast.error(translate(es, 'doc.toast.options', { reason }))
         return
       }
-      if (printing) toast(`${reason} Te bajamos el PDF para que lo imprimas.`)
+      if (printing) toast(translate(es, 'doc.toast.downloading', { reason }))
       if (await fromServer(req)) return
-      toast.error(`No pudimos armar el PDF en el servidor. ${reason} Prueba de nuevo en un momento.`)
+      toast.error(translate(es, 'doc.toast.serverFailed', { reason }))
     },
     [simulating, fromServer],
   )
@@ -97,7 +114,7 @@ export function useDocumentActions({ orderId, orderNumber, simulated }: { orderI
         return
       }
       if (simulating(req)) {
-        toast('Estás simulando ajustes de corte: armamos el PDF en tu navegador. Elige «Guardar como PDF».')
+        toast(translate(es, 'doc.toast.browserSim'))
         printInBrowser(req)
         return
       }
@@ -107,7 +124,7 @@ export function useDocumentActions({ orderId, orderNumber, simulated }: { orderI
         return
       }
       if (await fromServer(req)) return
-      toast('No pudimos armar el PDF en el servidor. Abrimos la impresión: elige «Guardar como PDF».')
+      toast(translate(es, 'doc.toast.browserFallback'))
       printInBrowser(req)
     },
     [simulating, serverOnly, fromServer, printInBrowser],

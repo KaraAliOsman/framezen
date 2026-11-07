@@ -1,14 +1,7 @@
-import type { Catalog, Color as CatalogColor, Glass, WindowDesign } from '@framezen/engine'
-import {
-  CanvasTexture,
-  Color,
-  type Material,
-  MeshPhysicalMaterial,
-  MeshStandardMaterial,
-  RepeatWrapping,
-  SRGBColorSpace,
-  type Texture,
-} from 'three'
+import { hardwareTone, patternSize, resolveColorAppearance, type ColorAppearance, type TextureSources } from '@dekopen/documents'
+import type { Catalog, Color as CatalogColor, Glass, WindowDesign } from '@dekopen/engine'
+import { CanvasTexture, Color, type Material, type Mesh, MeshPhysicalMaterial, MeshStandardMaterial, NoColorSpace, type Object3D, RepeatWrapping, SRGBColorSpace, Texture, Vector2 } from 'three'
+import { normalMapFromImage } from './grainMaps'
 
 export type Finish = 'white' | 'wood' | 'dark' | 'solid'
 
@@ -58,62 +51,6 @@ function safeColor(hex: string | undefined, fallback = FALLBACK_WHITE): Color {
   return color
 }
 
-/** Pseudoazar determinista: la veta se ve igual en cada carga. */
-function seeded(seed: number) {
-  let state = seed >>> 0
-  return () => {
-    state = (state * 1664525 + 1013904223) >>> 0
-    return state / 4294967296
-  }
-}
-
-/** Veta de madera en escala de grises (se multiplica por el color del foliado). */
-function createGrainTexture(): Texture | null {
-  if (typeof document === 'undefined') return null
-  let ctx: CanvasRenderingContext2D | null = null
-  const canvas = document.createElement('canvas')
-  canvas.width = 256
-  canvas.height = 512
-  try {
-    ctx = canvas.getContext('2d')
-  } catch {
-    ctx = null
-  }
-  if (!ctx) return null
-  const random = seeded(7)
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-  // Vetas largas y onduladas que corren a lo largo (eje vertical de la textura).
-  for (let i = 0; i < 90; i++) {
-    const x = random() * canvas.width
-    const width = 0.6 + random() * 2.4
-    const alpha = 0.035 + random() * 0.11
-    const amplitude = 2 + random() * 6
-    const frequency = 0.004 + random() * 0.01
-    const phase = random() * Math.PI * 2
-    ctx.strokeStyle = `rgba(40, 24, 10, ${alpha.toFixed(3)})`
-    ctx.lineWidth = width
-    ctx.beginPath()
-    for (let y = -8; y <= canvas.height + 8; y += 8) {
-      const dx = Math.sin(y * frequency + phase) * amplitude
-      if (y === -8) ctx.moveTo(x + dx, y)
-      else ctx.lineTo(x + dx, y)
-    }
-    ctx.stroke()
-  }
-  // Poros cortos.
-  for (let i = 0; i < 900; i++) {
-    ctx.fillStyle = `rgba(30, 18, 8, ${(0.03 + random() * 0.06).toFixed(3)})`
-    ctx.fillRect(random() * canvas.width, random() * canvas.height, 0.8, 3 + random() * 9)
-  }
-  const texture = new CanvasTexture(canvas)
-  texture.wrapS = RepeatWrapping
-  texture.wrapT = RepeatWrapping
-  texture.colorSpace = SRGBColorSpace
-  texture.anisotropy = 4
-  return texture
-}
-
 export interface MaterialPalette {
   /** Cara exterior de los perfiles. */
   exterior: Material
@@ -122,74 +59,203 @@ export interface MaterialPalette {
   bicolor: boolean
   gasket: Material
   handle: Material
+  /** Riel de aluminio de las correderas. */
+  rail: Material
+  /** Separador del doble vidriado. */
+  spacer: Material
+  /** Malla del mosquitero: oscurece un poco lo que hay detrás, como la tela real. */
+  screen: Material
   glass(glassId: string | undefined): Material
   dispose(): void
 }
 
-function profileMaterial(color: CatalogColor | undefined, grain: () => Texture | null): MeshStandardMaterial {
-  const finish = classifyFinish(color)
-  const base = safeColor(color?.hex)
-  switch (finish) {
-    case 'wood':
-      return new MeshStandardMaterial({ color: base, roughness: 0.66, metalness: 0, map: grain(), envMapIntensity: 0.7 })
-    case 'dark':
-      return new MeshStandardMaterial({ color: base, roughness: 0.5, metalness: 0.04, envMapIntensity: 0.9 })
-    case 'white':
-      return new MeshStandardMaterial({ color: base, roughness: 0.4, metalness: 0, envMapIntensity: 0.85 })
-    default:
-      return new MeshStandardMaterial({ color: base, roughness: 0.45, metalness: 0, envMapIntensity: 0.85 })
-  }
+export interface PaletteOptions {
+  /** Texturas subidas (data URL) e integradas ya cargadas: las mismas que usa el dibujo 2D. */
+  sources?: TextureSources
+  /** Se llama cuando termina de llegar una imagen, para que el visor redibuje. */
+  onTextureLoad?: () => void
 }
 
-function handleMaterial(color: CatalogColor | undefined): MeshStandardMaterial {
-  switch (classifyFinish(color)) {
-    case 'white':
-      return new MeshStandardMaterial({ color: safeColor('#F3F2EE'), roughness: 0.28, metalness: 0 })
-    case 'wood':
-      return new MeshStandardMaterial({ color: safeColor('#4A3727'), roughness: 0.34, metalness: 0.35 })
-    case 'dark':
-      return new MeshStandardMaterial({ color: safeColor('#26292C'), roughness: 0.36, metalness: 0.25 })
-    default:
-      return new MeshStandardMaterial({ color: safeColor('#C9C8C2'), roughness: 0.3, metalness: 0.65 })
-  }
+/** Acabados donde la imagen aporta algo en 3D; los lisos usan solo el color (la micro-tesela no se ve). */
+function wantsMap(a: ColorAppearance): boolean {
+  return Boolean(a.href) && (a.finish === 'woodgrain' || a.finish === 'metallic' || a.finish === 'textured' || a.source?.kind === 'upload')
 }
 
-function glassMaterial(glass: Glass | undefined): MeshPhysicalMaterial {
-  // Vidrio físico: transmisión moderada, reflejo sutil del estudio y un tinte verdoso muy leve.
-  const laminated = glass?.kind === 'laminated'
-  return new MeshPhysicalMaterial({
-    color: safeColor(laminated ? '#F4F8F7' : '#F9FCFB'),
+/** Cuánto relieve da cada acabado al normal map derivado de la tesela. */
+function reliefOf(a: ColorAppearance): { strength: number; scale: number } {
+  if (a.finish === 'woodgrain') return { strength: 1.7, scale: 0.55 }
+  if (a.finish === 'textured') return { strength: 3, scale: 0.9 }
+  if (a.finish === 'metallic') return { strength: 1.2, scale: 0.35 }
+  return { strength: 1.6, scale: 0.5 }
+}
+
+function tiledTexture(texture: Texture, a: ColorAppearance): Texture {
+  texture.wrapS = RepeatWrapping
+  texture.wrapT = RepeatWrapping
+  texture.anisotropy = 8
+  // UV en metros, `u` a lo largo de la pieza: una repetición cubre `scaleMm` a lo largo y `scaleMm·aspect` a lo ancho.
+  const { w, h } = patternSize(a)
+  texture.repeat.set(1000 / w, 1000 / h)
+  if (a.angleDeg) {
+    texture.center.set(0.5, 0.5)
+    texture.rotation = (a.angleDeg * Math.PI) / 180
+  }
+  return texture
+}
+
+/**
+ * Material de un perfil: el mismo resolvedor del dibujo 2D decide foliado, tono y escala física; el visor
+ * agrega el comportamiento del material (PVC liso rugosidad ≈ 0,42 y barniz ≈ 0,1; madera más mate). La
+ * imagen se asigna al llegar (decodificación asíncrona), junto con su normal map, y avisa para redibujar.
+ */
+function profileMaterial(a: ColorAppearance, textures: Texture[], onLoad: (() => void) | undefined): MeshPhysicalMaterial {
+  const base = safeColor(a.hex)
+  const { material } = a
+  const result = new MeshPhysicalMaterial({
+    color: base,
+    roughness: material.roughness,
+    metalness: material.metalness,
+    clearcoat: material.clearcoat,
+    clearcoatRoughness: material.clearcoatRoughness,
+    vertexColors: true,
+  })
+  if (wantsMap(a) && a.href && typeof Image !== 'undefined') {
+    const texture = tiledTexture(new Texture(), a)
+    texture.colorSpace = SRGBColorSpace
+    textures.push(texture)
+    const image = new Image()
+    image.decoding = 'async'
+    let settle: () => void = () => {}
+    // Quien exporta espera a esto: un modelo sin su foliado no sirve para llevárselo.
+    result.userData.ready = new Promise<void>((resolve) => {
+      settle = resolve
+    })
+    image.onerror = () => settle()
+    image.onload = () => {
+      // El visor pudo liberar el material mientras la imagen decodificaba.
+      if (!textures.includes(texture)) return settle()
+      texture.image = image
+      texture.needsUpdate = true
+      result.map = texture
+      // Si el color del catálogo difiere del foliado, se tiñe (multiplica) en la misma medida que el 2D.
+      result.color = a.tint > 0 ? new Color('#FFFFFF').lerp(base, Math.min(1, a.tint * 1.15)) : new Color('#FFFFFF')
+      const relief = reliefOf(a)
+      const normals = normalMapFromImage(a.key, image, relief.strength)
+      if (normals) {
+        const normalMap = tiledTexture(new CanvasTexture(normals), a)
+        normalMap.colorSpace = NoColorSpace
+        textures.push(normalMap)
+        result.normalMap = normalMap
+        result.normalScale = new Vector2(relief.scale, relief.scale)
+      }
+      result.needsUpdate = true
+      settle()
+      onLoad?.()
+    }
+    image.src = a.href
+  }
+  return result
+}
+
+/** Herraje: los mismos tonos del dibujo 2D (`hardwareTone`), con el brillo de cada material. */
+function handleMaterial(a: ColorAppearance): MeshStandardMaterial {
+  const tone = hardwareTone(a)
+  if (tone.id === 'white') return new MeshStandardMaterial({ color: safeColor(tone.base), roughness: 0.3, metalness: 0 })
+  if (tone.id === 'dark') return new MeshStandardMaterial({ color: safeColor(tone.base), roughness: 0.36, metalness: 0.3 })
+  return new MeshStandardMaterial({ color: safeColor(tone.base), roughness: 0.34, metalness: 0.72 })
+}
+
+export type GlassKind = 'clear' | 'laminated' | 'lowE'
+
+export function glassKindOf(glass: Pick<Glass, 'id' | 'kind'> | undefined): GlassKind {
+  if (glass?.kind === 'laminated') return 'laminated'
+  return glass && /low.?e/i.test(glass.id) ? 'lowE' : 'clear'
+}
+
+const GLASS_TINT: Record<GlassKind, { color: string; density: number }> = {
+  clear: { color: '#CBDBE0', density: 1 },
+  lowE: { color: '#B7CCD6', density: 1.15 },
+  laminated: { color: '#D3DAD8', density: 1.25 },
+}
+
+/** Cuánto oscurece cada hoja (por cada cara visible) y cuánto refleja, según el fondo. */
+export interface GlassLook {
+  opacity: number
+  reflect: number
+}
+
+/**
+ * Vidrio sin pase de transmisión (caro en un teléfono y casi invisible sobre un fondo liso): se compone
+ * como en el dibujo 2D, un cielo pálido que aclara hacia arriba, y encima el reflejo del estudio, que se
+ * suma entero en vez de atenuarse con la opacidad. La cara trasera no se dibuja: el índice sube a 1,72
+ * para que cada cara visible refleje lo que reflejan las dos de una hoja real (F0 ≈ 7 % en vez de 4 %).
+ * Opacidad y reflejo los ajusta la escena según el fondo (`applyGlassLook`).
+ */
+function glassMaterial(kind: GlassKind): MeshPhysicalMaterial {
+  const tint = GLASS_TINT[kind]
+  const material = new MeshPhysicalMaterial({
+    color: safeColor(tint.color),
     metalness: 0,
-    roughness: 0.02,
-    transmission: laminated ? 0.9 : 0.95,
-    ior: 1.5,
-    thickness: 6,
-    attenuationColor: safeColor('#D3E8E5'),
-    attenuationDistance: 0.09,
+    // Un poco de rugosidad difumina lo que refleja: da cielo y no el borde recortado de una luz.
+    roughness: 0.09,
+    ior: 1.72,
     specularIntensity: 1,
-    envMapIntensity: 1.2,
-    transparent: false,
+    transparent: true,
+    opacity: 0.1 * tint.density,
+    depthWrite: false,
+  })
+  const reflect = { value: 0.6 }
+  const span = { value: 1.4 }
+  material.premultipliedAlpha = true
+  material.userData.glass = true
+  material.userData.density = tint.density
+  material.userData.reflect = reflect
+  material.userData.span = span
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.glassReflect = reflect
+    shader.uniforms.glassSpan = span
+    shader.fragmentShader = `uniform float glassReflect;\nuniform float glassSpan;\n${shader.fragmentShader}`
+      .replace(
+        '#include <opaque_fragment>',
+        `float glassRise = clamp( 0.5 - vViewPosition.y / glassSpan, 0.0, 1.0 );
+        vec3 glassSky = diffuseColor.rgb * mix( 0.66, 0.96, glassRise * glassRise );
+        gl_FragColor = vec4( glassSky * diffuseColor.a + ( outgoingLight - totalDiffuse ) * glassReflect, diffuseColor.a );`,
+      )
+      .replace('#include <premultiplied_alpha_fragment>', '')
+  }
+  material.customProgramCacheKey = () => 'dk-glass'
+  return material
+}
+
+/** Aplica el tinte y el reflejo del estudio a todos los vidrios de un modelo. */
+export function applyGlassLook(root: Object3D, look: GlassLook, span = 1.4): void {
+  root.traverse((object) => {
+    const material = (object as Mesh).material as Material | undefined
+    if (!material?.userData.glass) return
+    material.opacity = look.opacity * (material.userData.density as number)
+    ;(material.userData.reflect as { value: number }).value = look.reflect
+    ;(material.userData.span as { value: number }).value = Math.max(0.3, span)
   })
 }
 
 /** Materiales de una ventana. Todo lo creado aquí se libera con `dispose()`. */
-export function createMaterialPalette(design: WindowDesign, catalog: Catalog): MaterialPalette {
+export function createMaterialPalette(design: WindowDesign, catalog: Catalog, options: PaletteOptions = {}): MaterialPalette {
   const colorById = (id: string | undefined) => (id ? catalog.colors.find((color) => color.id === id) : undefined)
   const exteriorColor = colorById(design.colorId)
   const interiorColor = colorById(design.colorInId) ?? exteriorColor
   const bicolor = Boolean(design.colorInId && design.colorInId !== design.colorId && interiorColor)
+  const textures: Texture[] = []
 
-  let grainTexture: Texture | null | undefined
-  const grain = () => {
-    if (grainTexture === undefined) grainTexture = createGrainTexture()
-    return grainTexture
-  }
-
-  const exterior = profileMaterial(exteriorColor, grain)
-  const interior = bicolor ? profileMaterial(interiorColor, grain) : exterior
-  const gasket = new MeshStandardMaterial({ color: safeColor('#1E2022'), roughness: 0.82, metalness: 0 })
-  const handle = handleMaterial(interiorColor)
-  const glassCache = new Map<string, Material>()
+  const appearanceOf = (color: CatalogColor | undefined) => resolveColorAppearance(color, options.sources)
+  const exterior = profileMaterial(appearanceOf(exteriorColor), textures, options.onTextureLoad)
+  const interior = bicolor ? profileMaterial(appearanceOf(interiorColor), textures, options.onTextureLoad) : exterior
+  const gasket = new MeshStandardMaterial({ color: safeColor('#17191B'), roughness: 0.78, metalness: 0 })
+  const handle = handleMaterial(appearanceOf(interiorColor))
+  const rail = new MeshStandardMaterial({ color: safeColor('#8E9496'), roughness: 0.5, metalness: 0.7 })
+  const spacer = new MeshStandardMaterial({ color: safeColor('#8C9194'), roughness: 0.5, metalness: 0.7 })
+  const screen = new MeshStandardMaterial({ color: safeColor('#3A3F42'), roughness: 0.9, metalness: 0, transparent: true, opacity: 0.3, depthWrite: false })
+  screen.userData.screen = true
+  const glassCache = new Map<GlassKind, Material>()
 
   return {
     exterior,
@@ -197,14 +263,16 @@ export function createMaterialPalette(design: WindowDesign, catalog: Catalog): M
     bicolor,
     gasket,
     handle,
+    rail,
+    spacer,
+    screen,
     glass(glassId) {
       const id = glassId ?? design.glassId ?? ''
-      const glass = catalog.glass.find((item) => item.id === id)
-      const key = glass?.kind === 'laminated' ? 'laminated' : 'clear'
-      let material = glassCache.get(key)
+      const kind = glassKindOf(catalog.glass.find((item) => item.id === id))
+      let material = glassCache.get(kind)
       if (!material) {
-        material = glassMaterial(glass)
-        glassCache.set(key, material)
+        material = glassMaterial(kind)
+        glassCache.set(kind, material)
       }
       return material
     },
@@ -213,9 +281,13 @@ export function createMaterialPalette(design: WindowDesign, catalog: Catalog): M
       if (interior !== exterior) interior.dispose()
       gasket.dispose()
       handle.dispose()
+      rail.dispose()
+      spacer.dispose()
+      screen.dispose()
       for (const material of glassCache.values()) material.dispose()
       glassCache.clear()
-      grainTexture?.dispose()
+      for (const texture of textures) texture.dispose()
+      textures.length = 0
     },
   }
 }

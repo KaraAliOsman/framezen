@@ -1,5 +1,5 @@
 /**
- * Topes de correo saliente por organización y día. Framezen envía desde su propio dominio
+ * Topes de correo saliente por organización y día. DEKOPEN envía desde su propio dominio
  * (MAIL_FROM) con textos que escribe el usuario (mensaje, nombre de la empresa): sin tope, una
  * cuenta recién creada serviría para mandar spam o phishing y dañar la reputación del dominio.
  * La prueba gratis tiene un tope más bajo que los planes pagados.

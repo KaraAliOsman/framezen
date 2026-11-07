@@ -12,9 +12,10 @@
  *   el precio en vivo se recalcula con lo mismo que usará el servidor.
  */
 import { createStore, type StoreApi } from 'zustand/vanilla'
-import type { Catalog, Id, PricingSettings, QuoteEvaluation, QuoteExtra, WindowDesign } from '@framezen/engine'
-import type { QuoteDocOverrides } from '@framezen/documents'
-import type { Client, OrgSettings, Quote, QuoteItem, QuoteSaveBody } from '@framezen/shared'
+import type { Catalog, Id, PricingSettings, QuoteEvaluation, QuoteExtra, WindowDesign } from '@dekopen/engine'
+import type { Client, OrgSettings, Quote, QuoteItem, QuoteSaveBody } from '@dekopen/shared'
+import { translate } from '../../../lib/i18n'
+import es from '../i18n/es'
 import {
   addItemOp,
   composeQuote,
@@ -32,25 +33,31 @@ import {
   reorderItemsOp,
   saveBody,
   setDocumentOverrideOp,
+  setDocumentOverridesOp,
   updateDesignOp,
   updateItemOp,
   type QuoteDoc,
   type QuoteMeta,
 } from './doc'
 import { createEvaluator, type Evaluator } from './evaluate'
+import { pctParam, ql, toUndoLabel, undoLabelKey, undoText, type UndoLabel } from './history'
 import type { LocalDraftStore } from './localDrafts'
+import type { DocOverrides, DocOverridesPatch } from './overrides'
 
 export type EditorView = 'design' | 'document'
 export type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error'
 
 export interface HistoryEntry {
   doc: QuoteDoc
-  /** Qué cambio separa este documento del siguiente («Cambiar color a Nogal»). */
-  label: string
+  /**
+   * Qué cambio separa este documento del siguiente («Cambiar color a Nogal»): clave + parámetros
+   * (se traduce al mostrarse con `undoText`) o un texto ya listo.
+   */
+  label: UndoLabel
   selectedItemId: Id | null
 }
 
-export type EditorSettings = Pick<OrgSettings, 'pricing' | 'cut' | 'documents' | 'defaults'>
+export type EditorSettings = Pick<OrgSettings, 'pricing' | 'cut' | 'documents' | 'defaults'> & Partial<Pick<OrgSettings, 'locale' | 'currency' | 'taxLabel' | 'sending' | 'payments'>>
 
 export interface EditorState {
   meta: QuoteMeta
@@ -89,10 +96,10 @@ export class UnsavedChangesError extends Error {
   constructor(save: SaveInfo) {
     super(
       save.status === 'offline'
-        ? 'Sin conexión: tus últimos cambios todavía no llegan al servidor. Inténtalo de nuevo cuando vuelva la conexión.'
+        ? translate(es, 'store.offline')
         : save.message && !save.retrying
-          ? `No pudimos guardar tus últimos cambios. ${save.message} Corrígelo y vuelve a intentarlo.`
-          : 'No pudimos guardar tus últimos cambios. Inténtalo de nuevo en un momento.',
+          ? translate(es, 'store.rejected', { message: save.message })
+          : translate(es, 'store.generic'),
     )
     this.name = 'UnsavedChangesError'
     this.save = save
@@ -149,27 +156,35 @@ export interface QuoteEditor {
   store: StoreApi<EditorState>
   get: () => EditorState
   // Historial
-  commit: (label: string, fn: (doc: QuoteDoc) => QuoteDoc, options?: CommitOptions) => boolean
+  commit: (label: UndoLabel, fn: (doc: QuoteDoc) => QuoteDoc, options?: CommitOptions) => boolean
+  /** Deshace el último paso y devuelve su etiqueta en el idioma actual. */
   undo: () => string | null
   redo: () => string | null
   // Ítems
   addItem: (input: AddItemInput, options?: { index?: number; select?: boolean }) => Id
+  /** Varias ventanas de una vez (medidas pegadas): un solo paso de deshacer. */
+  addItems: (inputs: AddItemInput[]) => Id[]
   duplicateItem: (id: Id) => Id | null
   removeItem: (id: Id) => QuoteItem | null
   moveItem: (from: number, to: number) => void
   reorderItems: (ids: Id[]) => void
-  updateItem: (id: Id, patch: Partial<Omit<QuoteItem, 'id' | 'design'>>, label?: string, mergeKey?: string) => void
-  updateDesign: (id: Id, fn: (design: WindowDesign) => WindowDesign, label?: string) => void
+  updateItem: (id: Id, patch: Partial<Omit<QuoteItem, 'id' | 'design'>>, label?: UndoLabel, mergeKey?: string) => void
+  /** `label`: texto o etiqueta `{ key, params, ns? }` (también acepta lo que mande el diseñador). */
+  updateDesign: (id: Id, fn: (design: WindowDesign) => WindowDesign, label?: unknown) => void
   setQty: (id: Id, qty: number) => void
   // Cotización
   setTitle: (title: string) => void
+  setSiteAddress: (siteAddress: string) => void
   setClient: (clientId: Id | null, client?: Client) => void
   rememberClient: (client: Client) => void
   setDiscount: (pct: number) => void
-  setExtras: (extras: QuoteExtra[], label?: string) => void
+  setExtras: (extras: QuoteExtra[], label?: UndoLabel) => void
   setNotes: (notes: string) => void
-  setPricing: (pricing: Partial<PricingSettings> | undefined, label?: string) => void
-  setDocumentOverride: (patch: QuoteDocOverrides, label?: string) => void
+  setPricing: (pricing: Partial<PricingSettings> | undefined, label?: UndoLabel) => void
+  /** Cambio puntual de los ajustes del documento (plantilla, idioma, validez, textos, notas por ítem). */
+  setDocumentOverride: (patch: DocOverridesPatch, label?: UndoLabel) => void
+  /** Reemplaza los ajustes del documento completos (editor de documento, operaciones de plantilla). */
+  setDocumentOverrides: (next: DocOverrides | undefined | ((current: DocOverrides | undefined) => DocOverrides | undefined), label?: UndoLabel) => void
   // Interfaz
   select: (id: Id | null) => void
   selectNode: (id: Id | null) => void
@@ -190,6 +205,11 @@ export interface QuoteEditor {
    */
   serverOp: <T>(fn: () => Promise<T>, pick?: (result: T) => Quote | null | undefined, options?: { requireSaved?: boolean }) => Promise<T>
   applyServerQuote: (quote: Quote) => void
+  /**
+   * Cambios hechos en el servidor por otro actor (el asistente, otra pantalla): se adoptan como un
+   * solo paso de deshacer y se fusionan con lo que tengas sin guardar. Devuelve si cambió algo.
+   */
+  applyRemoteChanges: (quote: Quote & { deletedAt?: string }, label: UndoLabel) => boolean
   /** Datos frescos del servidor al abrir: si no hay cambios locales y es más nueva, la toma. */
   adoptServerQuote: (quote: Quote & { deletedAt?: string }) => boolean
   getQuote: () => Quote
@@ -201,6 +221,8 @@ export interface CreateEditorInput {
   quote: Quote & { deletedAt?: string }
   catalog: Catalog
   settings: EditorSettings
+  /** Vista con que abre (la de la URL: `?vista=documento`). Por defecto, Diseño. */
+  initialView?: EditorView
 }
 
 const DEFAULT_RETRY = [2000, 4000, 8000, 15000, 30000]
@@ -212,7 +234,7 @@ function errorStatus(error: unknown): number | undefined {
 
 function errorMessage(error: unknown): string {
   const message = (error as { message?: unknown } | null)?.message
-  return typeof message === 'string' && message ? message : 'No pudimos guardar. Tus cambios siguen aquí.'
+  return typeof message === 'string' && message ? message : translate(es, 'store.saveFailed')
 }
 
 export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): QuoteEditor {
@@ -238,12 +260,12 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
     const merged = mergeDocs(draft.base, draft.doc, serverDoc)
     if (merged.clean && !deepEqual(merged.doc, serverDoc)) {
       initialDoc = merged.doc
-      initialPast = [{ doc: serverDoc, label: 'Recuperar cambios sin guardar', selectedItemId: serverDoc.items[0]?.id ?? null }]
+      initialPast = [{ doc: serverDoc, label: ql('history.recoverUnsaved'), selectedItemId: serverDoc.items[0]?.id ?? null }]
       restored = true
     } else {
       if (!merged.clean) {
         conflictLocal = normalizeDoc(draft.doc)
-        initialPast = [{ doc: conflictLocal, label: 'Tus cambios sin guardar de este equipo', selectedItemId: conflictLocal.items[0]?.id ?? null }]
+        initialPast = [{ doc: conflictLocal, label: ql('history.unsavedDevice'), selectedItemId: conflictLocal.items[0]?.id ?? null }]
       }
       drafts.remove(input.quote.id)
     }
@@ -256,7 +278,7 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
     future: [],
     selectedItemId: initialDoc.items[0]?.id ?? null,
     selectedNodeId: null,
-    view: 'design',
+    view: input.initialView ?? 'design',
     catalog: input.catalog,
     settings: input.settings,
     evaluation: evaluator.evaluate(initialDoc),
@@ -339,7 +361,7 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
       future: [{ doc: state.doc, label: entry.label, selectedItemId: state.selectedItemId }, ...state.future],
       selectedItemId: validSelection(entry.doc, entry.selectedItemId ?? state.selectedItemId),
     })
-    return entry.label
+    return undoText(entry.label)
   }
 
   const redo: QuoteEditor['redo'] = () => {
@@ -352,18 +374,18 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
       future,
       selectedItemId: validSelection(entry.doc, entry.selectedItemId ?? state.selectedItemId),
     })
-    return entry.label
+    return undoText(entry.label)
   }
 
   // ── Operaciones ──────────────────────────────────────────────────────────
 
-  const refOf = (id: Id) => findItem(get().doc, id)?.ref ?? 'la ventana'
+  const refOf = (id: Id): string | UndoLabel => findItem(get().doc, id)?.ref ?? ql('history.theWindow')
 
   const addItem: QuoteEditor['addItem'] = (item, options = {}) => {
     const id = newItemId()
     let ref = ''
     commit(
-      'Agregar ventana',
+      ql('history.addItem'),
       (doc) => {
         const next = addItemOp(doc, { id, ...item }, options.index)
         ref = findItem(next, id)?.ref ?? ''
@@ -373,14 +395,21 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
     )
     // Etiqueta con la referencia final («Agregar V4»).
     const state = get()
-    if (ref && state.past.length) set({ past: [...state.past.slice(0, -1), { ...state.past[state.past.length - 1], label: `Agregar ${ref}` }] })
+    if (ref && state.past.length) set({ past: [...state.past.slice(0, -1), { ...state.past[state.past.length - 1], label: ql('history.addItemRef', { ref }) }] })
     return id
+  }
+
+  const addItems: QuoteEditor['addItems'] = (inputs) => {
+    const ids = inputs.map(() => newItemId())
+    if (!ids.length) return ids
+    commit(ql('history.addItems', { count: ids.length }), (doc) => inputs.reduce((next, item, i) => addItemOp(next, { id: ids[i], ...item }), doc), { select: ids[ids.length - 1] })
+    return ids
   }
 
   const duplicateItem: QuoteEditor['duplicateItem'] = (id) => {
     if (!findItem(get().doc, id)) return null
     const copyId = newItemId()
-    commit(`Duplicar ${refOf(id)}`, (doc) => duplicateItemOp(doc, id, copyId), { select: copyId })
+    commit(ql('history.duplicate', { ref: refOf(id) }), (doc) => duplicateItemOp(doc, id, copyId), { select: copyId })
     return copyId
   }
 
@@ -390,7 +419,7 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
     if (!item) return null
     const index = itemIndex(state.doc, id)
     const next = removeItemOp(state.doc, id)
-    commit(`Eliminar ${item.ref}`, () => next, {
+    commit(ql('history.remove', { ref: item.ref }), () => next, {
       select: state.selectedItemId === id ? validSelection(next, null, index) : state.selectedItemId,
     })
     return item
@@ -399,29 +428,29 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
   const moveItem: QuoteEditor['moveItem'] = (from, to) => {
     const item = get().doc.items[from]
     if (!item) return
-    commit(`Mover ${item.ref}`, (doc) => moveItemOp(doc, from, to))
+    commit(ql('history.move', { ref: item.ref }), (doc) => moveItemOp(doc, from, to))
   }
 
   const reorderItems: QuoteEditor['reorderItems'] = (ids) => {
-    commit('Reordenar ventanas', (doc) => reorderItemsOp(doc, ids))
+    commit(ql('history.reorder'), (doc) => reorderItemsOp(doc, ids))
   }
 
   const updateItem: QuoteEditor['updateItem'] = (id, patch, label, mergeKey) => {
-    commit(label ?? `Editar ${refOf(id)}`, (doc) => updateItemOp(doc, id, patch), { mergeKey: mergeKey ?? `item:${id}:${Object.keys(patch).join(',')}` })
+    commit(label ?? ql('history.editItem', { ref: refOf(id) }), (doc) => updateItemOp(doc, id, patch), { mergeKey: mergeKey ?? `item:${id}:${Object.keys(patch).join(',')}` })
   }
 
   const updateDesign: QuoteEditor['updateDesign'] = (id, fn, label) => {
-    const text = label ?? `Cambiar diseño de ${refOf(id)}`
-    commit(text, (doc) => updateDesignOp(doc, id, fn), { mergeKey: `design:${id}:${text}` })
+    const text = toUndoLabel(label, ql('history.design', { ref: refOf(id) }))
+    commit(text, (doc) => updateDesignOp(doc, id, fn), { mergeKey: `design:${id}:${undoLabelKey(text)}` })
   }
 
   const setQty: QuoteEditor['setQty'] = (id, qty) => {
     const value = Math.max(0, Math.round(Number.isFinite(qty) ? qty : 0))
-    commit(`Cantidad de ${refOf(id)}: ${value}`, (doc) => updateItemOp(doc, id, { qty: value }), { mergeKey: `qty:${id}` })
+    commit(ql('history.qty', { ref: refOf(id), qty: value }), (doc) => updateItemOp(doc, id, { qty: value }), { mergeKey: `qty:${id}` })
   }
 
   const setTitle: QuoteEditor['setTitle'] = (title) => {
-    commit('Cambiar nombre de la obra', (doc) => (doc.title === title ? doc : { ...doc, title }), { mergeKey: 'title' })
+    commit(ql('history.title'), (doc) => (doc.title === title ? doc : { ...doc, title }), { mergeKey: 'title' })
   }
 
   const rememberClient: QuoteEditor['rememberClient'] = (client) => {
@@ -432,7 +461,8 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
   const setClient: QuoteEditor['setClient'] = (clientId, client) => {
     if (client) rememberClient(client)
     const name = client?.name ?? (clientId ? get().clients[clientId]?.name : undefined)
-    commit(clientId ? `Cliente: ${name ?? 'elegido'}` : 'Quitar cliente', (doc) => {
+    const label = clientId ? (name ? ql('history.client', { name }) : ql('history.clientSet')) : ql('history.clientRemove')
+    commit(label, (doc) => {
       if ((doc.clientId ?? null) === clientId) return doc
       const next = { ...doc }
       if (clientId) next.clientId = clientId
@@ -443,23 +473,36 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
 
   const setDiscount: QuoteEditor['setDiscount'] = (pct) => {
     const value = Math.min(100, Math.max(0, Number.isFinite(pct) ? Math.round(pct * 10) / 10 : 0))
-    commit(`Descuento ${String(value).replace('.', ',')} %`, (doc) => (doc.discountPct === value ? doc : { ...doc, discountPct: value }), { mergeKey: 'discount' })
+    commit(ql('history.discount', { pct: pctParam(value) }), (doc) => (doc.discountPct === value ? doc : { ...doc, discountPct: value }), { mergeKey: 'discount' })
   }
 
-  const setExtras: QuoteEditor['setExtras'] = (extras, label = 'Cambiar extras') => {
-    commit(label, (doc) => ({ ...doc, extras }), { mergeKey: `extras:${label}` })
+  const setSiteAddress: QuoteEditor['setSiteAddress'] = (siteAddress) => {
+    commit(ql('history.siteAddress'), (doc) => (doc.siteAddress === siteAddress ? doc : { ...doc, siteAddress: siteAddress || undefined }), { mergeKey: 'siteAddress' })
+  }
+
+  const setExtras: QuoteEditor['setExtras'] = (extras, label = ql('history.extras')) => {
+    commit(label, (doc) => ({ ...doc, extras }), { mergeKey: `extras:${undoLabelKey(label)}` })
   }
 
   const setNotes: QuoteEditor['setNotes'] = (notes) => {
-    commit('Notas internas', (doc) => ({ ...doc, notes: notes || undefined }), { mergeKey: 'notes' })
+    commit(ql('history.notes'), (doc) => ({ ...doc, notes: notes || undefined }), { mergeKey: 'notes' })
   }
 
-  const setPricing: QuoteEditor['setPricing'] = (pricing, label = 'Ajustes de precio de la cotización') => {
-    commit(label, (doc) => ({ ...doc, pricing: pricing && Object.keys(pricing).length ? pricing : undefined }), { mergeKey: `pricing:${label}` })
+  const setPricing: QuoteEditor['setPricing'] = (pricing, label = ql('history.pricing')) => {
+    commit(label, (doc) => ({ ...doc, pricing: pricing && Object.keys(pricing).length ? pricing : undefined }), { mergeKey: `pricing:${undoLabelKey(label)}` })
   }
 
-  const setDocumentOverride: QuoteEditor['setDocumentOverride'] = (patch, label = 'Editar texto del documento') => {
-    commit(label, (doc) => setDocumentOverrideOp(doc, patch), { mergeKey: `docs:${Object.keys(patch).join(',')}` })
+  const setDocumentOverride: QuoteEditor['setDocumentOverride'] = (patch, label = ql('history.docText')) => {
+    const keys = Object.entries(patch)
+      .flatMap(([key, value]) => (value && typeof value === 'object' ? Object.keys(value).map((sub) => `${key}.${sub}`) : [key]))
+      .join(',')
+    commit(label, (doc) => setDocumentOverrideOp(doc, patch), { mergeKey: `docs:${keys}` })
+  }
+
+  const setDocumentOverrides: QuoteEditor['setDocumentOverrides'] = (next, label = ql('history.docText')) => {
+    commit(label, (doc) => setDocumentOverridesOp(doc, typeof next === 'function' ? next(doc.documentOverrides) : next), {
+      mergeKey: `docs:all:${undoLabelKey(label)}`,
+    })
   }
 
   function select(id: Id | null) {
@@ -604,7 +647,7 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
     // Los mismos datos cambiaron en ambos lados: mostramos lo del servidor y tus cambios
     // quedan como un paso de deshacer (y en el aviso, «Recuperar mis cambios»).
     const state = get()
-    const past = [...state.past, { doc: local, label: 'Tus cambios de esta pestaña', selectedItemId: state.selectedItemId }]
+    const past = [...state.past, { doc: local, label: ql('history.tabChanges'), selectedItemId: state.selectedItemId }]
     set({
       doc: remote,
       past: past.slice(-historyLimit),
@@ -617,7 +660,7 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
     notify({
       kind: 'conflict',
       recover: () => {
-        commit('Recuperar mis cambios', () => local)
+        commit(ql('history.recoverMine'), () => local)
       },
     })
   }
@@ -667,6 +710,32 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
 
   const applyServerQuote: QuoteEditor['applyServerQuote'] = (quote) => {
     if (quote.id === get().meta.id) applyMeta(quote)
+  }
+
+  const applyRemoteChanges: QuoteEditor['applyRemoteChanges'] = (quote, label) => {
+    const state = get()
+    if (quote.id !== state.meta.id) return false
+    const remote = docFromQuote(quote)
+    const local = state.doc
+    const merged = mergeDocs(baseDoc, local, remote)
+    const next = merged.clean ? merged.doc : remote
+    baseDoc = remote
+    applyMeta(quote)
+    if (deepEqual(next, local)) return false
+    lastMerge = null
+    const pending = !deepEqual(next, remote)
+    const past = [...state.past, { doc: local, label, selectedItemId: state.selectedItemId }].slice(-historyLimit)
+    set({
+      doc: next,
+      past,
+      future: [],
+      evaluation: evaluator.evaluate(next),
+      selectedItemId: validSelection(next, state.selectedItemId),
+      save: { ...get().save, dirty: pending, status: pending ? 'idle' : 'saved', savedAt: pending ? get().save.savedAt : new Date(now()).toISOString() },
+    })
+    if (pending) scheduleSave()
+    persistNow()
+    return true
   }
 
   const adoptServerQuote: QuoteEditor['adoptServerQuote'] = (quote) => {
@@ -733,7 +802,7 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
     const local = conflictLocal
     setTimeout(() => {
       if (disposed) return
-      notify({ kind: 'conflict', recover: () => commit('Recuperar mis cambios', () => local) })
+      notify({ kind: 'conflict', recover: () => commit(ql('history.recoverMine'), () => local) })
     }, 0)
   }
 
@@ -744,11 +813,13 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
     undo,
     redo,
     addItem,
+    addItems,
     duplicateItem,
     removeItem,
     moveItem,
     reorderItems,
     updateItem,
+    setSiteAddress,
     updateDesign,
     setQty,
     setTitle,
@@ -759,6 +830,7 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
     setNotes,
     setPricing,
     setDocumentOverride,
+    setDocumentOverrides,
     select,
     selectNode,
     setView,
@@ -770,6 +842,7 @@ export function createQuoteEditor(input: CreateEditorInput, deps: EditorDeps): Q
     persistLocal: persistNow,
     serverOp,
     applyServerQuote,
+    applyRemoteChanges,
     adoptServerQuote,
     getQuote,
     isSafeToLeave,

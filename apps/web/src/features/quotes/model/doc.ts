@@ -3,12 +3,15 @@
  * autoguardado. Todo es inmutable (cada cambio crea objetos nuevos y comparte el resto), así el
  * historial de deshacer guarda documentos completos sin costo y el motor reutiliza cálculos.
  */
-import type { Id, PricingSettings, QuoteExtra, QuoteTotals, WindowDesign } from '@framezen/engine'
-import type { QuoteDocOverrides } from '@framezen/documents'
-import type { Client, Quote, QuoteItem, QuoteSaveBody, QuoteStatus } from '@framezen/shared'
+import type { Id, PricingSettings, QuoteExtra, QuoteTotals, WindowDesign } from '@dekopen/engine'
+import { MARGIN_LIMITS } from '@dekopen/shared'
+import type { Client, Quote, QuoteItem, QuoteSaveBody, QuoteStatus } from '@dekopen/shared'
+import { mergeOverrides, patchOverrides, pruneItemNotes, toOverridesV2, type DocOverrides, type DocOverridesPatch } from './overrides'
 
 export interface QuoteDoc {
   title: string
+  /** Dirección de instalación, si difiere de la del cliente. */
+  siteAddress?: string
   clientId?: Id
   items: QuoteItem[]
   extras: QuoteExtra[]
@@ -16,7 +19,8 @@ export interface QuoteDoc {
   pricing?: Partial<PricingSettings>
   /** Notas internas (nunca llegan al cliente). */
   notes?: string
-  documentOverrides?: QuoteDocOverrides
+  /** Ajustes del documento de esta cotización, siempre en v2 (lo v1 se migra al leer). */
+  documentOverrides?: DocOverrides
   validUntil?: string
 }
 
@@ -76,13 +80,17 @@ export const QUOTE_LIMITS = {
   itemName: 200,
   itemLocation: 200,
   itemNotes: 4000,
+  itemFloor: 80,
+  altGroup: 80,
   extraLabel: 200,
+  extraDescription: 1000,
+  siteAddress: 300,
   notes: 20_000,
   validUntil: 40,
   qty: 100_000,
   money: 10_000_000_000,
   /** marginPct del ajuste por cotización (margen o recargo). */
-  marginPct: 95,
+  marginPct: MARGIN_LIMITS.markup,
 } as const
 
 /** Recorta a `max` unidades UTF-16 (lo que cuenta el servidor) sin partir un emoji por la mitad. */
@@ -120,7 +128,18 @@ export function normalizeItem(item: QuoteItem, index = 0): QuoteItem {
   if (typeof item.manualUnitPrice === 'number' && Number.isFinite(item.manualUnitPrice) && item.manualUnitPrice >= 0) {
     out.manualUnitPrice = Math.min(item.manualUnitPrice, QUOTE_LIMITS.money)
   }
-  return out
+  const floor = text(item.floor)
+  if (floor) out.floor = clipText(floor.trim(), QUOTE_LIMITS.itemFloor)
+  if (item.rough && (item.rough.width || item.rough.height)) out.rough = { ...item.rough }
+  if (typeof item.discountPct === 'number' && Number.isFinite(item.discountPct) && item.discountPct > 0) out.discountPct = Math.min(100, item.discountPct)
+  return { ...out, ...lineChoice(item) }
+}
+
+/** Opcional o alternativa; en una línea base no se guarda nada. */
+function lineChoice(line: Pick<QuoteItem, 'role' | 'altGroup' | 'included'>): Pick<QuoteItem, 'role' | 'altGroup' | 'included'> {
+  if (!line.role || line.role === 'base') return {}
+  const altGroup = text(line.altGroup)
+  return { role: line.role, ...(altGroup ? { altGroup: clipText(altGroup.trim(), QUOTE_LIMITS.altGroup) } : {}), ...(line.included ? { included: true } : {}) }
 }
 
 export function normalizeExtra(extra: QuoteExtra): QuoteExtra {
@@ -130,14 +149,18 @@ export function normalizeExtra(extra: QuoteExtra): QuoteExtra {
     amount: Number.isFinite(extra.amount) ? clamp(Math.round(extra.amount), -QUOTE_LIMITS.money, QUOTE_LIMITS.money) : 0,
   }
   if (extra.hidden) out.hidden = true
-  return out
+  if (extra.line) out.line = true
+  const description = text(extra.description)
+  if (description) out.description = clipText(description.trim(), QUOTE_LIMITS.extraDescription)
+  return { ...out, ...lineChoice(extra) }
 }
 
 /** Ajuste de precio por cotización dentro de lo que acepta el servidor (margen 0–95 %). */
 function normalizePricing(pricing: Partial<PricingSettings>): Partial<PricingSettings> {
   const pct = pricing.marginPct
-  if (pct === undefined || !Number.isFinite(pct) || (pct >= 0 && pct <= QUOTE_LIMITS.marginPct)) return pricing
-  return { ...pricing, marginPct: clamp(pct, 0, QUOTE_LIMITS.marginPct) }
+  const max = pricing.marginMode === 'margin' ? MARGIN_LIMITS.margin : MARGIN_LIMITS.markup
+  if (pct === undefined || !Number.isFinite(pct) || (pct >= 0 && pct <= max)) return pricing
+  return { ...pricing, marginPct: clamp(pct, 0, max) }
 }
 
 /** Forma canónica del documento (la que se compara y se envía). */
@@ -152,7 +175,10 @@ export function normalizeDoc(doc: QuoteDoc): QuoteDoc {
   if (doc.pricing && !isEmptyObject(doc.pricing)) out.pricing = normalizePricing(doc.pricing)
   const notes = text(doc.notes)
   if (notes) out.notes = clipText(notes, QUOTE_LIMITS.notes)
-  if (doc.documentOverrides && !isEmptyObject(doc.documentOverrides)) out.documentOverrides = doc.documentOverrides
+  const siteAddress = text(doc.siteAddress)
+  if (siteAddress) out.siteAddress = clipText(siteAddress.trim(), QUOTE_LIMITS.siteAddress)
+  const overrides = toOverridesV2(doc.documentOverrides)
+  if (overrides) out.documentOverrides = overrides
   const validUntil = text(doc.validUntil)
   if (validUntil) out.validUntil = clipText(validUntil, QUOTE_LIMITS.validUntil)
   return out
@@ -161,13 +187,14 @@ export function normalizeDoc(doc: QuoteDoc): QuoteDoc {
 export function docFromQuote(quote: Quote): QuoteDoc {
   return normalizeDoc({
     title: quote.title ?? '',
+    siteAddress: quote.siteAddress,
     clientId: quote.clientId,
     items: quote.items ?? [],
     extras: quote.extras ?? [],
     discountPct: quote.discountPct ?? 0,
     pricing: quote.pricing,
     notes: quote.notes,
-    documentOverrides: quote.documentOverrides as QuoteDocOverrides | undefined,
+    documentOverrides: toOverridesV2(quote.documentOverrides),
     validUntil: quote.validUntil,
   })
 }
@@ -198,6 +225,7 @@ export function saveBody(doc: QuoteDoc, meta: Pick<QuoteMeta, 'status' | 'versio
   const n = normalizeDoc(doc)
   return {
     title: n.title,
+    siteAddress: n.siteAddress ?? null,
     clientId: n.clientId ?? null,
     items: n.items,
     extras: n.extras,
@@ -226,11 +254,12 @@ export function composeQuote(meta: QuoteMeta, doc: QuoteDoc, extra: { client?: C
     createdAt: meta.createdAt,
     updatedAt: meta.updatedAt,
   }
+  if (doc.siteAddress) quote.siteAddress = doc.siteAddress
   if (doc.clientId) quote.clientId = doc.clientId
   if (extra.client && extra.client.id === doc.clientId) quote.client = extra.client
   if (doc.pricing) quote.pricing = doc.pricing
   if (doc.notes) quote.notes = doc.notes
-  if (doc.documentOverrides) quote.documentOverrides = doc.documentOverrides
+  if (doc.documentOverrides) quote.documentOverrides = doc.documentOverrides as unknown as Quote['documentOverrides']
   if (doc.validUntil) quote.validUntil = doc.validUntil
   if (meta.shareToken) quote.shareToken = meta.shareToken
   if (meta.sentAt) quote.sentAt = meta.sentAt
@@ -320,7 +349,14 @@ export function removeItemOp(doc: QuoteDoc, id: Id): QuoteDoc {
   if (index < 0) return doc
   const auto = isAutoSequence(doc.items)
   const items = doc.items.filter((item) => item.id !== id)
-  return { ...doc, items: auto ? renumber(items) : items }
+  const next: QuoteDoc = { ...doc, items: auto ? renumber(items) : items }
+  // La nota del documento de esa ventana se va con ella (deshacer la trae de vuelta).
+  const overrides = pruneItemNotes(doc.documentOverrides, items.map((item) => item.id))
+  if (overrides !== doc.documentOverrides) {
+    if (overrides) next.documentOverrides = overrides
+    else delete next.documentOverrides
+  }
+  return next
 }
 
 export function moveItemOp(doc: QuoteDoc, from: number, to: number): QuoteDoc {
@@ -371,20 +407,30 @@ export function updateDesignOp(doc: QuoteDoc, id: Id, fn: (design: WindowDesign)
   return { ...doc, items }
 }
 
-export function setDocumentOverrideOp(doc: QuoteDoc, patch: QuoteDocOverrides): QuoteDoc {
-  const next: Record<string, unknown> = { ...(doc.documentOverrides ?? {}) }
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined || value === null) delete next[key]
-    else next[key] = value
-  }
-  const overrides = Object.keys(next).length ? (next as QuoteDocOverrides) : undefined
+/** Cambio puntual de los ajustes del documento (`null`/`undefined` = volver al de la plantilla). */
+export function setDocumentOverrideOp(doc: QuoteDoc, patch: DocOverridesPatch): QuoteDoc {
+  const overrides = patchOverrides(doc.documentOverrides, patch)
+  if (overrides === doc.documentOverrides) return doc
+  return withOverrides(doc, overrides)
+}
+
+/** Reemplaza los ajustes del documento completos (acepta v1 o v2; guarda v2). */
+export function setDocumentOverridesOp(doc: QuoteDoc, value: unknown): QuoteDoc {
+  const overrides = toOverridesV2(value)
   if (deepEqual(overrides, doc.documentOverrides)) return doc
-  return { ...doc, documentOverrides: overrides }
+  return withOverrides(doc, overrides)
+}
+
+function withOverrides(doc: QuoteDoc, overrides: DocOverrides | undefined): QuoteDoc {
+  const next = { ...doc }
+  if (overrides) next.documentOverrides = overrides
+  else delete next.documentOverrides
+  return next
 }
 
 // ── Fusión de cambios ante un conflicto de versión (409) ──────────────────────
 
-const SCALAR_KEYS = ['title', 'clientId', 'discountPct', 'pricing', 'notes', 'documentOverrides', 'validUntil', 'extras'] as const
+const SCALAR_KEYS = ['title', 'siteAddress', 'clientId', 'discountPct', 'pricing', 'notes', 'validUntil', 'extras'] as const
 
 export interface MergeResult {
   doc: QuoteDoc
@@ -414,6 +460,13 @@ export function mergeDocs(baseIn: QuoteDoc, localIn: QuoteDoc, remoteIn: QuoteDo
     if (lc && rc && !deepEqual(local[key], remote[key])) clean = false
     ;(out as unknown as Record<string, unknown>)[key] = lc ? local[key] : remote[key]
   }
+
+  // Ajustes del documento: llave por llave (y texto por texto), no como un solo valor.
+  const overrides = mergeOverrides(base.documentOverrides, local.documentOverrides, remote.documentOverrides)
+  if (overrides.remoteChanged) remoteChanged = true
+  if (!overrides.clean) clean = false
+  if (overrides.value) out.documentOverrides = overrides.value
+  else delete out.documentOverrides
 
   const baseById = new Map(base.items.map((i) => [i.id, i]))
   const localById = new Map(local.items.map((i) => [i.id, i]))

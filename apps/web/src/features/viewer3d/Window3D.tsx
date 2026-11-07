@@ -1,17 +1,23 @@
+import { appearanceForColorId, builtinIdsOf, useBuiltinTextures, useTextureSources } from '@dekopen/documents'
 import { Canvas, type RootState } from '@react-three/fiber'
 import clsx from 'clsx'
-import { Rotate3d } from 'lucide-react'
-import { Component, type CSSProperties, type ErrorInfo, type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from 'react'
+import { PanelTopOpen, Rotate3d } from 'lucide-react'
+import { Component, type CSSProperties, type ErrorInfo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { NeutralToneMapping } from 'three'
+import { useFormat, useT } from '../../lib/i18n'
+import es from './i18n/es'
 import type { Window3DProps } from './types'
 import { useReducedMotion } from './useReducedMotion'
 import { Viewer3DUnavailable } from './Viewer3DMessage'
 import { isWebGLAvailable } from './webgl'
-import { PAPER, Window3DScene } from './Window3DScene'
+import { designsOf } from './model/assembly'
+import { backdropCss, luminanceOfHex, studioLook } from './studio/look'
+import { detectViewerTier } from './tier'
+import { Window3DScene } from './Window3DScene'
 
 const GL_PROPS = {
   antialias: true,
-  // Con alpha la sombra de contacto se limpia en transparente; el fondo papel lo pone la escena.
+  // Lienzo transparente: el fondo de estudio es CSS, y sombra y vidrio se componen sobre él sin más pases.
   alpha: true,
   powerPreference: 'high-performance',
   toneMapping: NeutralToneMapping,
@@ -19,10 +25,26 @@ const GL_PROPS = {
 } as const
 
 const CAMERA = { fov: 30, near: 0.05, far: 60, position: [0, 1, 4] as [number, number, number] }
-const DPR: [number, number] = [1, 2]
 const HINT_MS = 4500
 
-const mm = new Intl.NumberFormat('es-CL', { maximumFractionDigits: 0 })
+/** ¿El tema vigente es oscuro? Sale de `--dk-canvas` y se vuelve a leer al cambiar claro/oscuro. */
+function useDarkTheme(ref: RefObject<HTMLElement | null>): boolean {
+  const [dark, setDark] = useState(false)
+  useEffect(() => {
+    const read = () => {
+      const element = ref.current
+      if (!element) return
+      const value = getComputedStyle(element).getPropertyValue('--dk-canvas').trim()
+      setDark(/^#[0-9a-f]{6}/i.test(value) && luminanceOfHex(value) < 0.1)
+    }
+    read()
+    if (typeof MutationObserver === 'undefined') return
+    const observer = new MutationObserver(read)
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'], subtree: false })
+    return () => observer.disconnect()
+  }, [ref])
+  return dark
+}
 
 class Viewer3DErrorBoundary extends Component<{ children: ReactNode; onError: () => void }, { failed: boolean }> {
   override state = { failed: false }
@@ -59,7 +81,9 @@ function useInView(ref: RefObject<HTMLElement | null>): boolean {
  * Pensado para cargarse con React.lazy (ver `lazy.tsx`). Si el navegador no puede dibujar
  * en 3D, muestra un mensaje tranquilo y nada se rompe.
  */
-export function Window3D({ layout, design, catalog, openAmount = 0, autoRotate = false, view = 'interior', className, height = 420 }: Window3DProps) {
+export function Window3D({ layout, design, catalog, openAmount, autoRotate = false, view = 'interior', className, height = 420, textures, overlay }: Window3DProps) {
+  const t = useT(es)
+  const fmt = useFormat()
   const [supported] = useState(() => isWebGLAvailable())
   const [failed, setFailed] = useState(false)
   const [lost, setLost] = useState(false)
@@ -69,11 +93,27 @@ export function Window3D({ layout, design, catalog, openAmount = 0, autoRotate =
   const reducedMotion = useReducedMotion()
   const containerRef = useRef<HTMLDivElement>(null)
   const visible = useInView(containerRef)
+  const dark = useDarkTheme(containerRef)
+  const [tier] = useState(detectViewerTier)
+  const [movable, setMovable] = useState(false)
+  const [openHere, setOpenHere] = useState(false)
+  // Mismas texturas que el dibujo 2D: las subidas llegan por prop o por `TextureProvider`; las integradas se
+  // cargan aquí (fuera del lienzo, que usa otro reconciliador) y la versión reconstruye el modelo al llegar.
+  const contextTextures = useTextureSources()
+  const sources = textures ?? contextTextures
+  const designs = designsOf(layout, design)
+  const texturesVersion = useBuiltinTextures(
+    builtinIdsOf(designs.flatMap((item) => [appearanceForColorId(item.colorId, catalog.colors, sources), appearanceForColorId(item.colorInId ?? item.colorId, catalog.colors, sources)])),
+  )
+  // La escena se ajusta al color que se está mirando: el interior en la vista interior de una bicolor.
+  const primary = designs[0] ?? design
+  const seen = appearanceForColorId(view === 'interior' ? (primary.colorInId ?? primary.colorId) : primary.colorId, catalog.colors, sources)
+  const look = useMemo(() => studioLook({ luminance: seen.luminance, finish: seen.finish, dark }), [seen.luminance, seen.finish, dark])
   const detachRef = useRef<(() => void) | null>(null)
   // Lienzo vigente: al desmontar, R3F fuerza la pérdida de contexto del lienzo viejo y ese aviso se ignora.
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
 
-  const style: CSSProperties = { height: typeof height === 'number' ? `${height}px` : height, backgroundColor: PAPER }
+  const style: CSSProperties = { height: typeof height === 'number' ? `${height}px` : height, backgroundColor: look.backdrop.floor, backgroundImage: backdropCss(look.backdrop) }
 
   const onCreated = useCallback((state: RootState) => {
     detachRef.current?.()
@@ -110,6 +150,9 @@ export function Window3D({ layout, design, catalog, openAmount = 0, autoRotate =
   }, [ready, hint])
 
   const onReady = useCallback(() => setReady(true), [])
+  // Sin `openAmount` el visor se encarga de abrir y cerrar; con él, manda quien lo monta.
+  const selfOpening = openAmount === undefined
+  const amount = selfOpening ? (openHere ? 1 : 0) : openAmount
 
   const retry = () => {
     canvasRef.current = null
@@ -128,7 +171,7 @@ export function Window3D({ layout, design, catalog, openAmount = 0, autoRotate =
     )
   }
 
-  const label = `Ventana en 3D de ${mm.format(layout.width)} × ${mm.format(layout.height)} mm, vista ${view === 'exterior' ? 'exterior' : 'interior'}. Arrastra para girarla.`
+  const label = t('label', { size: fmt.size(layout.width, layout.height), view: t(view === 'exterior' ? 'view.exterior' : 'view.interior') })
 
   return (
     <div ref={containerRef} className={clsx('relative isolate overflow-hidden', className)} style={style}>
@@ -141,17 +184,22 @@ export function Window3D({ layout, design, catalog, openAmount = 0, autoRotate =
         onWheel={() => setHint(false)}
       >
         <Viewer3DErrorBoundary key={attempt} onError={() => setFailed(true)}>
-          <Canvas frameloop="demand" dpr={DPR} gl={GL_PROPS} camera={CAMERA} onCreated={onCreated}>
+          <Canvas shadows="percentage" frameloop="demand" dpr={tier.dpr} gl={GL_PROPS} camera={CAMERA} onCreated={onCreated}>
             <Window3DScene
               layout={layout}
               design={design}
               catalog={catalog}
-              openAmount={openAmount}
+              openAmount={amount}
               autoRotate={autoRotate}
               view={view}
               reducedMotion={reducedMotion}
               active={visible}
+              look={look}
+              tier={tier}
+              textures={sources}
+              texturesVersion={texturesVersion}
               onReady={onReady}
+              onMovable={setMovable}
             />
           </Canvas>
         </Viewer3DErrorBoundary>
@@ -160,27 +208,48 @@ export function Window3D({ layout, design, catalog, openAmount = 0, autoRotate =
       <div
         aria-hidden
         className={clsx(
-          'pointer-events-none absolute inset-x-0 bottom-3 flex justify-center transition-opacity duration-[240ms] ease-[cubic-bezier(.2,0,0,1)]',
+          // Con botones abajo (AR, abrir) el aviso sube: en 390 px no caben en la misma fila.
+          'pointer-events-none absolute inset-x-0 flex justify-center transition-opacity duration-[240ms] ease-[cubic-bezier(.2,0,0,1)]',
+          overlay || (selfOpening && movable) ? 'bottom-16' : 'bottom-3',
           ready && hint && !lost ? 'opacity-100' : 'opacity-0',
         )}
       >
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-paper-200 bg-paper-0 px-2.5 py-1 text-[12px] leading-4 text-paper-600">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-divider bg-surface px-2.5 py-1 text-meta text-fg-muted">
           <Rotate3d size={14} strokeWidth={1.75} aria-hidden />
-          Arrastra para girar
+          {t('hint')}
         </span>
       </div>
 
+      {ready && !lost && (overlay || (selfOpening && movable)) ? (
+        <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-end justify-between gap-2">
+          {selfOpening && movable ? (
+            <button
+              type="button"
+              aria-pressed={openHere}
+              onClick={() => setOpenHere((value) => !value)}
+              className="pointer-events-auto inline-flex h-9 items-center gap-1.5 rounded-control border border-divider bg-surface px-3 text-table font-medium text-fg-strong transition-colors duration-[140ms] hover:bg-hover"
+            >
+              <PanelTopOpen size={15} strokeWidth={1.75} aria-hidden />
+              {t(openHere ? 'close' : 'open')}
+            </button>
+          ) : (
+            <span />
+          )}
+          {overlay ? <div className="pointer-events-auto">{overlay}</div> : null}
+        </div>
+      ) : null}
+
       {lost && (
-        <div className="absolute inset-0 flex items-center justify-center bg-paper-50/90 p-6" role="status">
+        <div className="absolute inset-0 flex items-center justify-center bg-canvas/90 p-6" role="status">
           <div className="flex max-w-[300px] flex-col items-center gap-3 text-center">
-            <p className="text-[14px] font-medium leading-5 text-paper-900">La vista 3D se pausó</p>
-            <p className="text-[13px] leading-[18px] text-paper-600">El navegador liberó memoria gráfica. Tu ventana está intacta.</p>
+            <p className="text-base font-medium text-fg-strong">{t('lost.title')}</p>
+            <p className="text-table text-fg-muted">{t('lost.body')}</p>
             <button
               type="button"
               onClick={retry}
-              className="h-9 rounded-[6px] border border-paper-350 bg-paper-0 px-3 text-[14px] font-medium text-paper-900 transition-colors duration-[120ms] hover:bg-paper-100"
+              className="h-10 rounded-control border border-control bg-surface px-3 text-base font-medium text-fg-strong transition-colors duration-[140ms] hover:bg-hover"
             >
-              Volver a mostrar
+              {t('lost.retry')}
             </button>
           </div>
         </div>

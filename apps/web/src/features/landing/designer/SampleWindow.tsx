@@ -1,5 +1,6 @@
-import { SAMPLE_CATALOG } from '@framezen/catalog'
-import { TypologyIcon, WindowDrawing } from '@framezen/documents'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
+import { TypologyIcon, WindowDrawing } from '@dekopen/documents'
+import { useLocale } from '../../../lib/i18n'
 import type { ExampleResult, HeroTypology } from './designerModel'
 import { DrawingBoundary } from './DrawingBoundary'
 
@@ -15,6 +16,7 @@ interface SampleWindowProps {
 
 /** Dibujo pequeño de una ventana del catálogo de ejemplo (miniaturas de documentos). */
 export function SampleWindow({ example, typology, boxWidth, boxHeight, dimensions = 'none' }: SampleWindowProps) {
+  const { locale } = useLocale()
   const fallback = (
     <div className="grid place-items-center text-paper-350" style={{ width: boxWidth, height: boxHeight }}>
       <span aria-hidden>
@@ -30,6 +32,7 @@ export function SampleWindow({ example, typology, boxWidth, boxHeight, dimension
         design={example.design}
         catalog={SAMPLE_CATALOG}
         view="interior"
+        locale={locale}
         dimensions={dimensions}
         width={boxWidth}
         height={boxHeight}

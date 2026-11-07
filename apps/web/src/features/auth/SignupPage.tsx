@@ -1,18 +1,20 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { Check } from 'lucide-react'
-import { TRIAL_DAYS } from '@framezen/shared'
+import { TRIAL_DAYS } from '@dekopen/shared'
 import { ApiRequestError, humanError } from '../../lib/api'
 import { useSignup } from '../../lib/auth'
 import { firstName } from '../../lib/format'
+import { useT } from '../../lib/i18n'
 import { Button, Field, Input, toast } from '../../ui'
-import { AuthLayout, FormError } from './AuthLayout'
+import { AuthLayout, FormError, type AuthArtSpec } from './AuthLayout'
+import es from './i18n/es'
 import { PasswordInput } from './PasswordInput'
 import { emailError, MIN_PASSWORD, passwordError } from './validation'
 
 type Fields = 'name' | 'company' | 'email' | 'password'
 
 export default function SignupPage() {
+  const t = useT(es)
   const navigate = useNavigate()
   const signup = useSignup()
   const [values, setValues] = useState<Record<Fields, string>>({ name: '', company: '', email: '', password: '' })
@@ -30,8 +32,8 @@ export default function SignupPage() {
   const onSubmit = (event: FormEvent) => {
     event.preventDefault()
     const next: Partial<Record<Fields, string>> = {
-      name: values.name.trim() ? undefined : 'Escribe tu nombre.',
-      company: values.company.trim() ? undefined : 'Escribe el nombre de tu taller o empresa.',
+      name: values.name.trim() ? undefined : t('validation.nameRequired'),
+      company: values.company.trim() ? undefined : t('validation.companyRequired'),
       email: emailError(values.email),
       password: passwordError(values.password),
     }
@@ -46,78 +48,60 @@ export default function SignupPage() {
       },
       {
         onSuccess: (me) => {
-          toast.success(`Listo, ${firstName(me.user.name)}. Tienes ${TRIAL_DAYS} días con todo Pro.`)
+          toast.success(t('signup.welcome', { name: firstName(me.user.name), days: TRIAL_DAYS }))
           navigate('/inicio', { replace: true })
         },
       },
     )
   }
 
+  const art = useMemo<AuthArtSpec>(
+    () => ({ typology: 'sliding_2', width: 1800, height: 1300, colorId: 'roble-dorado' }),
+    [],
+  )
+
   return (
     <AuthLayout
-      pageTitle="Crear cuenta"
-      title="Crea tu cuenta"
-      subtitle={`${TRIAL_DAYS} días con todo Pro. Sin tarjeta, sin compromiso.`}
+      pageTitle={t('signup.pageTitle')}
+      title={t('signup.title')}
+      subtitle={t('signup.subtitle', { days: TRIAL_DAYS })}
       aside={
         <>
-          ¿Ya tienes cuenta?{' '}
-          <Link to="/entrar" className="font-medium text-ink-600 hover:text-ink-700">
-            Entrar
+          {t('signup.haveAccount')}{' '}
+          <Link to="/entrar" className="font-medium text-fg-strong underline decoration-divider-strong underline-offset-4 hover:decoration-fg-muted">
+            {t('signup.login')}
           </Link>
         </>
       }
-      art={{
-        kind: 'sliding',
-        width: 1800,
-        height: 1300,
-        label: 'Corredera 2 hojas',
-        phrase: 'Tu primera cotización, en menos de tres minutos.',
-        caption: 'Con tus marcas, tus precios y un documento que vende. Nada te bloquea.',
-      }}
+      art={art}
     >
       <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
         <FormError>{serverError && !serverField ? humanError(serverError) : null}</FormError>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Tu nombre" error={errorFor('name')}>
-            <Input autoComplete="name" autoFocus value={values.name} onChange={set('name')} placeholder="Ana Pérez" size="lg" />
+        <>
+          <Field label={t('fields.name')} error={errorFor('name')}>
+            <Input autoComplete="name" autoFocus value={values.name} onChange={set('name')} placeholder={t('fields.namePlaceholder')} />
           </Field>
-          <Field label="Taller o empresa" error={errorFor('company')}>
-            <Input
-              autoComplete="organization"
-              value={values.company}
-              onChange={set('company')}
-              placeholder="Ventanas del Sur"
-              size="lg"
-            />
+          <Field label={t('fields.company')} error={errorFor('company')}>
+            <Input autoComplete="organization" value={values.company} onChange={set('company')} placeholder={t('fields.companyPlaceholder')} />
           </Field>
-        </div>
-        <Field label="Correo" error={errorFor('email')}>
+        </>
+        <Field label={t('fields.email')} error={errorFor('email')}>
           <Input
             type="email"
             autoComplete="email"
             inputMode="email"
             value={values.email}
             onChange={set('email')}
-            placeholder="tu@taller.cl"
-            size="lg"
+            placeholder={t('fields.emailPlaceholder')}
+           
           />
         </Field>
-        <Field label="Contraseña" hint={`Al menos ${MIN_PASSWORD} caracteres.`} error={errorFor('password')}>
-          <PasswordInput autoComplete="new-password" value={values.password} onChange={set('password')} size="lg" />
+        <Field label={t('fields.password')} hint={t('fields.passwordHint', { min: MIN_PASSWORD })} error={errorFor('password')}>
+          <PasswordInput autoComplete="new-password" value={values.password} onChange={set('password')} />
         </Field>
         <Button type="submit" variant="primary" size="lg" loading={signup.isPending} className="mt-2 w-full">
-          Crear cuenta y empezar
+          {t('signup.submit')}
         </Button>
-        <ul className="mt-1 flex flex-col gap-1.5 text-[13px] text-paper-600">
-          {['Cotizaciones ilimitadas con todas las marcas', 'Puedes saltarte la configuración y cotizar de inmediato', 'Si no te convence, no pagas nada'].map(
-            (line) => (
-              <li key={line} className="flex items-center gap-2">
-                <Check aria-hidden strokeWidth={2} className="size-3.5 shrink-0 text-ok-600" />
-                {line}
-              </li>
-            ),
-          )}
-        </ul>
       </form>
     </AuthLayout>
   )

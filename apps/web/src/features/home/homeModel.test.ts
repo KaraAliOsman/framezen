@@ -1,24 +1,31 @@
 import { describe, expect, it } from 'vitest'
-import type { QuoteStatus, QuoteSummary } from '@framezen/shared'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
+import type { QuoteFollowUp, QuoteStatus, QuoteSummary } from '@dekopen/shared'
 import {
-  activityTone,
-  buildFunnel,
+  addressee,
+  buildQueue,
   callName,
+  changesReplyMessage,
+  clientMessages,
   daysSince,
   followUpMessage,
-  followUpText,
   greeting,
   hourIn,
   isEmptyAccount,
+  linesToReview,
   looksLikeCompany,
   monthKey,
   monthName,
-  monthSales,
   portalLink,
   previousMonthKey,
+  queueReason,
   quotesListLink,
+  reminderChoice,
+  salesDelta,
+  soldBreakdown,
   whatsappNumber,
   whatsappUrl,
+  whoAnswered,
   type QuoteStats,
 } from './homeModel'
 
@@ -65,28 +72,7 @@ describe('saludo según la hora de Chile', () => {
   })
 })
 
-describe('embudo', () => {
-  it('arma las 4 etapas en orden con conteo, monto y enlace filtrado', () => {
-    const byStatus = emptyByStatus()
-    byStatus.draft = { count: 3, total: 1_200_000 }
-    byStatus.sent = { count: 2, total: 2_674_538 }
-    byStatus.accepted = { count: 1, total: 900_000 }
-    byStatus.workshop = { count: 4, total: 5_000_000 }
-    byStatus.rejected = { count: 9, total: 9_999_999 }
-    const funnel = buildFunnel({ byStatus })
-    expect(funnel.map((s) => s.label)).toEqual(['Borradores', 'Enviadas', 'Aceptadas', 'En taller'])
-    expect(funnel.map((s) => s.count)).toEqual([3, 2, 1, 4])
-    expect(funnel[1].total).toBe(2_674_538)
-    expect(funnel[0].to).toBe('/cotizaciones?estado=draft')
-    expect(quotesListLink('workshop')).toBe('/cotizaciones?estado=workshop')
-  })
-
-  it('sin datos devuelve ceros, nunca falla', () => {
-    const funnel = buildFunnel(undefined)
-    expect(funnel).toHaveLength(4)
-    expect(funnel.every((s) => s.count === 0 && s.total === 0)).toBe(true)
-  })
-
+describe('cifras', () => {
   it('reconoce una cuenta nueva (ninguna cotización en ningún estado)', () => {
     const byStatus = emptyByStatus()
     expect(isEmptyAccount({ byStatus })).toBe(true)
@@ -94,35 +80,15 @@ describe('embudo', () => {
     expect(isEmptyAccount({ byStatus })).toBe(false)
     expect(isEmptyAccount(undefined)).toBe(false)
   })
-})
 
-describe('vendido del mes', () => {
-  const now = chile('2026-10-31T10:00:00')
-
-  it('separa este mes del anterior por fecha de aceptación en Chile', () => {
-    const won = [
-      summary({ status: 'accepted', acceptedAt: '2026-10-05T15:00:00.000Z', total: 1_000_000 }),
-      summary({ status: 'workshop', acceptedAt: '2026-10-20T15:00:00.000Z', total: 500_000 }),
-      summary({ status: 'installed', acceptedAt: '2026-09-10T15:00:00.000Z', total: 1_000_000 }),
-      // 1 de octubre 01:00 UTC = 30 de septiembre 22:00 en Chile → septiembre.
-      summary({ status: 'accepted', acceptedAt: '2026-10-01T01:00:00.000Z', total: 200_000 }),
-      // Rechazada o sin fecha: no cuenta.
-      summary({ status: 'rejected', acceptedAt: '2026-10-05T15:00:00.000Z', total: 9_000_000 }),
-      summary({ status: 'accepted', total: 9_000_000 }),
-      // Agosto: fuera de ambos meses.
-      summary({ status: 'closed', acceptedAt: '2026-08-10T15:00:00.000Z', total: 7_000_000 }),
-    ]
-    const sales = monthSales(won, now)
-    expect(sales.thisMonth).toEqual({ count: 2, total: 1_500_000, key: '2026-10' })
-    expect(sales.lastMonth).toEqual({ count: 2, total: 1_200_000, key: '2026-09' })
-    expect(sales.delta).toBeCloseTo(25, 5)
+  it('enlace filtrado por estado', () => {
+    expect(quotesListLink('workshop')).toBe('/cotizaciones?estado=workshop')
   })
 
-  it('el mes en curso del servidor manda; sin ventas el mes anterior no hay porcentaje', () => {
-    const sales = monthSales([], now, { count: 3, total: 2_000_000 })
-    expect(sales.thisMonth.total).toBe(2_000_000)
-    expect(sales.lastMonth.total).toBe(0)
-    expect(sales.delta).toBeNull()
+  it('la variación solo existe si el mes anterior tuvo ventas', () => {
+    const soldThisMonth = { count: 1, total: 1_500_000, inProduction: 0 }
+    expect(salesDelta({ soldThisMonth, soldLastMonth: { count: 1, total: 1_200_000 } })).toBeCloseTo(25, 5)
+    expect(salesDelta({ soldThisMonth, soldLastMonth: { count: 0, total: 0 } })).toBeUndefined()
   })
 
   it('claves y nombres de mes', () => {
@@ -133,16 +99,93 @@ describe('vendido del mes', () => {
   })
 })
 
+describe('«1 aceptada» y «Aceptadas 0» no se contradicen', () => {
+  it('la venta que pasó a taller se cuenta como en taller y su enlace lleva a Taller', () => {
+    expect(soldBreakdown({ count: 1, total: 900_000, inProduction: 1 })).toEqual({ waiting: 0, inProduction: 1, to: '/taller' })
+  })
+
+  it('lo que sigue aceptado enlaza a Aceptadas, y el reparto siempre suma lo vendido', () => {
+    expect(soldBreakdown({ count: 3, total: 1, inProduction: 1 })).toEqual({ waiting: 2, inProduction: 1, to: '/cotizaciones?estado=accepted' })
+    expect(soldBreakdown({ count: 2, total: 1, inProduction: 0 })).toMatchObject({ waiting: 2, inProduction: 0 })
+    expect(soldBreakdown({ count: 1, total: 1, inProduction: 9 })).toMatchObject({ waiting: 0, inProduction: 1 })
+  })
+})
+
+describe('cola de seguimiento', () => {
+  const q = (id: string, extra: Partial<QuoteFollowUp> = {}): QuoteFollowUp => ({ ...summary({ id, status: 'sent' }), ...extra })
+  const changes = { id: 'a1', kind: 'changes' as const, at: '2026-10-30T12:00:00.000Z', who: 'Marcela Fuentes', message: 'x'.repeat(900) }
+  const accepted = { id: 'a2', kind: 'accepted' as const, at: '2026-10-30T12:00:00.000Z', who: 'Pedro Soto' }
+
+  it('ordena: pidió cambios, aceptó, abrió sin responder, sin abrir', () => {
+    const queue = buildQueue([
+      q('sin-abrir-1'),
+      q('abrio', { viewedAt: '2026-10-29T12:00:00.000Z' }),
+      q('sin-abrir-2'),
+      q('acepto', { notices: [accepted] }),
+      q('cambios', { notices: [changes] }),
+    ])
+    expect(queue.map((x) => x.id)).toEqual(['cambios', 'acepto', 'abrio', 'sin-abrir-1', 'sin-abrir-2'])
+  })
+
+  it('pedir cambios manda aunque el cliente la haya abierto', () => {
+    expect(queueReason(q('x', { viewedAt: '2026-10-29T12:00:00.000Z', notices: [changes] }))).toBe('changes')
+  })
+
+  it('el mensaje del cliente llega entero, sin cortar', () => {
+    expect(clientMessages(q('x', { notices: [changes] }))).toEqual(['x'.repeat(900)])
+    expect(clientMessages(q('x', { notices: [accepted] }))).toEqual([])
+  })
+
+  it('quién respondió: lo que escribió en el portal o el cliente de la cotización', () => {
+    expect(whoAnswered(q('x', { clientName: 'Otro', notices: [changes] }))).toBe('Marcela Fuentes')
+    expect(whoAnswered(q('x', { clientName: 'Pedro Soto' }))).toBe('Pedro Soto')
+    expect(addressee('Pedro Soto')).toBe('Pedro')
+    expect(addressee('Constructora Los Aromos SpA')).toBe('Constructora Los Aromos SpA')
+  })
+
+  it('«Recordarme en» marca la opción más cercana y ninguna si no se sabe la fecha', () => {
+    const now = new Date('2026-11-05T12:00:00.000Z')
+    expect(reminderChoice('2026-11-08T12:00:00.000Z', now)).toBe('3')
+    expect(reminderChoice('2026-11-06T11:00:00.000Z', now)).toBe('1')
+    expect(reminderChoice('2026-11-12T12:00:00.000Z', now)).toBe('7')
+    expect(reminderChoice(undefined, now)).toBe('')
+    expect(reminderChoice('sin fecha', now)).toBe('')
+  })
+})
+
+describe('aviso del catálogo', () => {
+  const incomplete = { ...SAMPLE_CATALOG, profiles: [], items: [] }
+  const lineId = SAMPLE_CATALOG.lines[0]!.id
+  const quote = (status: QuoteStatus) => summary({ id: 'q1', title: 'Casa Soto', status, firstItem: { id: 'i', qty: 1, design: { lineId } } as unknown as QuoteSummary['firstItem'] })
+
+  it('una cuenta sin cotizaciones en curso no recibe avisos, aunque el catálogo esté incompleto', () => {
+    expect(linesToReview(incomplete, [])).toEqual([])
+    expect(linesToReview(incomplete, [quote('workshop'), quote('rejected')])).toEqual([])
+    expect(linesToReview(incomplete, [summary({ status: 'draft' })])).toEqual([])
+  })
+
+  it('avisa solo la línea que usa una cotización en curso, una vez, y dice cuál', () => {
+    const found = linesToReview(incomplete, [quote('draft'), quote('sent')])
+    expect(found).toHaveLength(1)
+    expect(found[0]).toMatchObject({ lineName: SAMPLE_CATALOG.lines[0]!.name, quoteId: 'q1', quoteLabel: 'Casa Soto' })
+  })
+
+  it('una línea lista no avisa', () => {
+    expect(linesToReview(undefined, [quote('draft')])).toEqual([])
+  })
+})
+
 describe('seguimientos sugeridos', () => {
   const now = chile('2026-10-31T10:00:00')
 
-  it('arma la frase con los días y el primer nombre del cliente', () => {
-    const q = { number: 412, sentAt: chile('2026-10-25T09:00:00').toISOString(), clientName: 'Pedro Soto' }
-    expect(daysSince(q.sentAt, now)).toBe(6)
-    expect(followUpText(q, now)).toBe('La N° 412 lleva 6 días enviada sin respuesta: escríbele a Pedro')
-    expect(followUpText({ ...q, sentAt: chile('2026-10-30T09:00:00').toISOString(), clientName: undefined }, now)).toBe(
-      'La N° 412 lleva 1 día enviada sin respuesta: escríbele a tu cliente',
-    )
+  it('cuenta los días completos desde el envío', () => {
+    expect(daysSince(chile('2026-10-25T09:00:00').toISOString(), now)).toBe(6)
+    expect(daysSince(undefined, now)).toBe(0)
+  })
+
+  it('responder a un pedido de cambios: sin enlace, porque la versión nueva aún no sale', () => {
+    expect(changesReplyMessage({ clientName: 'Marcela Fuentes', number: 412 })).toBe('Hola Marcela, recibí los cambios que pediste en la cotización N° 412. Te envío la versión ajustada apenas la tenga lista.')
+    expect(changesReplyMessage({ clientName: 'Constructora Los Aromos SpA', number: 2 })).toMatch(/^Hola, recibí/)
   })
 
   it('mensaje de WhatsApp cálido con el enlace del portal', () => {
@@ -166,15 +209,8 @@ describe('seguimientos sugeridos', () => {
   })
 
   it('enlace del portal solo si la cotización tiene token', () => {
-    expect(portalLink('https://framezen.cl/', 'tok')).toBe('https://framezen.cl/c/tok')
-    expect(portalLink('https://framezen.cl', undefined)).toBeUndefined()
-  })
-
-  it('tono de la actividad', () => {
-    expect(activityTone('quote.accepted')).toBe('ok')
-    expect(activityTone('quote.changes_requested')).toBe('warn')
-    expect(activityTone('quote.sent')).toBe('ink')
-    expect(activityTone('client.created')).toBe('neutral')
+    expect(portalLink('https://dekopen.cl/', 'tok')).toBe('https://dekopen.cl/c/tok')
+    expect(portalLink('https://dekopen.cl', undefined)).toBeUndefined()
   })
 })
 
@@ -189,10 +225,16 @@ describe('nombres de empresa', () => {
     expect(callName(undefined)).toBe('')
   })
 
-  it('el seguimiento nombra a la empresa completa y el WhatsApp saluda sin partirla', () => {
-    const now = new Date('2026-10-31T15:00:00Z')
-    const q = { number: 2, sentAt: '2026-10-25T15:00:00Z', clientName: 'Constructora Los Aromos SpA' }
-    expect(followUpText(q, now)).toBe('La N° 2 lleva 6 días enviada sin respuesta: escríbele a Constructora Los Aromos SpA')
+  it('el WhatsApp saluda sin partir a la empresa', () => {
     expect(followUpMessage({ clientName: 'Constructora Los Aromos SpA', number: 2 })).toMatch(/^Hola por la cotización N° 2\./)
+  })
+})
+
+describe('seguimiento de envíos solo PDF', () => {
+  it('no dice «sin abrir»: un PDF no avisa; si entró al enlace, sí se sabe', () => {
+    expect(queueReason({ sentFormat: 'pdf' })).toBe('sentPdf')
+    expect(queueReason({ sentFormat: 'pdf', viewedAt: '2026-11-06T10:00:00Z' })).toBe('viewed')
+    expect(queueReason({ sentFormat: 'link' })).toBe('unopened')
+    expect(queueReason({})).toBe('unopened')
   })
 })

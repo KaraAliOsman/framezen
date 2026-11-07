@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { and, count, desc, eq, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
-import type { ActivityEvent, Paged } from '@framezen/shared'
+import type { ActivityEvent, Paged } from '@dekopen/shared'
 import type { AppDeps, AppEnv } from '../context'
 import { activity } from '../db/schema'
 import { notFound } from '../lib/errors'

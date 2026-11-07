@@ -33,6 +33,17 @@ const text = (html: string) =>
     .replace(/&amp;/g, '&')
     .replace(/\s+/g, ' ')
 
+describe('cotización sin nombre de obra', () => {
+  it('el pie y la cabecera no repiten el número', () => {
+    const data = sampleWorkshopData()
+    const unnamed = { ...data, quote: { ...data.quote, number: 7, title: 'Cotización N° 7' }, workOrder: { ...data.workOrder, fromQuote: true } }
+    const plain = renderToStaticMarkup(<CutOptimizationDocument data={unnamed} />)
+    expect(plain).not.toContain('Cotización N° 7 · Cotización N° 7')
+    expect(plain).not.toContain('Optimización de cortes · Cotización N° 7')
+    expect(plain).toContain('Cotización N° 7')
+  })
+})
+
 describe('Orden de trabajo', () => {
   const html = renderToStaticMarkup(<WorkOrderDocument data={data} />)
   const plain = text(html)
@@ -110,18 +121,26 @@ describe('Optimización de cortes', () => {
     expect(plain).toContain('Sacar de bodega')
     expect(plain).toContain('Barras a sacar de bodega')
     expect(plain).toContain(`${data.optimization.totalBars}`)
-    expect(plain).toContain('disco de 4 mm por corte')
+    // Disco y despunte en el encabezado, con lo que ocupa el disco en inglete.
+    expect(plain).toContain('Disco 4 mm')
+    expect(plain).toContain('Despunte inicio 0 mm')
+    expect(plain).toContain('A 45° el disco de 4 mm ocupa 5,7 mm')
     for (const g of data.optimization.groups) expect(plain).toContain(g.code)
   })
 
-  it('dibuja cada barra con sus piezas coloreadas, medida y «V3 · arr»', () => {
+  it('cada barra dibuja sus piezas y las lista una a una con casilla, código y ángulos', () => {
     expect(count(html, 'class="fzw-bar-row"')).toBe(data.optimization.totalBars)
-    expect(plain).toContain('V3 · arr')
+    expect(plain).toContain('V3-M01')
     expect(plain).toContain('1.481')
     const pieces = data.optimization.groups.reduce((s, g) => s + g.bars.reduce((t, b) => t + b.cuts.length, 0), 0)
-    expect(count(html, '<polygon')).toBe(pieces)
+    // Un polígono en la barra y otro en la silueta del corte de su fila.
+    expect(count(html, '<polygon')).toBe(pieces * 2)
+    expect(count(html, 'aria-label="Marcar cortada"')).toBe(pieces)
     expect(html).toMatch(/fill="url\(#fzw-hatch-[A-Za-z0-9_-]+\)"/)
-    expect(plain).toContain('Ángulos especiales')
+    // Los ángulos raros se ven en la fila de la pieza.
+    expect(plain).toContain('58,3°')
+    // Blanco y negro: sin tintes por ventana.
+    expect(html).not.toContain('#DCE3FA')
   })
 
   it('un grupo largo puede seguir en otra hoja al compactar: cada barra siguiente dice su perfil', () => {
@@ -130,11 +149,12 @@ describe('Optimización de cortes', () => {
     expect(count(html, 'class="fzw-h fzw-bar-group-title"')).toBe(groups.length)
     const extra = groups.reduce((s, g) => s + Math.max(0, g.bars.length - 1), 0)
     expect(count(html, 'class="fzw-bar-cont"')).toBe(extra)
-    // Oculto salvo en el nivel más compacto (donde el grupo se puede partir).
     const css = workshopCss()
     expect(css).toMatch(/\.fzw-bar-cont \{ display: none;/)
     expect(css).toMatch(/\.fzw-tighter \.fzw-bar-cont \{ display: inline; \}/)
-    expect(css).toMatch(/\.fzw-tighter \.fzw-bar-group \{ break-inside: auto; \}/)
+    // Con la lista de piezas un perfil puede ocupar varias hojas: el grupo se parte entre barras, nunca dentro de una.
+    expect(css).not.toMatch(/\.fzw-bar-group \{ break-inside/)
+    expect(css).toMatch(/\.fzw-bar-row \{[^}]*break-inside: avoid/)
     expect(html).not.toContain('margin-top:7mm')
   })
 
@@ -152,7 +172,8 @@ describe('Optimización de cortes', () => {
     const trimmed = sampleWorkshopData({ cut: { barLength: 6000, kerf: 3, trimStart: 15, trimEnd: 15, minReusable: 600 } })
     const out = renderToStaticMarkup(<CutOptimizationDocument data={trimmed} />)
     expect(text(out)).toContain('despunte 15 + 15 mm')
-    expect(text(out)).toContain('Barra de 6.000 mm')
+    expect(text(out)).toContain('Despunte inicio 15 mm')
+    expect(text(out)).toContain('barra de 6.000 mm')
   })
 })
 

@@ -1,32 +1,23 @@
 /**
- * Cliente mínimo para APIs compatibles con OpenAI (POST {base}/chat/completions con tools).
- * Sin SDK: fetch con tiempo máximo, errores clasificados y conversión de mensajes del contrato.
+ * Asistente v1 (Marco): conversión del historial del navegador a mensajes OpenAI y una llamada
+ * por pedido, sobre el cliente común (client.ts). El asistente v2 (AGENT) usa client.ts
+ * directamente y guarda el historial en el servidor.
  */
 import {
   isAssistantTool,
   type AssistantMessage,
   type AssistantToolCall,
   type AssistantToolDefinition,
-} from '@framezen/shared'
+} from '@dekopen/shared'
 import type { AiConfig } from './config'
+import { AiError, createAiClient, type AiErrorKind, type ChatMessageParam, type ToolDefinition } from './client'
+
+export { AiError, type AiErrorKind }
 
 export type OpenAiMessage =
   | { role: 'system' | 'user'; content: string }
   | { role: 'assistant'; content: string | null; tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[] }
   | { role: 'tool'; tool_call_id: string; content: string }
-
-export type AiErrorKind = 'timeout' | 'auth' | 'rate_limit' | 'network' | 'server' | 'bad_response' | 'aborted'
-
-export class AiError extends Error {
-  constructor(
-    readonly kind: AiErrorKind,
-    message: string,
-    readonly status?: number,
-  ) {
-    super(message)
-    this.name = 'AiError'
-  }
-}
 
 export interface ChatCompletionInput {
   config: AiConfig
@@ -43,11 +34,10 @@ export interface ChatCompletionResult {
   toolCalls: AssistantToolCall[]
   /** Tokens totales informados por el proveedor (o estimados si no los informa). */
   totalTokens: number
+  /** Créditos según la fórmula del plan (`creditsForUsage`). */
+  credits: number
   model: string
 }
-
-/** Tope de tokens de respuesta por llamada (también acota la reserva de créditos). */
-export const DEFAULT_MAX_TOKENS = 700
 
 const MAX_TOOL_CONTENT = 6000
 const HISTORY_LIMIT = 24
@@ -107,103 +97,27 @@ export function toOpenAiMessages(history: readonly AssistantMessage[], limit = H
   return out
 }
 
-interface RawToolCall {
-  id?: unknown
-  type?: unknown
-  function?: { name?: unknown; arguments?: unknown }
-}
-
-function readToolCalls(raw: unknown): AssistantToolCall[] {
-  if (!Array.isArray(raw)) return []
-  const calls: AssistantToolCall[] = []
-  raw.forEach((item: RawToolCall, index) => {
-    const name = typeof item?.function?.name === 'string' ? item.function.name : ''
-    if (!isAssistantTool(name)) return
-    const args = item.function?.arguments
-    calls.push({
-      id: typeof item.id === 'string' && item.id ? item.id : `call_${Date.now().toString(36)}_${index}`,
-      name,
-      arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}),
-    })
-  })
-  return calls
-}
-
-function classifyStatus(status: number): AiErrorKind {
-  if (status === 401 || status === 403) return 'auth'
-  if (status === 429) return 'rate_limit'
-  if (status === 408 || status === 504) return 'timeout'
-  return 'server'
-}
-
 export async function chatCompletion(input: ChatCompletionInput): Promise<ChatCompletionResult> {
-  const { config } = input
-  const doFetch = input.fetch ?? globalThis.fetch
-  const controller = new AbortController()
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    controller.abort()
-  }, config.timeoutMs)
-  const onAbort = () => controller.abort()
-  input.signal?.addEventListener('abort', onAbort, { once: true })
-
-  let res: Response
-  try {
-    res = await doFetch(`${config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}`, Accept: 'application/json' },
-      body: JSON.stringify({
-        model: config.model,
-        messages: input.messages,
-        tools: input.tools,
-        tool_choice: 'auto',
-        temperature: 0.3,
-        max_tokens: input.maxTokens ?? DEFAULT_MAX_TOKENS,
-      }),
-      signal: controller.signal,
-    })
-  } catch (error) {
-    clearTimeout(timer)
-    input.signal?.removeEventListener('abort', onAbort)
-    if (timedOut) throw new AiError('timeout', 'La IA tardó demasiado en responder.')
-    if (input.signal?.aborted) throw new AiError('aborted', 'Se canceló la respuesta.')
-    throw new AiError('network', error instanceof Error ? error.message : 'Sin conexión con la IA.')
-  }
-
-  try {
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '')
-      throw new AiError(classifyStatus(res.status), `La IA respondió ${res.status}: ${detail.slice(0, 300)}`, res.status)
-    }
-    let body: {
-      model?: string
-      choices?: { message?: { content?: unknown; tool_calls?: unknown } }[]
-      usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number }
-    }
-    try {
-      body = (await res.json()) as typeof body
-    } catch {
-      throw new AiError('bad_response', 'La IA respondió algo que no pudimos leer.')
-    }
-    const message = body.choices?.[0]?.message
-    if (!message) throw new AiError('bad_response', 'La IA respondió sin mensaje.')
-    const content = typeof message.content === 'string' ? message.content.trim() : ''
-    const toolCalls = readToolCalls(message.tool_calls)
-    const usage = body.usage
-    const reported = usage?.total_tokens ?? (usage?.prompt_tokens ?? 0) + (usage?.completion_tokens ?? 0)
-    return {
-      content,
-      toolCalls,
-      totalTokens: reported > 0 ? reported : estimateTokens(input.messages, content + toolCalls.map((c) => c.arguments).join('')),
-      model: typeof body.model === 'string' && body.model ? body.model : config.model,
-    }
-  } catch (error) {
-    if (error instanceof AiError) throw error
-    if (timedOut) throw new AiError('timeout', 'La IA tardó demasiado en responder.')
-    throw new AiError('network', error instanceof Error ? error.message : 'Se cortó la conexión con la IA.')
-  } finally {
-    clearTimeout(timer)
-    input.signal?.removeEventListener('abort', onAbort)
+  // El historial de v1 lo arma el navegador y no trae reasoning_content: con el razonamiento
+  // activo el proveedor podría responder 400. Por eso v1 llama con el razonamiento apagado.
+  const client = createAiClient(input.config, { fetch: input.fetch, retries: 1 })
+  const result = await client.chat({
+    messages: input.messages as ChatMessageParam[],
+    tools: input.tools as unknown as ToolDefinition[],
+    thinking: 'disabled',
+    temperature: 0.3,
+    maxCompletionTokens: input.maxTokens ?? input.config.maxCompletionTokens,
+    signal: input.signal,
+  })
+  // Solo herramientas conocidas: una desconocida nunca llega al navegador.
+  const toolCalls: AssistantToolCall[] = result.toolCalls
+    .filter((call) => isAssistantTool(call.function.name))
+    .map((call) => ({ id: call.id, name: call.function.name as AssistantToolCall['name'], arguments: call.function.arguments }))
+  return {
+    content: result.content,
+    toolCalls,
+    totalTokens: result.usage.inputTokens + result.usage.outputTokens,
+    credits: result.credits,
+    model: result.model,
   }
 }

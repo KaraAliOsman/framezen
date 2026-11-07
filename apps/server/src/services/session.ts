@@ -2,10 +2,11 @@ import type { Context } from 'hono'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import { getConnInfo } from '@hono/node-server/conninfo'
 import { and, count, eq, gt, isNull } from 'drizzle-orm'
-import type { BillingStateDetail, Me, Org, Role, User } from '@framezen/shared'
+import type { BillingStateDetail, Me, Org, Role, User } from '@dekopen/shared'
 import type { AppDeps, AuthContext } from '../context'
 import { invitations, memberships, orgs, sessions, users } from '../db/schema'
 import { newId, randomToken, sha256 } from '../lib/crypto'
+import { isLocale } from '../lib/i18n/locale'
 import { billingFor } from './billing/registry'
 
 export const SESSION_COOKIE = 'fz_session'
@@ -103,7 +104,14 @@ export async function destroySession(c: Context, deps: AppDeps): Promise<void> {
 }
 
 export function toUser(row: typeof users.$inferSelect): User {
-  return { id: row.id, name: row.name, email: row.email, createdAt: row.createdAt.toISOString() }
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    // Idioma elegido por la persona (v5); sin elegir, la web usa el navegador o el de la empresa.
+    ...(isLocale(row.locale) ? { locale: row.locale } : {}),
+    createdAt: row.createdAt.toISOString(),
+  }
 }
 
 export function toOrg(row: typeof orgs.$inferSelect): Org {
@@ -120,6 +128,9 @@ export function toOrg(row: typeof orgs.$inferSelect): Org {
   }
   const out: Org = { id: row.id, name: row.name, createdAt: row.createdAt.toISOString() }
   for (const [key, value] of Object.entries(optional)) if (value) (out as unknown as Record<string, string>)[key] = value
+  // Idioma de los documentos y moneda (v5).
+  if (isLocale(row.locale)) out.locale = row.locale
+  if (row.currency) out.currency = row.currency
   return out
 }
 

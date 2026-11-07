@@ -28,6 +28,9 @@ test('activar marca, editar un precio e importar CSV', async ({ page }) => {
   const off = brands.items.find((b) => !b.enabled && b.counts.lines > 0 && b.completeness === 'complete') ?? brands.items.find((b) => !b.enabled && b.counts.lines > 0)!
   await page.goto('/catalogo')
   await expect(page.getByRole('heading', { name: 'Catálogo' }).first()).toBeVisible()
+  // Las marcas apagadas viven en «Más marcas», plegado al abrir.
+  const more = page.getByRole('button', { name: /^Más marcas/ })
+  if (await more.isVisible().catch(() => false)) await more.click()
   const search = page.getByLabel('Buscar marca')
   if (await search.isVisible().catch(() => false)) await search.fill(off.brand.name)
   await page.getByRole('switch', { name: `Activar ${off.brand.name}` }).click()

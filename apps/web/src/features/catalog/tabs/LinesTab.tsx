@@ -1,106 +1,133 @@
 import { useMemo, useRef, useState } from 'react'
-import { CircleCheck, Info, RotateCcw, RulerDimensionLine, Tag, TriangleAlert } from 'lucide-react'
-import type { Catalog, Line, Pauta, TypologyId } from '@framezen/engine'
-import { sanitizePauta, TYPOLOGIES } from '@framezen/engine'
-import { TYPOLOGY_ICON_LABELS, TypologyIcon } from '@framezen/documents'
-import { ApiRequestError, humanError } from '../../../lib/api'
+import { CircleCheck, RotateCcw, RulerDimensionLine, Tag, TriangleAlert } from 'lucide-react'
+import type { Catalog, Id, Line, Pauta, TypologyGroup, TypologyId } from '@dekopen/engine'
+import { DEFAULT_PRICING, sanitizePauta, TYPOLOGIES } from '@dekopen/engine'
+import { lineProvenance } from '@dekopen/catalog'
+import { TypologyIcon } from '@dekopen/documents'
+import { ApiRequestError } from '../../../lib/api'
 import { cn } from '../../../lib/cn'
-import { formatMMUnit, formatNumber, normalizeSearch } from '../../../lib/format'
-import { Button, Card, EmptyState, NumberField, SaveIndicator, Select, Skeleton, toastUndo } from '../../../ui'
+import { normalizeSearch } from '../../../lib/format'
+import { useSettings } from '../../../lib/hooks'
+import { getGlossary, useFormat, useGlossary, useT } from '../../../lib/i18n'
+import { Button, EmptyState, Notice, SaveIndicator, SegmentedControl, Select, Skeleton, toastUndo } from '../../../ui'
 import { usePatchLine, type LinePatch } from '../api'
-import { BRAND_KIND_LABEL, LINE_KIND_LABEL, MATERIAL_LABEL, ROLE_LABEL, monogramOrder, sourceSentence } from '../model/labels'
-import type { PriceFocus } from '../model/prices'
-import { completePricesFocus, completePricesLabel, readinessByLine, READINESS_COPY, type LineReadiness } from '../model/readiness'
+import es from '../i18n/es'
+import { lineReference } from '../model/brandExample'
+import { brandKindLabel, localizedSourceSentence } from '../model/labels'
 import {
-  PAUTA_FIELDS,
-  REINFORCEMENT_FIELDS,
   factoryOf,
   pautaExample,
+  pautaFields,
   pautaMax,
   pautaPayload,
-  samePauta,
   pautaValue,
   presentKeys,
+  reinforcementFields,
+  samePauta,
   setPautaValue,
   type PautaKey,
   type ReinforcementKey,
 } from '../model/pauta'
-import { Monogram, ReadinessBadge, ReadinessDot, Swatch } from '../parts'
+import type { PriceFocus } from '../model/prices'
+import { completePricesFocus, completePricesLabel, readinessByLine, readinessCopy, readinessText, type LineReadiness } from '../model/readiness'
+import { ReadinessBadge, ReadinessDot, Swatch } from '../parts'
 import { useAutosave } from '../useAutosave'
 import { PautaDiagram } from './PautaDiagram'
 
 const ICON_FOR_KIND: Record<Line['kind'], TypologyId> = { casement: 'tilt_turn', sliding: 'sliding_2' }
 const TYPOLOGY_ORDER = new Map<string, number>(TYPOLOGIES.map((t, i) => [t.id, i]))
+const TYPOLOGY_GROUP = new Map<string, TypologyGroup>(TYPOLOGIES.map((t) => [t.id, t.group]))
+const GROUP_ORDER: TypologyGroup[] = ['window', 'door', 'sliding', 'folding', 'shape']
+
+/** Líneas agrupadas por marca (en el orden del catálogo), cada grupo por tipo y nombre. */
+export function groupLines(lines: readonly Line[]): { brandId: Id; list: Line[] }[] {
+  const map = new Map<string, Line[]>()
+  for (const line of lines) map.set(line.brandId, [...(map.get(line.brandId) ?? []), line])
+  return [...map].map(([brandId, list]) => ({
+    brandId,
+    list: [...list].sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name, 'es', { numeric: true })),
+  }))
+}
+
+/** Las líneas en el orden en que se listan (para «la primera que falta» del resumen). */
+export function sortLinesForList(catalog: Pick<Catalog, 'lines'>): Line[] {
+  return groupLines(catalog.lines).flatMap((group) => group.list)
+}
 
 export function LinesTab({
   catalog,
   loading,
+  readiness: given,
+  selectedId: controlled,
+  onSelect,
   onCompletePrices,
 }: {
   catalog: Catalog | undefined
   loading: boolean
+  /** Completitud por línea (la calcula la página una vez); si falta, se calcula aquí. */
+  readiness?: Map<Id, LineReadiness>
+  /** Línea abierta (controlada desde la página: «Completar PRO5003» la abre). */
+  selectedId?: string | null
+  onSelect?: (id: string) => void
   /** Abre la pestaña Precios con lo que le falta a la línea. */
   onCompletePrices?: (focus: PriceFocus, line: Line) => void
 }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const t = useT(es)
+  const g = useGlossary()
+  const [own, setOwn] = useState<string | null>(null)
+  const selectedId = controlled !== undefined ? controlled : own
+  const select = (id: string) => {
+    setOwn(id)
+    onSelect?.(id)
+  }
   const lines = catalog?.lines ?? []
   // Se recalcula con los precios del taller: cargar un precio cambia el estado al instante.
-  const readiness = useMemo(() => readinessByLine(catalog), [catalog])
+  const computed = useMemo(() => (given ? null : readinessByLine(catalog)), [given, catalog])
+  const readiness = given ?? computed ?? new Map<Id, LineReadiness>()
   const brands = useMemo(() => new Map((catalog?.brands ?? []).map((b) => [b.id, b])), [catalog])
-  // Mismas iniciales que en Marcas (el catálogo del taller trae solo las activas).
-  const monogramSiblings = useMemo(() => monogramOrder(catalog?.brands ?? []), [catalog])
-  const groups = useMemo(() => {
-    const map = new Map<string, Line[]>()
-    for (const line of lines) map.set(line.brandId, [...(map.get(line.brandId) ?? []), line])
-    return [...map].map(([brandId, list]) => ({
-      brandId,
-      list: [...list].sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name, 'es', { numeric: true })),
-    }))
-  }, [lines])
+  const groups = useMemo(() => groupLines(lines), [lines])
   const line = lines.find((l) => l.id === selectedId) ?? groups[0]?.list[0]
 
   if (loading || !catalog) {
     return (
-      <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
-        <Skeleton className="h-96 rounded-lg" />
-        <Skeleton className="h-96 rounded-lg" />
+      <div className="grid gap-6 lg:grid-cols-[264px_1fr]">
+        <Skeleton className="h-96 rounded-md" />
+        <Skeleton className="h-96 rounded-md" />
       </div>
     )
   }
   if (!line) {
-    return (
-      <Card>
-        <EmptyState size="compact" sketch="casement" title="Aún no tienes líneas activas" description="Activa una marca de perfiles en la pestaña Marcas y sus líneas aparecen aquí con su pauta." />
-      </Card>
-    )
+    return <EmptyState size="compact" title={t('lines.emptyTitle')} description={t('lines.emptyDescription')} />
   }
 
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[264px_minmax(0,1fr)]">
+    <div className="grid items-start gap-8 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-12">
       {/* Teléfono y tableta: selector compacto */}
       <div className="lg:hidden">
         <Select
-          aria-label="Línea"
+          aria-label={t('lines.selectLabel')}
           value={line.id}
-          onValueChange={setSelectedId}
-          options={groups.flatMap((g) =>
-            g.list.map((l) => ({
-              value: l.id,
-              label: l.name,
-              description: `${brands.get(g.brandId)?.name ?? ''} · ${readiness.get(l.id) ? READINESS_COPY[readiness.get(l.id)!.state].label : LINE_KIND_LABEL[l.kind]}`,
-            })),
+          onValueChange={select}
+          options={groups.flatMap((group) =>
+            group.list.map((l) => {
+              const state = readiness.get(l.id)?.state
+              return {
+                value: l.id,
+                label: l.name,
+                description: `${brands.get(group.brandId)?.name ?? ''} · ${state ? readinessCopy(state, t.locale).label : g.term(`lineKind.${l.kind}`)}`,
+              }
+            }),
           )}
         />
       </div>
       {/* Escritorio: lista por marca */}
-      <nav aria-label="Líneas" className="sticky top-4 hidden max-h-[calc(100dvh-160px)] flex-col gap-4 overflow-y-auto pr-1 lg:flex scrollbar-quiet">
+      <nav aria-label={t('lines.navLabel')} className="scrollbar-quiet sticky top-4 hidden max-h-[calc(100dvh-160px)] flex-col gap-5 overflow-y-auto pr-1 lg:flex">
         {groups.map((group) => {
           const brand = brands.get(group.brandId)
           return (
-            <div key={group.brandId} className="flex flex-col gap-1">
-              <p className="flex items-center gap-2 px-2 pb-1 text-meta font-medium text-paper-600">
-                {brand ? <Monogram brand={brand} siblings={monogramSiblings} size={18} /> : null}
-                {brand?.name ?? group.brandId}
+            <div key={group.brandId} className="flex flex-col gap-0.5">
+              <p className="flex items-center gap-2 px-2 pb-1.5 text-table text-fg-muted">
+                <span className="truncate">{brand?.name ?? group.brandId}</span>
               </p>
               {group.list.map((l) => {
                 const active = l.id === line.id
@@ -109,18 +136,17 @@ export function LinesTab({
                   <button
                     key={l.id}
                     type="button"
-                    onClick={() => setSelectedId(l.id)}
+                    onClick={() => select(l.id)}
                     aria-current={active ? 'true' : undefined}
                     className={cn(
-                      'flex items-center gap-2.5 rounded-sm px-2 py-1.5 text-left transition-colors duration-120',
-                      active ? 'bg-paper-0 shadow-[inset_0_0_0_1px_var(--paper-200)]' : 'hover:bg-paper-100',
+                      'flex min-h-10 items-center gap-2.5 rounded-sm px-2 py-1 text-left transition-colors duration-100 ease-out',
+                      active ? 'bg-hover' : 'hover:bg-hover/70',
                     )}
                   >
-                    <TypologyIcon typologyId={ICON_FOR_KIND[l.kind]} size={24} strokeWidth={1.25} className={active ? 'text-ink-600' : 'text-paper-600'} />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium text-paper-900">{l.name}</span>
-                      <span className="block truncate text-meta text-paper-600">
-                        {LINE_KIND_LABEL[l.kind]} · {l.typologyIds.length} {l.typologyIds.length === 1 ? 'tipología' : 'tipologías'}
+                      <span className={cn('block truncate text-fg-strong', active && 'font-medium')}>{l.name}</span>
+                      <span className="block truncate text-meta text-fg-muted">
+                        {t('lines.itemMeta', { kind: g.term(`lineKind.${l.kind}`), count: l.typologyIds.length })}
                       </span>
                     </span>
                     <ReadinessDot state={state} />
@@ -156,65 +182,130 @@ function LineDetail({
   catalog: Catalog
   readiness?: LineReadiness
   brandName: string
-  brandKind?: keyof typeof BRAND_KIND_LABEL
+  brandKind?: Parameters<typeof brandKindLabel>[0]
   onCompletePrices?: (focus: PriceFocus, line: Line) => void
 }) {
+  const t = useT(es)
+  const g = useGlossary()
+  const fmt = useFormat()
+  const settings = useSettings()
   const colors = line.colorIds.map((id) => catalog.colors.find((c) => c.id === id)).filter((c): c is NonNullable<typeof c> => Boolean(c))
-  const facts = [MATERIAL_LABEL[line.material], LINE_KIND_LABEL[line.kind], line.depth ? `${formatNumber(line.depth)} mm` : null, line.chambers ? `${line.chambers} cámaras` : null].filter(Boolean)
-  const description = addsInformation(line.description, facts.join(' ')) ? line.description : null
-  const source = sourceSentence(line)
-  const typologies = line.typologyIds
-    .filter((t): t is TypologyId => t in TYPOLOGY_ICON_LABELS)
-    .sort((a, b) => (TYPOLOGY_ORDER.get(a) ?? 99) - (TYPOLOGY_ORDER.get(b) ?? 99))
-  const roles = Object.entries(line.profiles).filter(([, id]) => id) as [keyof typeof ROLE_LABEL, string][]
+  const kindText = g.term(`lineKind.${line.kind}`)
+  const materialText = g.term(`material.${line.material}`)
+  // La descripción es dato del catálogo (en español): se compara con los datos dichos en español.
+  const esGlossary = getGlossary('es')
+  const plainFacts = [esGlossary.term(`material.${line.material}`), esGlossary.term(`lineKind.${line.kind}`), line.depth ? `${line.depth} mm` : null, line.chambers ? `${line.chambers}` : null]
+    .filter(Boolean)
+    .join(' ')
+  const description = addsInformation(line.description, plainFacts) ? line.description : null
+  const source = localizedSourceSentence(line, t.locale)
+  const typologyGroups = useMemo(() => {
+    const ids = line.typologyIds.filter((id): id is TypologyId => TYPOLOGY_ORDER.has(id)).sort((a, b) => (TYPOLOGY_ORDER.get(a) ?? 99) - (TYPOLOGY_ORDER.get(b) ?? 99))
+    return GROUP_ORDER.map((group) => ({ group, ids: ids.filter((id) => TYPOLOGY_GROUP.get(id) === group) })).filter((entry) => entry.ids.length)
+  }, [line.typologyIds])
+  const typologyCount = typologyGroups.reduce((sum, entry) => sum + entry.ids.length, 0)
+  const roles = Object.entries(line.profiles).filter(([, id]) => id) as [string, string][]
   const profileById = useMemo(() => new Map(catalog.profiles.map((p) => [p.id, p])), [catalog.profiles])
+  const pricing = settings.data?.pricing ?? DEFAULT_PRICING
+  const defaults = settings.data?.defaults
+  // Sin precios de perfiles («Solo medidas») el precio de referencia engañaría: no se muestra.
+  const reference = useMemo(
+    () => (readiness?.state === 'geometry' ? null : lineReference(catalog, line, pricing, defaults)),
+    [catalog, line, pricing, defaults, readiness?.state],
+  )
 
   return (
-    <div className="flex min-w-0 flex-col gap-6">
-      <header className="flex flex-col gap-3 rounded-lg border border-paper-200 bg-paper-0 p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[13px] text-paper-600">
-              {brandName}
-              {brandKind && brandKind !== 'profiles' ? ` · ${BRAND_KIND_LABEL[brandKind]}` : ''}
-            </p>
-            <h2 className="mt-0.5 text-h3 font-semibold tracking-[-0.01em] text-paper-900">{line.name}</h2>
-            <p className="mt-0.5 text-paper-600">{facts.join(' · ')}</p>
-          </div>
-          {readiness ? <ReadinessBadge readiness={readiness} /> : null}
-        </div>
-        {description ? <p className="text-paper-900">{description}</p> : null}
-        {readiness ? <ReadinessPanel line={line} catalog={catalog} readiness={readiness} onCompletePrices={onCompletePrices} /> : null}
-        <div className="flex flex-col gap-2 border-t border-paper-200 pt-3 text-[13px] leading-[18px] sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-paper-600">{source ? <>Fuente: {source}</> : null}</p>
-          {colors.length ? (
-            <div className="flex shrink-0 items-center gap-1" aria-label={`Colores: ${colors.map((c) => c.name).join(', ')}`}>
-              {colors.slice(0, 9).map((c) => (
-                <span key={c.id} title={c.name}>
-                  <Swatch color={c} size={16} />
+    <div className="flex min-w-0 flex-col gap-10">
+      <header className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="min-w-0">
+              <p className="text-table text-fg-muted">
+                {brandName}
+                {brandKind && brandKind !== 'profiles' ? ` · ${brandKindLabel(brandKind, t.locale)}` : ''}
+              </p>
+              <h2 className="mt-0.5 font-display text-h2 font-medium text-fg-strong">{line.name}</h2>
+              <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-fg-muted">
+                <span>
+                  {materialText} · {kindText}
                 </span>
-              ))}
-              {colors.length > 9 ? <span className="ml-1 text-meta text-paper-600">+{colors.length - 9}</span> : null}
+                {line.depth ? (
+                  <>
+                    <span aria-hidden className="text-fg-faint">
+                      ·
+                    </span>
+                    <span className="dim text-fg">{fmt.mm(line.depth, { unit: true })}</span>
+                  </>
+                ) : null}
+                {line.chambers ? (
+                  <>
+                    <span aria-hidden className="text-fg-faint">
+                      ·
+                    </span>
+                    <span>{t('lines.chambers', { count: line.chambers })}</span>
+                  </>
+                ) : null}
+              </p>
+              {readiness ? (
+                <div className="mt-2">
+                  <ReadinessBadge readiness={readiness} />
+                </div>
+              ) : null}
+            </div>
+          </div>
+          {reference ? (
+            <div className="flex min-w-0 flex-col items-start sm:items-end sm:text-right">
+              <span className="text-meta text-fg-muted">{t('lines.reference')}</span>
+              <span className="figure text-h2 font-medium text-fg-strong">{fmt.money(reference.unitNet)}</span>
+              <span className="text-meta text-fg-muted">
+                {t('lines.referenceValue', { typology: g.typology(reference.typologyId), size: fmt.size(reference.width, reference.height) })} ·{' '}
+                {reference.missingPrices ? <span className="text-warning">{t('lines.referenceMissing')}</span> : t('lines.referenceNet')}
+              </span>
             </div>
           ) : null}
         </div>
+        {description ? <p className="text-fg">{description}</p> : null}
+        {readiness ? <ReadinessPanel line={line} catalog={catalog} readiness={readiness} onCompletePrices={onCompletePrices} /> : null}
+        {readiness ? <CutProvenance line={line} readiness={readiness} /> : null}
+        {source || colors.length ? (
+          <div className="flex flex-col gap-2 text-table sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-fg-muted">{source ? t('source.label', { source }) : null}</p>
+            {colors.length ? (
+              <div className="flex shrink-0 items-center gap-1" role="img" aria-label={t('lines.colorsLabel', { names: fmt.list(colors.map((c) => c.name)) })}>
+                {colors.slice(0, 9).map((c) => (
+                  <span key={c.id} title={c.name}>
+                    <Swatch color={c} size={18} />
+                  </span>
+                ))}
+                {colors.length > 9 ? <span className="ml-1 text-meta text-fg-muted">{t('lines.moreColors', { count: colors.length - 9 })}</span> : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </header>
 
       <section className="flex flex-col gap-3">
-        <h3 className="font-semibold text-paper-900">
-          Tipologías que fabrica <span className="font-normal text-paper-600">· {typologies.length}</span>
+        <h3 className="text-h4 font-medium text-fg-strong">
+          {t('lines.typologiesTitle')} <span className="font-normal text-fg-muted tabular">· {fmt.number(typologyCount)}</span>
         </h3>
-        {typologies.length ? (
-          <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 xl:grid-cols-6">
-            {typologies.map((t) => (
-              <li key={t} className="flex flex-col items-center gap-2 rounded-md border border-paper-200 bg-paper-0 px-2 pt-3 pb-2 text-center">
-                <TypologyIcon typologyId={t} size={44} strokeWidth={1.25} className="text-paper-900" />
-                <span className="text-meta leading-tight text-paper-600">{TYPOLOGY_ICON_LABELS[t]}</span>
-              </li>
+        {typologyGroups.length ? (
+          <div className="flex flex-col gap-4">
+            {typologyGroups.map(({ group, ids }) => (
+              <div key={group} className="flex flex-col gap-2">
+                {typologyGroups.length > 1 ? <p className="text-meta font-medium text-fg-muted">{g.term(`typologyGroup.${group}`)}</p> : null}
+                <ul className="grid grid-cols-2 gap-x-6 gap-y-1.5 sm:grid-cols-3 xl:grid-cols-4">
+                  {ids.map((id) => (
+                    <li key={id} className="flex min-h-8 min-w-0 items-center gap-2.5">
+                      <TypologyIcon typologyId={id} size={24} strokeWidth={1.25} className="shrink-0 text-fg-muted" />
+                      <span className="truncate text-table text-fg">{g.typology(id)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
+          </div>
         ) : (
-          <p className="text-[13px] text-paper-600">Sin tipologías asignadas: el diseñador igual te deja dibujar cualquier ventana con esta línea.</p>
+          <p className="text-table text-fg-muted">{t('lines.noTypologies')}</p>
         )}
       </section>
 
@@ -222,16 +313,16 @@ function LineDetail({
 
       {roles.length ? (
         <section className="flex flex-col gap-3">
-          <h3 className="font-semibold text-paper-900">Perfiles por función</h3>
-          <ul className="grid gap-x-6 gap-y-1 rounded-lg border border-paper-200 bg-paper-0 px-4 py-3 sm:grid-cols-2">
+          <h3 className="text-h4 font-medium text-fg-strong">{t('lines.profilesTitle')}</h3>
+          <ul className="grid gap-x-10 sm:grid-cols-2">
             {roles.map(([role, id]) => {
               const p = profileById.get(id)
               return (
-                <li key={role} className="flex items-baseline justify-between gap-3 border-b border-paper-200/70 py-1.5 last:border-b-0 sm:[&:nth-last-child(2)]:border-b-0">
-                  <span className="text-paper-600">{ROLE_LABEL[role]}</span>
+                <li key={role} className="flex min-h-9 items-center justify-between gap-3 py-1">
+                  <span className="text-fg-muted">{g.profileRole(role)}</span>
                   <span className="min-w-0 truncate text-right">
-                    <span className="font-mono text-[12px] text-paper-900">{p?.code ?? '—'}</span>
-                    {p ? <span className="text-paper-600"> · {p.name}</span> : null}
+                    <span className="code-id text-table text-fg-strong">{p?.code ?? t('common.noneDash')}</span>
+                    {p ? <span className="text-fg-muted"> · {p.name}</span> : null}
                   </span>
                 </li>
               )
@@ -258,57 +349,85 @@ function ReadinessPanel({
   readiness: LineReadiness
   onCompletePrices?: (focus: PriceFocus, line: Line) => void
 }) {
-  const focus = completePricesFocus(line, readiness)
-  const colorName = (id: string) => (catalog.colors.find((c) => c.id === id)?.name ?? id).toLocaleLowerCase('es-CL')
-  const readyColors = readiness.readyColors.map(colorName)
+  const t = useT(es)
+  const fmt = useFormat()
+  const focus = completePricesFocus(line, readiness, t.locale)
+  const text = readinessText(readiness, line, catalog, t.locale)
   const { state } = readiness
+  const readyColors = readiness.readyColors.map((id) => {
+    const name = catalog.colors.find((c) => c.id === id)?.name ?? id
+    return t.locale === 'es' ? name.toLocaleLowerCase('es-CL') : name
+  })
   const Icon = state === 'ready' ? CircleCheck : state === 'warnings' ? TriangleAlert : RulerDimensionLine
-  const headline =
-    state === 'ready'
-      ? readyColors.length && readyColors.length < line.colorIds.length
-        ? `Lista para cotizar en ${joinWords(readyColors)}`
-        : 'Lista para cotizar'
-      : readiness.headline
+  const headline = state === 'ready' && readyColors.length && readyColors.length < line.colorIds.length ? t('lines.readyIn', { colors: fmt.list(readyColors) }) : text.headline
   // En «lista» el detalle de que todo tiene precio sobra: el titular ya lo dice.
-  const details = readiness.details.filter((d) => !(state === 'ready' && d.startsWith('Todos sus perfiles')))
+  const allPriced = t('readiness.readyAll')
+  const details = text.details.filter((d) => !(state === 'ready' && d === allPriced))
   return (
-    <div
-      className={cn(
-        'flex flex-col gap-3 rounded-md border px-3.5 py-3 sm:flex-row sm:items-start sm:justify-between',
-        state === 'ready' ? 'border-ok-600/20 bg-ok-50' : state === 'warnings' ? 'border-warn-600/25 bg-warn-50' : 'border-paper-200 bg-paper-50',
-      )}
-    >
+    <div className="flex flex-col gap-3 border-y border-divider py-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex min-w-0 gap-2.5">
-        <Icon
-          aria-hidden
-          strokeWidth={1.75}
-          className={cn('mt-0.5 size-[18px] shrink-0', state === 'ready' ? 'text-ok-600' : state === 'warnings' ? 'text-warn-600' : 'text-paper-600')}
-        />
+        <Icon aria-hidden strokeWidth={1.75} className={cn('mt-0.5 size-[18px] shrink-0', state === 'ready' ? 'text-success' : state === 'warnings' ? 'text-warning' : 'text-fg-muted')} />
         <div className="min-w-0">
-          <p className={cn('font-medium', state === 'ready' ? 'text-ok-800' : state === 'warnings' ? 'text-warn-800' : 'text-paper-900')}>{headline}</p>
+          <p className="font-medium text-fg-strong">{headline}</p>
           {details.length ? (
-            <ul className="mt-1 flex flex-col gap-0.5 text-[13px] leading-[18px] text-paper-600">
+            <ul className="mt-1 flex flex-col gap-0.5 text-table text-fg-muted">
               {details.slice(0, 4).map((d) => (
                 <li key={d}>{d}</li>
               ))}
             </ul>
           ) : (
-            <p className="mt-0.5 text-[13px] leading-[18px] text-paper-600">{READINESS_COPY[state].help}</p>
+            <p className="mt-0.5 text-table text-fg-muted">{readinessCopy(state, t.locale).help}</p>
           )}
         </div>
       </div>
       {focus && onCompletePrices ? (
         <Button size="sm" variant={state === 'ready' ? 'secondary' : 'primary'} icon={Tag} onClick={() => onCompletePrices(focus, line)} className="shrink-0 self-start">
-          {completePricesLabel(readiness)}
+          {completePricesLabel(readiness, t.locale)}
         </Button>
       ) : null}
     </div>
   )
 }
 
-function joinWords(parts: string[]): string {
-  if (parts.length <= 1) return parts.join('')
-  return `${parts.slice(0, -1).join(', ')} y ${parts[parts.length - 1]}`
+/** De dónde salen los cortes de la línea: fabricante, lista del taller o sin verificar. Nunca se aparenta. */
+function CutProvenance({ line, readiness }: { line: Line; readiness: LineReadiness }) {
+  const t = useT(es)
+  const provenance = lineProvenance(line)
+  const origin = readiness.cutOrigin
+  const sources = provenance?.sources ?? []
+  return (
+    <section aria-label={t('provenance.title')} className="flex flex-col gap-1 text-table text-fg-muted">
+      <p>
+        <span className="font-medium text-fg-strong">{t('provenance.title')}:</span>{' '}
+        <span className={origin === 'sin_verificar' ? 'text-warning' : 'text-fg'}>{origin ? t(`provenance.origin.${origin}`) : t('provenance.own')}.</span>{' '}
+        {origin ? t(`provenance.help.${origin}`) : t('provenance.helpOwn')}
+      </p>
+      {readiness.dataWarnings.length ? (
+        <ul className="flex list-disc flex-col gap-0.5 pl-4 text-table text-fg">
+          {readiness.dataWarnings.slice(0, 8).map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      ) : null}
+      {sources.length ? (
+        <p className="text-meta text-fg-muted">
+          {t('provenance.sources')}{' '}
+          {sources.map((s, i) => (
+            <span key={s.id}>
+              {i > 0 ? ' · ' : ''}
+              {s.url ? (
+                <a href={s.url} target="_blank" rel="noreferrer noopener" className="underline hover:text-fg">
+                  {s.title}
+                </a>
+              ) : (
+                s.title
+              )}
+            </span>
+          ))}
+        </p>
+      ) : null}
+    </section>
+  )
 }
 
 /** La descripción solo se muestra si dice algo que los datos de la línea no dicen ya. */
@@ -317,7 +436,7 @@ export function addsInformation(description: string | undefined, facts: string):
   const known = normalizeSearch(facts)
   const words = normalizeSearch(description)
     .split(/[^\p{L}\p{N}]+/u)
-    .filter((w) => w.length > 2 && !/^\d+$/.test(w) && w !== 'mm')
+    .filter((w) => w.length > 2 && !/^\d+$/.test(w) && w !== 'mm' && !/^camaras?$/.test(w))
   return words.some((w) => !known.includes(w))
 }
 
@@ -330,24 +449,31 @@ interface PautaDraft {
 }
 
 function PautaEditor({ line, catalog }: { line: Line; catalog: Catalog }) {
+  const t = useT(es)
+  const fmt = useFormat()
   // Lo que viene del catálogo (con los ajustes que ya hubiera) y la pauta de fábrica.
   const loaded = useRef<PautaDraft>({ pauta: line.pauta, doorPauta: line.doorPauta, sashInPauta: line.sashInPauta })
   const factory = useRef<PautaDraft>(factoryOf(line))
   const [draft, setDraft] = useState<PautaDraft>(loaded.current)
   const [focus, setFocus] = useState<DraftKey | null>(null)
+  const [mode, setMode] = useState<'window' | 'door'>('window')
   const [unavailable, setUnavailable] = useState(false)
   const patchLine = usePatchLine()
-  const autosave = useAutosave<LinePatch>(async (patch) => {
-    try {
-      await patchLine.mutateAsync({ id: line.id, patch })
-    } catch (error) {
-      if (error instanceof ApiRequestError && (error.status === 404 || error.status === 405)) {
-        setUnavailable(true)
-        return
+  const autosave = useAutosave<LinePatch>(
+    async (patch) => {
+      try {
+        await patchLine.mutateAsync({ id: line.id, patch })
+      } catch (error) {
+        if (error instanceof ApiRequestError && (error.status === 404 || error.status === 405)) {
+          setUnavailable(true)
+          return
+        }
+        throw error
       }
-      throw error
-    }
-  }, 700, `line:${line.id}`)
+    },
+    700,
+    `line:${line.id}`,
+  )
 
   const save = (next: PautaDraft) => {
     setDraft(next)
@@ -358,189 +484,131 @@ function PautaEditor({ line, catalog }: { line: Line; catalog: Catalog }) {
   }
   // Vaciar un campo = volver al valor de fábrica.
   const valueOr = (value: number | null, key: DraftKey, base: Partial<Pauta> | undefined) => (value === null ? (pautaValue(base, key) ?? null) : value)
-  const setBase = (key: DraftKey, value: number | null) =>
-    save({ ...draft, pauta: setPautaValue(draft.pauta, key, valueOr(value, key, factory.current.pauta)) as Pauta })
+  const setBase = (key: DraftKey, value: number | null) => save({ ...draft, pauta: setPautaValue(draft.pauta, key, valueOr(value, key, factory.current.pauta)) as Pauta })
   const setDoor = (key: DraftKey, value: number | null) =>
     save({ ...draft, doorPauta: setPautaValue(draft.doorPauta ?? {}, key, valueOr(value, key, factory.current.doorPauta)) })
 
+  const fields = useMemo(() => pautaFields(t.locale), [t.locale])
+  const steelFields = useMemo(() => reinforcementFields(t.locale), [t.locale])
   const shownPauta = useMemo(() => sanitizePauta(draft.pauta).pauta, [draft.pauta])
-  const example = useMemo(() => pautaExample(catalog, line, { pauta: draft.pauta, doorPauta: draft.doorPauta, sashInPauta: draft.sashInPauta }), [catalog, line, draft])
+  const example = useMemo(
+    () => pautaExample(catalog, line, { pauta: draft.pauta, doorPauta: draft.doorPauta, sashInPauta: draft.sashInPauta }, t.locale),
+    [catalog, line, draft, t.locale],
+  )
   const frameProfile = catalog.profiles.find((p) => p.id === line.profiles.frame || p.id === line.profiles.sliding_frame)
   const adjusted = !samePauta(draft.pauta, factory.current.pauta) || !samePauta(draft.doorPauta, factory.current.doorPauta)
-  const highlighted = focus && !focus.startsWith('reinforcement.') ? (focus as PautaKey) : null
   const doorKeys = presentKeys(draft.doorPauta)
-  const doorSteel = REINFORCEMENT_FIELDS.filter((f) => draft.doorPauta?.reinforcement?.[f.key] !== undefined)
+  const doorSteel = steelFields.filter((f) => draft.doorPauta?.reinforcement?.[f.key] !== undefined)
+  const hasDoor = doorKeys.length > 0 || doorSteel.length > 0
+  const isDoorKey = (key: DraftKey) => pautaValue(draft.doorPauta, key) !== undefined
+  const doorValues = useMemo(() => ({ ...draft.pauta, ...draft.doorPauta, reinforcement: { ...draft.pauta.reinforcement, ...draft.doorPauta?.reinforcement } }), [draft.pauta, draft.doorPauta])
+  const doorShown = useMemo(() => sanitizePauta(doorValues as Pauta).pauta, [doorValues])
+  const origins = lineProvenance(line)?.fields
+  const originText = (key: string, help: string) => (origins ? `${help} · ${t(`provenance.origin.${origins[`pauta.${key}`]?.origin ?? 'sin_verificar'}`)}` : help)
+  const allFields = useMemo(
+    () => [
+      ...fields.map((f) => ({ key: f.key as DraftKey, label: f.label, help: originText(f.key, f.help) })),
+      ...steelFields.map((f) => ({ key: `reinforcement.${f.key}` as DraftKey, label: f.label, help: f.help })),
+    ],
+    [fields, steelFields, origins, t],
+  )
 
   const restore = () => {
     const before = draft
     setDraft(factory.current)
     autosave.schedule({ pauta: null, doorPauta: null, sashInPauta: null })
-    toastUndo(`Volviste a la pauta de fábrica de ${line.name}.`, () => save(before))
+    toastUndo(t('pauta.restored', { line: line.name }), () => save(before))
   }
 
+  const sashIn = draft.sashInPauta
+  const sashInText = sashIn
+    ? (() => {
+        const bead = sashIn.beadDeduction !== undefined ? fmt.mm(sashIn.beadDeduction, { unit: true }) : null
+        const steel = sashIn.reinforcement?.sash !== undefined ? fmt.mm(sashIn.reinforcement.sash, { unit: true }) : null
+        if (bead && steel) return t('pauta.sashInBoth', { bead, steel })
+        if (bead) return t('pauta.sashInBead', { bead })
+        if (steel) return t('pauta.sashInSteel', { steel })
+        return t('pauta.sashIn')
+      })()
+    : null
+
   return (
-    <section className="overflow-hidden rounded-lg border border-paper-200 bg-paper-0">
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-paper-200 px-5 py-3.5">
-        <div className="min-w-0">
-          <h3 className="font-semibold text-paper-900">Pauta de corte</h3>
-          <p className="mt-0.5 max-w-xl text-[13px] leading-[18px] text-paper-600">
-            Los descuentos con que el motor calcula cada corte, vidrio y refuerzo. Pasa el cursor por un valor para verlo en el dibujo.
-          </p>
-        </div>
-        {(!unavailable && autosave.status !== 'idle') || adjusted ? (
-        <div className="flex items-center gap-2">
-          {!unavailable && autosave.status !== 'idle' ? <SaveIndicator status={autosave.status} savedAt={autosave.savedAt} /> : null}
-          {adjusted ? (
-            <Button size="sm" variant="ghost" icon={RotateCcw} onClick={restore}>
-              Pauta de fábrica
-            </Button>
+    <section>
+      <header>
+        {/* La fila tiene alto propio: el estado de guardado aparece mientras se escribe y no mueve el dibujo. */}
+        <div className="flex min-h-8 items-center justify-between gap-3">
+          <h3 className="min-w-0 text-h4 font-medium text-fg-strong">{t('pauta.title')}</h3>
+          {(!unavailable && autosave.status !== 'idle') || adjusted ? (
+            <div className="flex shrink-0 items-center gap-2">
+              {!unavailable && autosave.status !== 'idle' ? <SaveIndicator status={autosave.status} savedAt={autosave.savedAt} /> : null}
+              {adjusted ? (
+                <Button size="sm" variant="ghost" icon={RotateCcw} onClick={restore}>
+                  {t('pauta.restore')}
+                </Button>
+              ) : null}
+            </div>
           ) : null}
         </div>
-        ) : null}
+        <p className="mt-1 max-w-xl text-table text-fg-muted">{t('pauta.description')}</p>
       </header>
 
       {unavailable ? (
-        <p className="flex items-start gap-2 border-b border-warn-600/20 bg-warn-50 px-5 py-2.5 text-[13px] leading-[18px] text-warn-800">
-          <Info aria-hidden className="mt-px size-4 shrink-0" strokeWidth={1.75} />
-          Todavía no podemos guardar cambios de pauta desde aquí. Pruébalos: el ejemplo se recalcula con tus valores, pero al salir vuelve la pauta del catálogo.
-        </p>
-      ) : line.completeness === 'verified' && adjusted ? (
-        <p className="flex items-start gap-2 border-b border-paper-200 bg-paper-50 px-5 py-2.5 text-[13px] leading-[18px] text-paper-600">
-          <Info aria-hidden className="mt-px size-4 shrink-0 text-ink-600" strokeWidth={1.75} />
-          La pauta de fábrica de esta línea está verificada en taller. Con tus ajustes, revisa la primera ventana que cortes.
-        </p>
+        <Notice tone="warning" size="compact" className="mt-4">
+          {t('pauta.unavailable')}
+        </Notice>
       ) : null}
 
-      <div className="grid gap-6 p-5 xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
-        <div className="flex flex-col gap-4">
-          <div className="rounded-md border border-paper-200 bg-paper-50 p-2">
-            <PautaDiagram pauta={shownPauta} frameFace={frameProfile?.face} highlight={highlighted} />
-          </div>
-          {example ? (
-            <div className="overflow-hidden rounded-md border border-paper-200">
-              <p className="border-b border-paper-200 bg-paper-50 px-3 py-2 text-[13px] text-paper-600">
-                Ejemplo: <span className="font-medium text-paper-900">{example.title}</span> de {formatNumber(example.width)} × {formatNumber(example.height)} mm
-              </p>
-              <table className="w-full text-table">
-                <tbody>
-                  {example.measures.map((m) => {
-                    const hit = focus ? m.uses.includes(focus) : false
-                    return (
-                      <tr key={m.id} className={cn('border-b border-paper-200/70 transition-colors duration-160 last:border-b-0', hit && 'bg-ink-50')}>
-                        <th scope="row" className="px-3 py-1.5 text-left font-normal">
-                          <span className="block text-paper-900">{m.label}</span>
-                          <span className="block text-meta text-paper-600">{m.rule}</span>
-                        </th>
-                        <td className={cn('px-3 py-1.5 text-right whitespace-nowrap tabular', hit ? 'font-semibold text-ink-700' : 'text-paper-900')}>
-                          {m.size ? `${formatNumber(m.size.width, 1)} × ${formatNumber(m.size.height, 1)}` : formatMMUnit(m.value)}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </div>
+      {hasDoor ? (
+        <SegmentedControl<'window' | 'door'>
+          size="sm"
+          className="mt-5"
+          aria-label={t('pauta.title')}
+          value={mode}
+          onValueChange={setMode}
+          options={[
+            { value: 'window', label: t('pauta.windowTitle') },
+            { value: 'door', label: t('pauta.doorTitle') },
+          ]}
+        />
+      ) : null}
 
-        <div className="flex flex-col gap-5">
-          <FieldList
-            fields={PAUTA_FIELDS.map((f) => ({ key: f.key as DraftKey, label: f.label, help: f.help, rule: f.rule }))}
-            source={draft.pauta}
-            onChange={setBase}
-            onFocusKey={setFocus}
-            focus={focus}
-          />
-          <div className="flex flex-col gap-2">
-            <h4 className="text-[13px] font-semibold text-paper-900">Refuerzos (acero)</h4>
-            <FieldList
-              fields={REINFORCEMENT_FIELDS.map((f) => ({ key: `reinforcement.${f.key}` as DraftKey, label: f.label, help: f.help }))}
-              source={draft.pauta}
-              onChange={setBase}
-              onFocusKey={setFocus}
-              focus={focus}
-              optional
-            />
-          </div>
-          {doorKeys.length || doorSteel.length ? (
-            <div className="flex flex-col gap-2">
-              <h4 className="text-[13px] font-semibold text-paper-900">Puertas</h4>
-              <p className="-mt-1 text-[13px] leading-[18px] text-paper-600">En puertas cambian solo estos valores; el resto es igual a la ventana.</p>
-              <FieldList
-                fields={[
-                  ...PAUTA_FIELDS.filter((f) => doorKeys.includes(f.key)).map((f) => ({ key: f.key as DraftKey, label: f.label, help: f.help })),
-                  ...doorSteel.map((f) => ({ key: `reinforcement.${f.key}` as DraftKey, label: f.label, help: f.help })),
-                ]}
-                source={draft.doorPauta ?? {}}
-                scope="pauta-puerta"
-                onChange={setDoor}
-                onFocusKey={setFocus}
-                focus={null}
-              />
-            </div>
-          ) : null}
-          {draft.sashInPauta ? (
-            <p className="rounded-md bg-paper-50 px-3 py-2 text-[13px] leading-[18px] text-paper-600">
-              La hoja que abre hacia adentro usa su propio perfil
-              {draft.sashInPauta.beadDeduction !== undefined ? `, con junquillo = hoja − ${formatNumber(draft.sashInPauta.beadDeduction, 1)} mm` : ''}
-              {draft.sashInPauta.reinforcement?.sash !== undefined ? ` y refuerzo = corte − ${formatNumber(draft.sashInPauta.reinforcement.sash, 1)} mm` : ''}.
-            </p>
-          ) : null}
-        </div>
+      <div className="mt-4 overflow-x-auto rounded-panel bg-sunken p-3">
+        <PautaDiagram
+          pauta={mode === 'door' ? doorShown : shownPauta}
+          values={mode === 'door' ? doorValues : draft.pauta}
+          fields={allFields}
+          frameFace={frameProfile?.face}
+          active={focus}
+          onActive={setFocus}
+          onChange={mode === 'door' ? setDoor : setBase}
+          editable={mode === 'door' ? isDoorKey : undefined}
+          scope={mode === 'door' ? 'pauta-puerta' : 'pauta'}
+        />
       </div>
+      {example ? (
+        <div className="mt-3">
+          <p className="pb-2 text-table text-fg-muted">
+            {t.rich('pauta.example', { title: example.title, size: fmt.size(example.width, example.height), b: <span className="font-medium text-fg-strong" /> })}
+          </p>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-1 lg:grid-cols-3">
+            {example.measures.map((m) => {
+              const hit = focus ? m.uses.includes(focus) : false
+              return (
+                <div key={m.id} title={m.rule} className={cn('-mx-1.5 flex items-baseline justify-between gap-3 rounded-xs px-1.5 py-1 transition-colors duration-140', hit && 'bg-accent-subtle')}>
+                  <dt className="min-w-0 truncate text-table text-fg-muted">{m.label}</dt>
+                  <dd className={cn('text-table whitespace-nowrap tabular', hit ? 'font-medium text-accent-ink' : 'text-fg-strong')}>{m.size ? fmt.size(m.size.width, m.size.height) : fmt.mm(m.value, { unit: true })}</dd>
+                </div>
+              )
+            })}
+          </dl>
+        </div>
+      ) : null}
+      {sashInText ? <p className="mt-3 text-table text-fg-muted">{sashInText}</p> : null}
+      {!unavailable && line.completeness === 'verified' && adjusted ? (
+        <Notice tone="info" size="compact" className="mt-4">
+          {t('pauta.verifiedAdjusted')}
+        </Notice>
+      ) : null}
     </section>
-  )
-}
-
-function FieldList({
-  fields,
-  source,
-  onChange,
-  onFocusKey,
-  focus,
-  optional,
-  scope = 'pauta',
-}: {
-  /** Prefijo de los ids (la pauta de puertas repite claves de la base). */
-  scope?: string
-  fields: { key: DraftKey; label: string; help: string; rule?: string }[]
-  source: Partial<Pauta>
-  onChange: (key: DraftKey, value: number | null) => void
-  onFocusKey: (key: DraftKey | null) => void
-  focus: DraftKey | null
-  optional?: boolean
-}) {
-  return (
-    <ul className="flex flex-col divide-y divide-paper-200/70 rounded-md border border-paper-200">
-      {fields.map((f) => {
-        const value = pautaValue(source, f.key)
-        return (
-          <li
-            key={f.key}
-            onMouseEnter={() => onFocusKey(f.key)}
-            onMouseLeave={() => onFocusKey(null)}
-            className={cn('flex items-center justify-between gap-3 px-3 py-2 transition-colors duration-160', focus === f.key && 'bg-ink-50/70')}
-          >
-            <label htmlFor={`${scope}-${f.key}`} className="min-w-0 cursor-pointer">
-              <span className="block font-medium text-paper-900">{f.label}</span>
-              <span className="block text-meta text-paper-600">{f.help}</span>
-            </label>
-            <NumberField
-              id={`${scope}-${f.key}`}
-              value={value ?? null}
-              onChange={(v) => onChange(f.key, v)}
-              onFocus={() => onFocusKey(f.key)}
-              onBlur={() => onFocusKey(null)}
-              step={0.5}
-              bigStep={5}
-              min={0}
-              max={pautaMax(f.key)}
-              placeholder={optional ? '—' : undefined}
-              className="w-[104px] shrink-0"
-            />
-          </li>
-        )
-      })}
-    </ul>
   )
 }

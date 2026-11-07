@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { createDesign, type Warning } from '@framezen/engine'
-import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@framezen/catalog'
-import { buildWorkshopDocInput } from '@framezen/documents'
+import { createDesign, type Warning } from '@dekopen/engine'
+import { SAMPLE_CATALOG, SAMPLE_DEFAULTS } from '@dekopen/catalog'
+import { buildWorkshopDocInput } from '@dekopen/documents'
 import { workshopNotices, workshopTotals } from './summary'
 
 const design = (t: string, w: number, h: number, lineId: string = SAMPLE_DEFAULTS.lineId) =>
@@ -52,10 +52,13 @@ describe('avisos para fabricar', () => {
     ]
     data.windows[1]!.bom.warnings = [warn('error', 'pane_impossible', 'La hoja no cabe.')]
     data.optimization.warnings = [warn('warn', 'piece_too_long', 'La pieza no cabe en una barra.')]
-    expect(workshopNotices(data)).toEqual([
+    const notices = workshopNotices(data)
+    expect(notices.map(({ warning: _w, ...rest }) => rest)).toEqual([
       { level: 'error', message: 'La hoja no cabe.', ref: 'V2' },
       { level: 'warn', message: 'El paño izquierdo queda chico.', ref: 'V1' },
       { level: 'warn', message: 'La pieza no cabe en una barra.' },
     ])
+    // Cada aviso conserva el original del motor (código y parámetros) para mostrarlo en otro idioma.
+    expect(notices[0]!.warning).toMatchObject({ code: 'pane_impossible' })
   })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { TYPOLOGIES, computeLayout, createDesign } from '@framezen/engine'
+import { TYPOLOGIES, computeLayout, createDesign } from '@dekopen/engine'
 import { WindowDrawing } from '../../src/drawing'
 import { SAMPLE_CATALOG } from '../../src/sales'
 

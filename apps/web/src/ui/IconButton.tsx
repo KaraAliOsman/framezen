@@ -9,22 +9,27 @@ export interface IconButtonProps extends Omit<ComponentProps<'button'>, 'childre
   label: string
   shortcut?: string
   variant?: 'ghost' | 'secondary' | 'primary'
-  size?: 'sm' | 'md' | 'lg'
+  /** xs 24 · sm 30 · md 36 (44 táctil) · lg 44. */
+  size?: 'xs' | 'sm' | 'md' | 'lg'
   /** Mostrar el tooltip (por defecto sí). */
   tooltip?: boolean
   tooltipSide?: 'top' | 'right' | 'bottom' | 'left'
 }
 
 const variants = {
-  ghost: 'text-paper-600 hover:bg-paper-100 hover:text-paper-900 data-[state=open]:bg-paper-100 data-[state=open]:text-paper-900',
-  secondary: 'border border-paper-200 bg-paper-0 text-paper-900 hover:bg-paper-100',
-  primary: 'bg-ink-600 text-paper-0 hover:bg-ink-700',
+  ghost:
+    'text-fg-muted hover:bg-hover hover:text-fg-strong active:bg-pressed data-[state=open]:bg-hover data-[state=open]:text-fg-strong ' +
+    'aria-pressed:bg-accent-subtle-strong aria-pressed:text-fg-strong',
+  secondary:
+    'border border-divider-strong bg-surface text-fg-strong hover:bg-hover active:bg-pressed data-[state=open]:bg-hover',
+  primary: 'bg-signal text-on-signal shadow-[var(--dk-shadow-primary)] hover:bg-signal-hover active:bg-signal-pressed',
 }
 
 const sizes = {
-  sm: 'size-7 [&_svg]:size-4',
-  md: 'size-9 [&_svg]:size-[18px] touch:size-11',
-  lg: 'size-11 [&_svg]:size-5',
+  xs: 'size-6 rounded-xs [&_svg]:size-3.5',
+  sm: 'size-[30px] rounded-sm [&_svg]:size-4',
+  md: 'size-9 rounded-sm [&_svg]:size-[18px] touch:size-11',
+  lg: 'size-11 rounded-sm [&_svg]:size-5',
 }
 
 export function IconButton({
@@ -44,7 +49,8 @@ export function IconButton({
       type={type ?? 'button'}
       aria-label={label}
       className={cn(
-        'inline-flex shrink-0 items-center justify-center rounded-sm transition-[background-color,color,transform] duration-120 ease-out active:scale-[0.96] disabled:pointer-events-none disabled:opacity-50',
+        'inline-flex shrink-0 items-center justify-center transition-[background-color,color,transform] duration-100 ease-out',
+        'active:scale-[0.94] disabled:pointer-events-none disabled:opacity-45',
         variants[variant],
         sizes[size],
         className,

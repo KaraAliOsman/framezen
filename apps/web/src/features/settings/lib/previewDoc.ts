@@ -2,18 +2,21 @@
  * Cotización de muestra con los datos del taller (empresa, logo, color, precios), calculada con
  * el motor. La usan Ajustes · Empresa y la puesta a punto para mostrar «así le llega a tu cliente».
  */
-import { quoteTotals, type Catalog, type CutSettings, type PricingSettings } from '@framezen/engine'
-import type { DocClient, DocOrg, QuoteDocData, QuoteDocItem } from '@framezen/documents'
-import type { Defaults, DocumentPrefs } from '@framezen/shared'
+import { quoteTotals, type Catalog, type CutSettings, type PricingSettings } from '@dekopen/engine'
+import type { DocClient, DocOrg, QuoteDocData, QuoteDocItem } from '@dekopen/documents'
+import type { Defaults, DocumentPrefs, Locale } from '@dekopen/shared'
+import { getGlossary, getLocale, translate } from '../../../lib/i18n'
+import es from '../i18n/es'
 import { priceExample, type ExampleSpec } from './pricingExample'
 
-const ITEMS: (ExampleSpec & { name: string; location: string })[] = [
-  { typology: 'sliding_2', width: 1800, height: 1200, kind: 'sliding', name: 'Ventanal living', location: 'Living', qty: 1 },
-  { typology: 'tilt_turn', width: 800, height: 1200, kind: 'casement', name: 'Ventana dormitorio', location: 'Dormitorio principal', qty: 2 },
-  { typology: 'casement_transom', width: 900, height: 2100, kind: 'casement', name: 'Puerta balcón', location: 'Terraza', qty: 1 },
-]
+type SampleKey = 'living' | 'bedroom' | 'balcony'
 
-export const SAMPLE_CLIENT: DocClient = { name: 'Pedro Soto', city: 'Concepción', phone: '+56 9 8765 4321' }
+/** Ventanas de la cotización de ejemplo (nombre y recinto se traducen al armarla). */
+const ITEMS: (ExampleSpec & { key: SampleKey })[] = [
+  { typology: 'sliding_2', width: 1800, height: 1200, kind: 'sliding', key: 'living', qty: 1 },
+  { typology: 'tilt_turn', width: 800, height: 1200, kind: 'casement', key: 'bedroom', qty: 2 },
+  { typology: 'casement_transom', width: 900, height: 2100, kind: 'casement', key: 'balcony', qty: 1 },
+]
 
 /** Textos por defecto (iguales a los del servidor) mientras cargan los ajustes. */
 export const DEFAULT_PREFS: DocumentPrefs = {
@@ -51,6 +54,11 @@ export interface PreviewDocInput {
   /** Cuántas ventanas mostrar (1–3). */
   items?: number
   today?: Date
+  /** Idioma de los nombres de ejemplo (por defecto, el de la interfaz). */
+  locale?: Locale
+  /** Cliente y obra de la vista previa; sin ellos, textos neutros. */
+  client?: DocClient
+  title?: string
 }
 
 function isoDate(date: Date): string {
@@ -74,6 +82,8 @@ export interface PreviewDoc {
 
 export function buildPreviewDoc(input: PreviewDocInput): PreviewDoc {
   const today = input.today ?? new Date()
+  const locale = input.locale ?? getLocale()
+  const g = getGlossary(locale)
   const specs = ITEMS.slice(0, Math.min(3, Math.max(1, input.items ?? 3)))
   let sample = false
   const priced = specs.map((spec) => {
@@ -83,13 +93,13 @@ export function buildPreviewDoc(input: PreviewDocInput): PreviewDoc {
   })
   const items: QuoteDocItem[] = priced.map(({ spec, example }, i) => {
     const { design, catalog, line, price } = example
-    const color = catalog.colors.find((c) => c.id === design.colorId)?.name ?? 'Blanco'
-    const glass = catalog.glass.find((g) => g.id === design.glassId)?.name ?? 'Termopanel'
-    const material = line?.material === 'aluminum' ? 'Aluminio' : 'PVC'
+    const color = catalog.colors.find((c) => c.id === design.colorId)?.name ?? translate(es, 'preview.fallbackColor', undefined, locale)
+    const glass = catalog.glass.find((gl) => gl.id === design.glassId)?.name ?? g.glassKind('dvh')
+    const material = g.term(line?.material === 'aluminum' ? 'material.aluminum' : 'material.pvc')
     return {
       ref: `V${i + 1}`,
-      name: spec.name,
-      location: spec.location,
+      name: translate(es, `preview.sample.${spec.key}.name`, undefined, locale),
+      location: translate(es, `preview.sample.${spec.key}.location`, undefined, locale),
       qty: spec.qty ?? 1,
       description: example.name,
       lineName: line ? `${material} ${line.name}` : material,
@@ -111,10 +121,10 @@ export function buildPreviewDoc(input: PreviewDocInput): PreviewDoc {
   const catalog = priced[0]?.example.catalog ?? input.catalog
   const data: QuoteDocData = {
     org: input.org,
-    client: SAMPLE_CLIENT,
+    client: input.client,
     quote: {
       number: Math.max(1, input.number ?? 1),
-      title: 'Casa Soto · Concepción',
+      title: input.title ?? translate(es, 'preview.project', undefined, locale),
       revision: 1,
       date: isoDate(today),
       validUntil: addDaysIso(today, input.prefs.validityDays || 15),

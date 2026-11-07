@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { SAMPLE_CATALOG } from '@framezen/catalog'
-import { computeLayout, createDesign, type LayoutDimension, type TypologyId, type WindowDesign } from '@framezen/engine'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
+import { computeLayout, createDesign, type LayoutDimension, type TypologyId, type WindowDesign } from '@dekopen/engine'
 import { applyDimension, applySizePair, dimensionAnchor, dimensionTarget, isEditableDimension } from './dimensions'
 import { stageViewport } from './viewport'
 

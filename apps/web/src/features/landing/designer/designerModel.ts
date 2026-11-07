@@ -1,4 +1,4 @@
-import { SAMPLE_CATALOG } from '@framezen/catalog'
+import { SAMPLE_CATALOG } from '@dekopen/catalog'
 import {
   computeLayout,
   createDesign,
@@ -9,14 +9,13 @@ import {
   type Line,
   type TypologyId,
   type WindowDesign,
-} from '@framezen/engine'
+} from '@dekopen/engine'
 
 /** Las cinco tipologías del mini diseñador de la portada. */
 export type HeroTypology = Extract<TypologyId, 'fixed' | 'casement' | 'tilt_turn' | 'sliding_2' | 'door'>
 
 export interface HeroTypologyOption {
   id: HeroTypology
-  label: string
   /** Medida con la que parte al elegirla. */
   defaultSize: { width: number; height: number }
   limits: { minWidth: number; maxWidth: number; minHeight: number; maxHeight: number }
@@ -25,16 +24,15 @@ export interface HeroTypologyOption {
 const WINDOW_LIMITS = { minWidth: 300, maxWidth: 3000, minHeight: 300, maxHeight: 2600 }
 
 export const HERO_TYPOLOGIES: HeroTypologyOption[] = [
-  { id: 'fixed', label: 'Fijo', defaultSize: { width: 1200, height: 1000 }, limits: WINDOW_LIMITS },
-  { id: 'casement', label: 'Abatir', defaultSize: { width: 700, height: 1100 }, limits: { ...WINDOW_LIMITS, maxWidth: 1400 } },
-  { id: 'tilt_turn', label: 'Oscilobatiente', defaultSize: { width: 800, height: 1200 }, limits: { ...WINDOW_LIMITS, maxWidth: 1400 } },
+  { id: 'fixed', defaultSize: { width: 1200, height: 1000 }, limits: WINDOW_LIMITS },
+  { id: 'casement', defaultSize: { width: 700, height: 1100 }, limits: { ...WINDOW_LIMITS, maxWidth: 1400 } },
+  { id: 'tilt_turn', defaultSize: { width: 800, height: 1200 }, limits: { ...WINDOW_LIMITS, maxWidth: 1400 } },
   {
     id: 'sliding_2',
-    label: 'Corredera',
     defaultSize: { width: 1800, height: 1200 },
     limits: { minWidth: 800, maxWidth: 4000, minHeight: 500, maxHeight: 2600 },
   },
-  { id: 'door', label: 'Puerta', defaultSize: { width: 900, height: 2100 }, limits: { minWidth: 600, maxWidth: 1300, minHeight: 1800, maxHeight: 2700 } },
+  { id: 'door', defaultSize: { width: 900, height: 2100 }, limits: { minWidth: 600, maxWidth: 1300, minHeight: 1800, maxHeight: 2700 } },
 ]
 
 export const DEFAULT_TYPOLOGY: HeroTypology = 'sliding_2'

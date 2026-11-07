@@ -1,5 +1,37 @@
 import { describe, expect, it } from 'vitest'
-import { measureDraft, parseMeasureExpression, parseSizeExpression } from './measure'
+import { measureDraft, parseMeasureExpression, parseSizeExpression, parseSizeLine, parseSizeList } from './measure'
+
+describe('parseSizeLine', () => {
+  it('entiende la cantidad escrita de varias formas', () => {
+    expect(parseSizeLine('1500x1200')).toEqual({ width: 1500, height: 1200, qty: 1 })
+    expect(parseSizeLine('1500x1200 x2')).toEqual({ width: 1500, height: 1200, qty: 2 })
+    expect(parseSizeLine('1500 × 1200 × 3')).toEqual({ width: 1500, height: 1200, qty: 3 })
+    expect(parseSizeLine('1500x1200 (4)')).toEqual({ width: 1500, height: 1200, qty: 4 })
+    expect(parseSizeLine('1500x1200 2 un')).toEqual({ width: 1500, height: 1200, qty: 2 })
+    expect(parseSizeLine('2 x 1500 x 1200')).toEqual({ width: 1500, height: 1200, qty: 2 })
+  })
+  it('no confunde la altura con una cantidad', () => {
+    expect(parseSizeLine('900x800')).toEqual({ width: 900, height: 800, qty: 1 })
+    expect(parseSizeLine('1500x120')).toEqual({ width: 1500, height: 120, qty: 1 })
+  })
+  it('acepta metros, centímetros, miles y columnas de planilla', () => {
+    expect(parseSizeLine('1,50 x 1,20')).toEqual({ width: 1500, height: 1200, qty: 1 })
+    expect(parseSizeLine('150 x 120 cm x 2')).toEqual({ width: 1500, height: 1200, qty: 2 })
+    expect(parseSizeLine('1.500 x 1.200')).toEqual({ width: 1500, height: 1200, qty: 1 })
+    expect(parseSizeLine('1500\t1200\t3')).toEqual({ width: 1500, height: 1200, qty: 3 })
+  })
+  it('lo que no se entiende queda en null', () => {
+    expect(parseSizeLine('vitrina grande')).toBeNull()
+    expect(parseSizeLine('1500')).toBeNull()
+    expect(parseSizeLine('50x50')).toBeNull()
+    expect(parseSizeLine('')).toBeNull()
+  })
+  it('la lista marca cada línea y se salta las vacías', () => {
+    const rows = parseSizeList('1500x1200 x2\r\n\nno sé\n900x1100; 800x600')
+    expect(rows.map((r) => r.size?.qty ?? null)).toEqual([2, null, 1, 1])
+    expect(rows[1].text).toBe('no sé')
+  })
+})
 
 describe('parseMeasureExpression', () => {
   it.each([

@@ -1,21 +1,27 @@
 /**
  * Lista de ventanas de la cotización: miniatura dibujada, referencia, medidas, cantidad en línea
- * y precio. Se reordena arrastrando (o con Alt+↑/↓) y cada fila se selecciona con un clic o 1–9.
- * Con teclado es una sola parada de Tab (foco itinerante): ↑/↓ recorren las filas, Inicio/Fin van
- * a los extremos, Enter selecciona y Tab entra a la cantidad de esa fila (que acepta ↑/↓).
+ * y precio. Filas sin borde: la activa sube de tono con la sombra de pastilla, sin filo de color.
+ * Se reordena arrastrando (o con Alt+↑/↓) y cada fila se selecciona con un clic o 1–9. Con teclado
+ * es una sola parada de Tab (foco itinerante): ↑/↓ recorren las filas, Inicio/Fin van a los extremos,
+ * Enter selecciona (y en la fila ya elegida abre «Agregar ventana») y Tab entra a la cantidad de esa
+ * fila (que acepta ↑/↓).
  */
 import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Reorder, useDragControls, useReducedMotion } from 'motion/react'
 import { GripVertical, TriangleAlert } from 'lucide-react'
-import { designName, formatCLP, formatSize, type Catalog } from '@framezen/engine'
-import type { QuoteItem } from '@framezen/shared'
+import type { Catalog } from '@dekopen/engine'
+import type { QuoteItem } from '@dekopen/shared'
 import { cn } from '../../../lib/cn'
+import { useFormat, useGlossary, useT } from '../../../lib/i18n'
 import { DesignThumbnail } from '../../designer'
+import es from '../i18n/es'
 import { itemWarnings } from '../model/evaluate'
-import { useEditor, useEditorShallow } from './context'
+import { useEditor, useEditorShallow, useEditorUiApi } from './context'
 import { QtyStepper } from './fields'
+import { useItemName } from './names'
 
 export function ItemsList({ className, variant = 'column', onOpenItem }: { className?: string; variant?: 'column' | 'cards'; onOpenItem?: (id: string) => void }) {
+  const t = useT(es)
   const editor = useEditor()
   const { items, selectedItemId, catalog, evaluation } = useEditorShallow((s) => ({
     items: s.doc.items,
@@ -28,6 +34,11 @@ export function ItemsList({ className, variant = 'column', onOpenItem }: { class
   const ids = order ?? items.map((i) => i.id)
   const byId = new Map(items.map((item, index) => [item.id, { item, index }]))
   const reduced = useReducedMotion()
+  // Solo las filas nuevas entran con movimiento (no toda la lista al abrir la cotización).
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+  }, [])
   // Fila que entra al orden de Tab: la que tuvo el foco o, si no, la seleccionada.
   const [focusId, setFocusId] = useState<string | null>(null)
   const tabId = focusId && byId.has(focusId) ? focusId : selectedItemId && byId.has(selectedItemId) ? selectedItemId : (ids[0] ?? null)
@@ -63,8 +74,8 @@ export function ItemsList({ className, variant = 'column', onOpenItem }: { class
       axis="y"
       values={ids}
       onReorder={setOrder}
-      aria-label="Ventanas de la cotización"
-      className={cn('flex flex-col', variant === 'column' ? 'gap-1' : 'gap-2', className)}
+      aria-label={t('items.list')}
+      className={cn('flex flex-col', variant === 'column' ? 'gap-0.5' : 'divide-y divide-divider', className)}
     >
       {ids.map((id) => {
         const entry = byId.get(id)
@@ -78,11 +89,14 @@ export function ItemsList({ className, variant = 'column', onOpenItem }: { class
             total={items.length}
             selected={id === selectedItemId}
             totalNet={evaluated?.price.totalNet ?? 0}
+            included={evaluated?.included ?? true}
+            pending={Boolean(evaluated?.price.pending?.length) && !evaluated?.price.totalNet}
             unitNet={evaluated?.price.unitNet ?? 0}
             warned={itemWarnings(evaluated?.bom, evaluated?.price.warnings).some((w) => w.level !== 'info')}
             catalog={catalog}
             variant={variant}
             reduced={!!reduced}
+            animateIn={mounted.current}
             tabbable={id === tabId}
             onFocusRow={setFocusId}
             onRowKey={onRowKey}
@@ -102,10 +116,14 @@ interface RowProps {
   selected: boolean
   totalNet: number
   unitNet: number
+  included: boolean
+  pending: boolean
   warned: boolean
   catalog: Catalog
   variant: 'column' | 'cards'
   reduced: boolean
+  /** Fila recién agregada: entra con 180 ms de opacidad + 4 px. */
+  animateIn: boolean
   /** Única fila con Tab (foco itinerante). */
   tabbable: boolean
   onFocusRow: (id: string) => void
@@ -121,21 +139,31 @@ const Row = memo(function Row({
   selected,
   totalNet,
   unitNet,
+  included,
+  pending,
   warned,
   catalog,
   variant,
   reduced,
+  animateIn,
   tabbable,
   onFocusRow,
   onRowKey,
   onDragEnd,
   onOpen,
 }: RowProps) {
+  const t = useT(es)
+  const g = useGlossary()
+  const fmt = useFormat()
+  const itemName = useItemName()
   const editor = useEditor()
+  const ui = useEditorUiApi()
   const controls = useDragControls()
   const rowRef = useRef<HTMLLIElement>(null)
-  const name = item.name?.trim() || designName(item.design)
+  const name = itemName(item)
   const cards = variant === 'cards'
+  const size = fmt.size(item.design.width, item.design.height)
+  const secondary = item.location?.trim()
 
   useEffect(() => {
     if (selected && !cards) rowRef.current?.scrollIntoView({ block: 'nearest', behavior: reduced ? 'auto' : 'smooth' })
@@ -149,20 +177,18 @@ const Row = memo(function Row({
       dragControls={controls}
       onDragEnd={onDragEnd}
       layout="position"
-      transition={{ duration: reduced ? 0 : 0.2, ease: [0.2, 0, 0, 1] }}
-      whileDrag={{ scale: 1.01, boxShadow: '0 1px 2px rgb(31 28 24 / .06), 0 8px 24px rgb(31 28 24 / .1)' }}
-      className={cn('group relative list-none rounded-md', cards ? 'bg-paper-0' : '')}
+      initial={reduced || !animateIn ? false : { opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: reduced ? 0 : 0.18, ease: [0.2, 0.8, 0.2, 1] }}
+      whileDrag={{ scale: 1.01, boxShadow: 'var(--dk-shadow-float)' }}
+      className={cn('group relative list-none', !cards && 'rounded-md')}
       style={{ position: 'relative' }}
     >
       <div
         className={cn(
-          'relative flex items-start gap-3 rounded-md border text-left transition-colors duration-120',
-          cards ? 'border-paper-200 p-3' : 'py-2 pr-2.5 pl-2',
-          selected
-            ? 'border-ink-100 bg-ink-50/70'
-            : cards
-              ? 'hover:bg-paper-50'
-              : 'border-transparent hover:bg-paper-100/70',
+          'relative flex items-center gap-3 text-left transition-[background-color,box-shadow] duration-100',
+          cards ? 'px-1 py-3 active:bg-hover' : 'rounded-md py-2 pr-2.5 pl-2.5',
+          !cards && (selected ? 'bg-surface shadow-raised' : 'hover:bg-hover'),
         )}
       >
         {/* Botón que cubre la fila: seleccionar con clic, Enter o Espacio; Alt+↑/↓ para mover. */}
@@ -172,7 +198,7 @@ const Row = memo(function Row({
           tabIndex={tabbable ? 0 : -1}
           onFocus={() => onFocusRow(item.id)}
           aria-current={selected ? 'true' : undefined}
-          aria-label={`${item.ref}, ${name}, ${formatSize(item.design.width, item.design.height)}, ${item.qty} ${item.qty === 1 ? 'unidad' : 'unidades'}, ${formatCLP(totalNet)}`}
+          aria-label={t('items.row', { ref: item.ref, name, size, units: g.count('pieces', item.qty), total: fmt.money(totalNet) })}
           onClick={() => {
             editor.select(item.id)
             onOpen?.(item.id)
@@ -185,11 +211,15 @@ const Row = memo(function Row({
               requestAnimationFrame(() => target.focus())
               return
             }
+            if (e.key === 'Enter' && selected && !cards) {
+              e.preventDefault()
+              ui.getState().set({ pickerOpen: true })
+              return
+            }
             onRowKey(e)
           }}
-          className="absolute inset-0 cursor-pointer rounded-md focus-visible:outline-offset-[-2px]"
+          className={cn('absolute inset-0 cursor-pointer focus-visible:-outline-offset-2', !cards && 'rounded-md')}
         />
-        {selected && !cards ? <span aria-hidden className="pointer-events-none absolute top-2 bottom-2 -left-px w-0.5 rounded-full bg-ink-600" /> : null}
         {total > 1 ? (
           <span
             aria-hidden
@@ -198,52 +228,47 @@ const Row = memo(function Row({
               controls.start(e)
             }}
             className={cn(
-              'absolute top-1/2 -left-0.5 z-10 flex h-8 w-3.5 -translate-y-1/2 cursor-grab touch-none items-center justify-center rounded-xs text-paper-350 active:cursor-grabbing',
-              cards ? 'hidden' : 'opacity-0 transition-opacity duration-120 group-hover:opacity-100',
+              'absolute top-1/2 left-0 z-10 flex h-8 w-3 -translate-y-1/2 cursor-grab touch-none items-center justify-center rounded-xs text-fg-faint active:cursor-grabbing',
+              cards ? 'hidden' : 'opacity-0 transition-opacity duration-100 group-hover:opacity-100',
             )}
           >
             <GripVertical strokeWidth={1.75} className="size-3.5" />
           </span>
         ) : null}
-        <div
-          aria-hidden
-          className={cn(
-            'pointer-events-none flex shrink-0 items-center justify-center rounded-sm border border-paper-200 bg-paper-50',
-            cards ? 'size-16' : 'size-12',
-          )}
-        >
-          <DesignThumbnail design={item.design} catalog={catalog} size={cards ? 56 : 42} />
+        <div aria-hidden className={cn('pointer-events-none flex shrink-0 items-center justify-center', cards ? 'size-16' : 'size-12')}>
+          <DesignThumbnail design={item.design} catalog={catalog} size={cards ? 60 : 46} />
         </div>
         <div className="pointer-events-none min-w-0 flex-1">
           <div aria-hidden className="flex items-baseline gap-1.5">
-            <span className="shrink-0 text-[13px] font-semibold tabular text-paper-900">{item.ref}</span>
-            <span className="min-w-0 flex-1 truncate text-[13px] text-paper-900">{name}</span>
+            <span className="code-id shrink-0 text-table font-medium text-fg-strong">{item.ref}</span>
+            <span className="min-w-0 flex-1 truncate text-table text-fg-strong">{secondary || name}</span>
             {warned ? (
-              <span title="Tiene avisos: revísalos en el panel de la ventana" className="pointer-events-auto relative inline-flex shrink-0 self-center text-warn-600">
-                <TriangleAlert strokeWidth={2} className="size-3.5" />
+              <span title={t('items.warned')} className="pointer-events-auto relative inline-flex shrink-0 self-center text-warning">
+                <TriangleAlert strokeWidth={1.75} className="size-3.5" />
               </span>
             ) : null}
           </div>
-          <div aria-hidden className="mt-0.5 truncate text-meta text-paper-600">
-            <span className="narrow tabular">{formatSize(item.design.width, item.design.height).replace(' mm', '')}</span>
-            {item.location ? <> · {item.location}</> : null}
+          <div aria-hidden className="mt-0.5 truncate text-meta text-fg-muted">
+            {secondary ? <>{name} · </> : null}
+            <span className="dim">{size}</span>
+            {item.role && item.role !== 'base' ? <> · {t(item.role === 'optional' ? 'items.tagOptional' : 'items.tagAlternative')}{included ? '' : ` · ${t('items.tagOff')}`}</> : null}
           </div>
-          <div className="mt-1.5 flex items-center justify-between gap-2">
+          <div className="mt-1 flex items-center justify-between gap-2">
             <QtyStepper
               value={item.qty}
               onChange={(qty) => editor.setQty(item.id, qty)}
-              label={`Cantidad de ${item.ref}`}
+              label={t('qty.label', { ref: item.ref })}
               size={cards ? 'md' : 'sm'}
+              quiet={!cards}
               tabIndex={tabbable ? 0 : -1}
               stepButtonsInTabOrder={false}
-              className="pointer-events-auto relative z-10"
+              className="pointer-events-auto relative z-10 shrink-0"
             />
-            <span aria-hidden className="min-w-0 text-right leading-4">
-              <span className="block text-[13px] font-medium tabular text-paper-900">{formatCLP(totalNet)}</span>
-              {item.qty > 1 ? <span className="block text-[11px] tabular text-paper-600">{formatCLP(unitNet)} c/u</span> : null}
+            <span aria-hidden className="min-w-0 text-right" title={item.qty > 1 ? t('items.each', { price: fmt.money(unitNet) }) : undefined}>
+              {pending ? <span className="block text-table font-medium whitespace-nowrap text-warning">{t('items.pending')}</span> : <span className={cn('block text-table font-medium whitespace-nowrap tabular', included ? 'text-fg-strong' : 'text-fg-muted')}>{fmt.money(totalNet)}</span>}
             </span>
           </div>
-          {warned ? <span className="sr-only">Tiene avisos.</span> : null}
+          {warned ? <span className="sr-only">{t('items.warnedSr')}</span> : null}
         </div>
       </div>
     </Reorder.Item>

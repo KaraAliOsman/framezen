@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { buildWorkshopData, createDesign } from '@framezen/engine'
+import { buildWorkshopData, createDesign } from '@dekopen/engine'
 import {
   WORKSHOP_DOCUMENTS,
   WorkshopDocument,

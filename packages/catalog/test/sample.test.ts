@@ -1,4 +1,4 @@
-import type { Item } from '@framezen/engine'
+import type { Item } from '@dekopen/engine'
 import { describe, expect, it } from 'vitest'
 import {
   CATALOG_STATS,
@@ -21,8 +21,8 @@ describe('SAMPLE_CATALOG', () => {
     expect(catalogProblems(SAMPLE_CATALOG)).toEqual([])
   })
 
-  it('trae tres líneas genéricas, colores y vidrios pedidos', () => {
-    expect(SAMPLE_CATALOG.lines.map((line) => line.name)).toEqual(['Serie 60 Practicable', 'Serie 70 Corredera', 'Serie Puerta 70'])
+  it('trae cuatro líneas genéricas, colores y vidrios pedidos', () => {
+    expect(SAMPLE_CATALOG.lines.map((line) => line.name)).toEqual(['Serie 60 Practicable', 'Serie 70 Corredera', 'Serie Puerta 70', 'Serie 85 Elevadora'])
     expect(SAMPLE_CATALOG.colors.map((color) => color.name)).toEqual(['Blanco', 'Nogal', 'Roble dorado', 'Antracita', 'Negro'])
     const glassNames = SAMPLE_CATALOG.glass.map((glass) => glass.name)
     for (const name of ['Incoloro 4 mm', 'Incoloro 5 mm', 'Laminado 3+3', 'DVH 4+12+4', 'DVH 5+12+5', 'DVH 4+12+4 low-e']) expect(glassNames).toContain(name)
@@ -55,8 +55,8 @@ describe('SAMPLE_CATALOG', () => {
 
   it('las estadísticas cuentan todo con precio', () => {
     const stats = catalogStats(SAMPLE_CATALOG)
-    expect(stats).toMatchObject({ brands: 3, lines: 3, profilesUnpriced: 0, itemsUnpriced: 0, glassUnpriced: 0, colors: 5 })
-    expect(stats.linesByKind).toEqual({ casement: 2, sliding: 1 })
+    expect(stats).toMatchObject({ brands: 3, lines: 4, profilesUnpriced: 0, itemsUnpriced: 0, glassUnpriced: 0, colors: 5 })
+    expect(stats.linesByKind).toEqual({ casement: 2, sliding: 2 })
     expect(CATALOG_STATS(SAMPLE_CATALOG)).toEqual(stats)
   })
 })

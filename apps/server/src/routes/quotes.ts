@@ -1,22 +1,24 @@
 import { Hono } from 'hono'
-import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql, type SQL } from 'drizzle-orm'
+import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, notInArray, or, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
-import type { Paged, Quote, QuoteFollowUp, QuoteItem, QuoteStats, QuoteStatus, QuoteSummary, SendQuoteResponse } from '@framezen/shared'
-import type { QuoteExtra, WindowDesign } from '@framezen/engine'
-import { mergeQuoteDocPrefs, type QuoteDocOverrides } from '@framezen/documents'
+import { MARGIN_LIMITS } from '@dekopen/shared'
+import { SEND_FORMATS, sendFormatIncludesLink, sendFormatIncludesPdf, widenSendFormat, type Paged, type Quote, type QuoteFollowUp, type QuoteFollowUpResponse, type QuoteItem, type QuoteNotice, type QuoteStats, type QuoteStatus, type QuoteSummary, type QuoteSharedResponse, type SendFormat, type SendMailResult, type SendQuoteResponse } from '@dekopen/shared'
+import { SHAPE_KINDS, SLIDING_SYSTEMS, type QuoteExtra, type WindowDesign } from '@dekopen/engine'
+import { mergeQuoteDocPrefs } from '@dekopen/documents'
 import type { Context } from 'hono'
 import type { AppDeps, AppEnv } from '../context'
 import type { Db } from '../db/client'
-import { clients, quoteRevisions, quotes, users, type QuoteData } from '../db/schema'
+import { activity, clients, quoteRevisions, quotes, users, type QuoteData } from '../db/schema'
 import { newId, randomToken, shortId } from '../lib/crypto'
 import { monthStartInZone } from '../lib/dates'
 import { badRequest, conflict, notFound } from '../lib/errors'
 import { folded, pageParams, readBody } from '../lib/http'
-import { simpleHtml } from '../lib/mail'
+import { mailLocale, quoteSentMail } from '../services/mail'
+import { quotePdfFile } from '../services/pdf/quote-file'
 import { emailSchema, quoteStatusSchema } from '../lib/schemas'
 import { requireWritable } from '../middleware/auth'
 import { QUOTE_WRITE_DENIED, canSeeMargins, canWriteQuotes, redactQuote, requirePermission, viewerFor } from '../services/access'
-import { firstName, logActivity } from '../services/activity'
+import { firstName, logActivity, resolveQuoteNotices } from '../services/activity'
 import { mailQuotaError, takeMailQuota } from '../services/outbound'
 import { summaryNumbers, type ItemPrices } from '../services/pricing'
 import {
@@ -36,10 +38,13 @@ import {
   type QuoteRow,
 } from '../services/quotes'
 import { getSettings } from '../services/settings'
+import { normalizeIncomingDocOverrides, readStoredDocOverrides } from '../services/templates/overrides'
 import { WON_STATUSES } from './clients'
 
 // ── Validación del documento ────────────────────────────────────────────────
-// El diseño se valida de forma laxa: el motor nunca falla por datos incompletos (avisa).
+// El diseño se valida de forma laxa: el motor nunca falla por datos incompletos (avisa). Las
+// listas de formas y sistemas salen del motor; los campos nuevos de nodos (unión plegable, hoja
+// pasiva, sistema de corredera, anchos de paneles) y de extras pasan tal cual.
 const designSchema = z.looseObject({
   version: z.number().optional(),
   lineId: z.string({ error: 'Cada ventana necesita una línea.' }),
@@ -47,7 +52,14 @@ const designSchema = z.looseObject({
   height: z.number({ error: 'El alto de la ventana debe ser un número en mm.' }).min(0).max(100_000),
   colorId: z.string(),
   glassId: z.string(),
-  root: z.looseObject({ id: z.string(), type: z.enum(['leaf', 'split', 'sliding'], { error: 'El diseño de la ventana está incompleto.' }) }),
+  shape: z.looseObject({ kind: z.enum(SHAPE_KINDS, { error: 'La forma de la ventana no es válida.' }) }).nullish(),
+  extras: z.looseObject({}).nullish(),
+  root: z.looseObject({
+    id: z.string(),
+    type: z.enum(['leaf', 'split', 'sliding'], { error: 'El diseño de la ventana está incompleto.' }),
+    joint: z.enum(['mullion', 'french', 'fold']).optional(),
+    system: z.enum(SLIDING_SYSTEMS).optional(),
+  }),
 })
 
 const itemSchema = z.object({
@@ -59,6 +71,12 @@ const itemSchema = z.object({
   design: designSchema,
   notes: z.string().max(4000).nullish(),
   manualUnitPrice: z.number().min(0, 'El precio manual no puede ser negativo.').max(10_000_000_000).nullish(),
+  floor: z.string().max(80).nullish(),
+  rough: z.object({ width: z.number().min(0).max(100_000).optional(), height: z.number().min(0).max(100_000).optional() }).nullish(),
+  role: z.enum(['base', 'optional', 'alternative']).nullish(),
+  altGroup: z.string().trim().max(80).nullish(),
+  included: z.boolean().nullish(),
+  discountPct: z.number().min(0, 'El descuento no puede ser negativo.').max(100, 'El descuento no puede pasar de 100 %.').nullish(),
 })
 
 const extraSchema = z.object({
@@ -66,12 +84,17 @@ const extraSchema = z.object({
   label: z.string().trim().max(200, 'El nombre del extra es demasiado largo.').default(''),
   amount: z.number({ error: 'El monto del extra debe ser un número.' }).min(-10_000_000_000).max(10_000_000_000),
   hidden: z.boolean().optional(),
+  line: z.boolean().optional(),
+  description: z.string().trim().max(1000).nullish(),
+  role: z.enum(['base', 'optional', 'alternative']).nullish(),
+  altGroup: z.string().trim().max(80).nullish(),
+  included: z.boolean().nullish(),
 })
 
 const pricingOverrideSchema = z
   .object({
     marginMode: z.enum(['margin', 'markup']),
-    marginPct: z.number().min(0).max(95),
+    marginPct: z.number().min(0).max(MARGIN_LIMITS.markup),
     laborPerM2: z.number().min(0),
     installMode: z.enum(['none', 'per_m2', 'per_unit']),
     installValue: z.number().min(0),
@@ -81,20 +104,26 @@ const pricingOverrideSchema = z
     chargeFullBars: z.boolean(),
   })
   .partial()
+  .refine((p) => p.marginMode !== 'margin' || (p.marginPct ?? 0) <= MARGIN_LIMITS.margin, { message: 'Un margen sobre la venta llega hasta 95 %. Para más, usa recargo sobre el costo.', path: ['marginPct'] })
 
 const documentFields = {
   title: z.string().trim().max(200, 'El título admite hasta 200 caracteres.').optional(),
+  siteAddress: z.string().trim().max(300).nullish(),
   clientId: z.string().max(64).nullish(),
   items: z.array(itemSchema).max(1000, 'Una cotización admite hasta 1.000 ítems.').optional(),
   extras: z.array(extraSchema).max(100).optional(),
   discountPct: z.number({ error: 'El descuento debe ser un número.' }).min(0, 'El descuento no puede ser negativo.').max(100, 'El descuento no puede pasar de 100 %.').optional(),
   pricing: pricingOverrideSchema.nullish(),
   notes: z.string().max(20_000).nullish(),
+  /** v2 (o v1 plano de clientes anteriores): se valida y normaliza en applyDocument. */
   documentOverrides: z.record(z.string(), z.unknown()).nullish(),
   validUntil: z.string().max(40).nullish(),
 }
 
 const createSchema = z.object(documentFields)
+
+/** Duplicar: sin cuerpo copia para el mismo cliente con «(copia)»; con cuerpo, para quien y con el nombre que digas. */
+const duplicateSchema = z.object({ clientId: documentFields.clientId, title: documentFields.title })
 
 /** PUT: documento completo o parcial + versión. status/sentAt/accepted* se ignoran (tienen rutas propias). */
 const saveSchema = z.object({
@@ -104,6 +133,7 @@ const saveSchema = z.object({
 
 const sendSchema = z.object({
   channel: z.enum(['link', 'email', 'whatsapp']).default('link'),
+  format: z.enum(SEND_FORMATS).default('link'),
   to: emailSchema.optional(),
   message: z.string().max(4000).optional(),
 })
@@ -126,12 +156,30 @@ function normalizeItems(items: ItemInput[]): QuoteItem[] {
       design: item.design as unknown as WindowDesign,
       ...(item.notes ? { notes: item.notes } : {}),
       ...(item.manualUnitPrice !== null && item.manualUnitPrice !== undefined ? { manualUnitPrice: item.manualUnitPrice } : {}),
+      ...(item.floor ? { floor: item.floor } : {}),
+      ...(item.rough && (item.rough.width || item.rough.height) ? { rough: item.rough } : {}),
+      ...lineChoice(item),
+      ...(item.discountPct ? { discountPct: item.discountPct } : {}),
     }
   })
 }
 
+/** Opcional o alternativa: en una línea base no se guarda nada. */
+function lineChoice(line: Pick<ItemInput, 'role' | 'altGroup' | 'included'>): Pick<QuoteItem, 'role' | 'altGroup' | 'included'> {
+  if (!line.role || line.role === 'base') return {}
+  return { role: line.role, ...(line.altGroup ? { altGroup: line.altGroup } : {}), ...(line.included ? { included: true } : {}) }
+}
+
 function normalizeExtras(extras: ExtraInput[]): QuoteExtra[] {
-  return extras.map((e) => ({ id: e.id || shortId(), label: e.label, amount: e.amount, ...(e.hidden ? { hidden: true } : {}) }))
+  return extras.map((e) => ({
+    id: e.id || shortId(),
+    label: e.label,
+    amount: e.amount,
+    ...(e.hidden ? { hidden: true } : {}),
+    ...(e.line ? { line: true } : {}),
+    ...(e.description ? { description: e.description } : {}),
+    ...lineChoice(e),
+  }))
 }
 
 /** Aplica al documento sólo los campos enviados (undefined = no se toca; null = se borra). */
@@ -140,11 +188,17 @@ function applyDocument(base: QuoteData, body: z.output<typeof createSchema>): Qu
   if (body.items !== undefined) next.items = normalizeItems(body.items)
   if (body.extras !== undefined) next.extras = normalizeExtras(body.extras)
   if (body.discountPct !== undefined) next.discountPct = body.discountPct
-  for (const key of ['pricing', 'notes', 'documentOverrides', 'validUntil'] as const) {
+  for (const key of ['pricing', 'notes', 'validUntil', 'siteAddress'] as const) {
     const value = body[key]
     if (value === undefined) continue
     if (value === null || value === '') delete next[key]
     else (next as unknown as Record<string, unknown>)[key] = value
+  }
+  // Ajustes del documento: v1, v2 o mezcla → v2 validado y con tope (services/templates).
+  if (body.documentOverrides !== undefined) {
+    const { overrides } = normalizeIncomingDocOverrides(body.documentOverrides)
+    if (overrides) next.documentOverrides = overrides
+    else delete next.documentOverrides
   }
   return next
 }
@@ -155,7 +209,9 @@ function emptyData(): QuoteData {
 
 /** Días de validez al enviar: los propios de la cotización (inspector) o los de la empresa. */
 export function sendValidityDays(documents: Parameters<typeof mergeQuoteDocPrefs>[0], overrides: QuoteData['documentOverrides']): number {
-  return mergeQuoteDocPrefs(documents, (overrides ?? null) as QuoteDocOverrides | null).validityDays
+  // 0 = el taller no definió vigencia: la cotización sale sin fecha de vencimiento.
+  const own = readStoredDocOverrides(overrides)?.validityDays
+  return own ?? mergeQuoteDocPrefs(documents, null).validityDays
 }
 
 export function quoteRoutes(deps: AppDeps) {
@@ -166,6 +222,50 @@ export function quoteRoutes(deps: AppDeps) {
   async function withClient(orgId: string, row: QuoteRow): Promise<Quote> {
     const client = await findClient(deps.db, orgId, row.clientId)
     return toQuote(row, client ? toClient(client) : null)
+  }
+
+  /**
+   * Correo al cliente desde el servidor, en el idioma del documento, con el PDF adjunto si el formato lo
+   * lleva. Se responde lo que pasó de verdad: sin proveedor no salió nada real, y un correo que no
+   * pudo adjuntar el PDF no se manda como si lo llevara.
+   */
+  async function deliverMail(
+    c: Context<AppEnv>,
+    row: QuoteRow,
+    quote: Quote,
+    input: { to: string; message?: string; format: SendFormat; url: string },
+  ): Promise<{ emailed: SendMailResult; attached: boolean }> {
+    const { org, user } = c.get('auth')
+    const provider = Boolean(deps.config.resendApiKey)
+    const link = sendFormatIncludesLink(input.format)
+    // Sin proveedor no se gasta un PDF en un correo que no va a salir.
+    if (!provider && !link) return { emailed: 'no_provider', attached: false }
+    const docLocale = (quote.documentOverrides as { locale?: string } | undefined)?.locale
+    const mail = quoteSentMail(mailLocale(docLocale, org.locale), {
+      number: quote.number,
+      title: quote.title || undefined,
+      clientFirstName: quote.client ? firstName(quote.client.name) : undefined,
+      orgName: org.name,
+      ...(link ? { url: input.url } : {}),
+      message: input.message?.replaceAll('{enlace}', link ? input.url : '').trim(),
+    })
+    let file: Awaited<ReturnType<typeof quotePdfFile>> | undefined
+    if (provider && sendFormatIncludesPdf(input.format)) {
+      try {
+        file = await quotePdfFile(deps, org, row)
+      } catch (error) {
+        deps.logger.warn('No se pudo generar el PDF del correo', error instanceof Error ? error.message : error)
+        // Solo PDF: sin archivo no hay nada que mandar.
+        if (!link) return { emailed: 'failed', attached: false }
+      }
+    }
+    try {
+      await deps.mailer.send({ to: input.to, ...mail, replyTo: org.email || user.email, ...(file ? { attachments: [file] } : {}) })
+    } catch {
+      // El enlace sigue sirviendo aunque falle el correo.
+      return { emailed: 'failed', attached: false }
+    }
+    return { emailed: provider ? 'sent' : 'no_provider', attached: Boolean(file) }
   }
 
   /** La cotización como la puede ver quien pide (sin costo ni margen según su rol). */
@@ -245,7 +345,11 @@ export function quoteRoutes(deps: AppDeps) {
       .groupBy(quotes.status)
     const soldBetween = async (from: Date, to?: Date) => {
       const [row] = await deps.db
-        .select({ n: count(), total: sql<number>`coalesce(sum(${wonTotalSql}), 0)::bigint` })
+        .select({
+          n: count(),
+          total: sql<number>`coalesce(sum(${wonTotalSql}), 0)::bigint`,
+          inProduction: sql<number>`count(*) filter (where ${quotes.status} <> 'accepted')`,
+        })
         .from(quotes)
         .where(
           and(
@@ -256,16 +360,49 @@ export function quoteRoutes(deps: AppDeps) {
             ...(to ? [lt(quotes.acceptedAt, to)] : []),
           ),
         )
-      return { count: Number(row?.n ?? 0), total: Number(row?.total ?? 0) }
+      return { count: Number(row?.n ?? 0), total: Number(row?.total ?? 0), inProduction: Number(row?.inProduction ?? 0) }
     }
-    // Enviadas hace más de 3 días sin respuesta: hay que llamar.
-    const followUps = await deps.db
-      .select({ ...summaryColumns, clientPhone: clients.phone, shareToken: quotes.shareToken })
-      .from(quotes)
-      .leftJoin(clients, and(eq(clients.id, quotes.clientId), eq(clients.orgId, quotes.orgId)))
-      .where(and(eq(quotes.orgId, orgId), isNull(quotes.deletedAt), eq(quotes.status, 'sent'), lt(quotes.sentAt, new Date(now.getTime() - 3 * 86_400_000))))
-      .orderBy(quotes.sentAt)
-      .limit(10)
+    // Avisos sin atender (el mensaje completo del cliente va en meta.message).
+    const pending = await deps.db
+      .select({ id: activity.id, kind: activity.kind, at: activity.createdAt, who: activity.actorName, meta: activity.meta, quoteId: activity.subjectId })
+      .from(activity)
+      .where(and(eq(activity.orgId, orgId), eq(activity.pending, true), eq(activity.subjectType, 'quote'), inArray(activity.kind, [...NOTICE_KINDS])))
+      .orderBy(desc(activity.createdAt))
+      .limit(MAX_FOLLOW_UPS)
+    const notices = new Map<string, QuoteNotice[]>()
+    for (const row of pending) {
+      if (!row.quoteId) continue
+      const message = typeof row.meta?.message === 'string' ? row.meta.message : undefined
+      const notice: QuoteNotice = {
+        id: row.id,
+        kind: row.kind === 'quote.accepted' ? 'accepted' : 'changes',
+        at: row.at.toISOString(),
+        ...(row.who ? { who: row.who } : {}),
+        ...(message ? { message } : {}),
+      }
+      notices.set(row.quoteId, [...(notices.get(row.quoteId) ?? []), notice])
+    }
+    const noticeIds = [...notices.keys()]
+    const followUpRows = () =>
+      deps.db
+        .select({ ...summaryColumns, clientPhone: clients.phone, shareToken: quotes.shareToken, followUpAt: quotes.followUpAt, viewedAt: quoteRevisions.viewedAt, sentFormat: quotes.sentFormat })
+        .from(quotes)
+        .leftJoin(clients, and(eq(clients.id, quotes.clientId), eq(clients.orgId, quotes.orgId)))
+        .leftJoin(quoteRevisions, and(eq(quoteRevisions.quoteId, quotes.id), eq(quoteRevisions.revision, quotes.revision)))
+    const withNotices = noticeIds.length ? await followUpRows().where(and(eq(quotes.orgId, orgId), isNull(quotes.deletedAt), inArray(quotes.id, noticeIds))) : []
+    // Enviadas cuya fecha de seguimiento ya llegó: primero las que el cliente abrió, las más antiguas arriba.
+    const due = await followUpRows()
+      .where(
+        and(
+          eq(quotes.orgId, orgId),
+          isNull(quotes.deletedAt),
+          eq(quotes.status, 'sent'),
+          lte(followUpDueSql, now),
+          ...(noticeIds.length ? [notInArray(quotes.id, noticeIds)] : []),
+        ),
+      )
+      .orderBy(sql`${quoteRevisions.viewedAt} is null`, followUpDueSql)
+      .limit(MAX_FOLLOW_UPS)
     const counts: Record<QuoteStatus, { count: number; total: number }> = {
       draft: { count: 0, total: 0 },
       sent: { count: 0, total: 0 },
@@ -279,12 +416,23 @@ export function quoteRoutes(deps: AppDeps) {
     const body: QuoteStats = {
       byStatus: counts,
       soldThisMonth: await soldBetween(monthStart),
-      soldLastMonth: await soldBetween(lastMonthStart, monthStart),
-      followUps: followUps.map(({ clientPhone, shareToken, ...row }): QuoteFollowUp => ({
-        ...toSummary(row),
-        ...(clientPhone ? { clientPhone } : {}),
-        ...(shareToken ? { shareToken } : {}),
-      })),
+      soldLastMonth: await soldBetween(lastMonthStart, monthStart).then(({ count, total }) => ({ count, total })),
+      followUps: [...withNotices, ...due].flatMap(({ clientPhone, shareToken, followUpAt, viewedAt, sentFormat, ...row }): QuoteFollowUp[] => {
+        // «Aceptó» solo pide algo mientras la cotización siga aceptada; pasada a taller, ya está hecho.
+        const own = (notices.get(row.id) ?? []).filter((n) => n.kind === 'changes' || row.status === 'accepted')
+        if (!own.length && notices.has(row.id)) return []
+        return [
+          {
+            ...toSummary(row),
+            ...(clientPhone ? { clientPhone } : {}),
+            ...(shareToken ? { shareToken } : {}),
+            ...(viewedAt ? { viewedAt: viewedAt.toISOString() } : {}),
+            ...(sentFormat ? { sentFormat } : {}),
+            ...(followUpAt ? { followUpAt: followUpAt.toISOString() } : {}),
+            ...(own.length ? { notices: own } : {}),
+          },
+        ]
+      }),
     }
     return c.json(body)
   })
@@ -401,9 +549,12 @@ export function quoteRoutes(deps: AppDeps) {
 
   // ── Duplicar ───────────────────────────────────────────────────────────────
   app.post('/:id/duplicate', ...writable, async (c) => {
+    const body = await readBody(c, duplicateSchema)
     const { org, user } = c.get('auth')
     const source = await findQuote(deps.db, org.id, c.req.param('id'), { includeDeleted: true })
     if (!source) throw notFound('No encontramos esa cotización.')
+    const clientId = body.clientId === undefined ? source.clientId : body.clientId
+    await assertClient(org.id, clientId)
     const number = await allocateQuoteNumber(deps.db, org.id)
     const data: QuoteData = {
       ...source.data,
@@ -420,8 +571,8 @@ export function quoteRoutes(deps: AppDeps) {
         id,
         orgId: org.id,
         number,
-        title: source.title ? `${source.title} (copia)`.slice(0, 200) : '',
-        clientId: source.clientId,
+        title: body.title ?? (source.title ? `${source.title} (copia)`.slice(0, 200) : ''),
+        clientId,
         status: 'draft',
         revision: 0,
         version: 1,
@@ -503,7 +654,9 @@ export function quoteRoutes(deps: AppDeps) {
       const validUntil =
         current.data.validUntil && new Date(current.data.validUntil) > now
           ? current.data.validUntil
-          : new Date(now.getTime() + validityDays * 86_400_000).toISOString().slice(0, 10)
+          : validityDays > 0
+            ? new Date(now.getTime() + validityDays * 86_400_000).toISOString().slice(0, 10)
+            : undefined
       // Re-enviar algo aceptado pide aceptar la nueva revisión; en taller/instalada se conserva el estado.
       const keepStatus = ['workshop', 'installed', 'closed'].includes(current.status)
       const status: QuoteStatus = keepStatus ? current.status : 'sent'
@@ -522,6 +675,9 @@ export function quoteRoutes(deps: AppDeps) {
             sentTotal: priced.total,
             firstItem: data.items[0] ?? null,
             sentAt: now,
+            sentFormat: body.format,
+            followUpAt: new Date(now.getTime() + DEFAULT_REMINDER_DAYS * DAY_MS),
+            lostReason: null,
             ...(keepStatus ? {} : { acceptedAt: null, acceptedBy: null, acceptedRevision: null, acceptedTotal: null }),
             version: sql`${quotes.version} + 1`,
             updatedAt: now,
@@ -531,7 +687,7 @@ export function quoteRoutes(deps: AppDeps) {
         if (!row) return undefined
         // La foto que verá el cliente: datos de contacto del cliente, nunca sus notas internas.
         const client = await findClient(tx, org.id, row.clientId)
-        const snapshot: Quote & { itemPrices: ItemPrices } = { ...toQuote(row, client ? publicClient(toClient(client)) : null), itemPrices: priced.itemPrices }
+        const snapshot: Quote & { itemPrices: ItemPrices; ivaPct: number } = { ...toQuote(row, client ? publicClient(toClient(client)) : null), itemPrices: priced.itemPrices, ivaPct: priced.settings.pricing.ivaPct }
         await tx.insert(quoteRevisions).values({ id: newId(), orgId: org.id, quoteId: current.id, revision, snapshot, sentBy: user.id, createdAt: now })
         return { row, revision, shareToken }
       })
@@ -540,19 +696,7 @@ export function quoteRoutes(deps: AppDeps) {
     const quote = await withClient(org.id, row)
     const url = `${deps.config.appUrl}/c/${shareToken}`
 
-    if (emailing && body.to) {
-      const intro = body.message?.trim() || `Hola${quote.client ? `, ${firstName(quote.client.name)}` : ''}: te enviamos la cotización N° ${quote.number}${quote.title ? ` (${quote.title})` : ''}. Puedes revisarla, ver cada ventana y aceptarla en línea.`
-      try {
-        await deps.mailer.send({
-          to: body.to,
-          subject: `Cotización N° ${quote.number} · ${org.name}`,
-          text: `${intro}\n\n${url}\n\n${org.name}`,
-          html: simpleHtml([intro], { label: 'Ver cotización', url }),
-        })
-      } catch {
-        // El enlace sigue sirviendo aunque falle el correo.
-      }
-    }
+    const delivery = emailing && body.to ? await deliverMail(c, row, quote, { to: body.to, message: body.message, format: body.format, url }) : null
     const to = quote.client?.name ?? body.to
     await logActivity(deps.db, {
       orgId: org.id,
@@ -561,15 +705,58 @@ export function quoteRoutes(deps: AppDeps) {
       text: `${firstName(user.name)} envió ${quoteLabel(quote.number)}${revision > 1 ? ` (versión ${revisionLetter(revision)})` : ''}${to ? ` a ${to}` : ''}`,
       link: `/cotizaciones/${quote.id}`,
       subject: { type: 'quote', id: quote.id },
-      meta: { revision, channel: body.channel },
+      meta: { revision, channel: body.channel, format: body.format },
     })
-    const response: SendQuoteResponse = { quote: await shown(c, quote), url, revision, revisionLabel: revisionLetter(revision) }
+    // Reenviar responde lo que pidió el cliente; si volvió a «enviada», también caduca el «aceptó».
+    await resolveQuoteNotices(deps.db, org.id, quote.id, quote.status === 'sent' ? [...NOTICE_KINDS] : ['quote.changes_requested'])
+    const response: SendQuoteResponse = {
+      quote: await shown(c, quote),
+      url,
+      revision,
+      revisionLabel: revisionLetter(revision),
+      ...(delivery ?? {}),
+      ...(row.followUpAt ? { followUpAt: row.followUpAt.toISOString() } : {}),
+    }
+    return c.json(response)
+  })
+
+  // La misma versión salió por otra vía (ya tenía PDF y ahora también el enlace): no hay versión
+  // nueva. No toca `version` ni `updatedAt`: no es un cambio del documento.
+  app.post('/:id/shared', ...writable, async (c) => {
+    const { format, to, message } = await readBody(c, z.object({ format: z.enum(SEND_FORMATS), to: emailSchema.optional(), message: z.string().max(4000).optional() }))
+    const { org } = c.get('auth')
+    if (to && !(await takeMailQuota(deps, org.id))) throw mailQuotaError()
+    const current = await findQuote(deps.db, org.id, c.req.param('id'))
+    if (!current) throw notFound('No encontramos esa cotización.')
+    const sentFormat = widenSendFormat(current.sentFormat, format)
+    if (sentFormat !== current.sentFormat) await deps.db.update(quotes).set({ sentFormat }).where(and(eq(quotes.id, current.id), eq(quotes.orgId, org.id)))
+    const delivery = to ? await deliverMail(c, current, await withClient(org.id, current), { to, message, format, url: `${deps.config.appUrl}/c/${current.shareToken}` }) : null
+    const response: QuoteSharedResponse = { sentFormat, ...(delivery ?? {}) }
+    return c.json(response)
+  })
+
+  // ── Seguimiento: recordar en N días o volver a una fecha exacta (deshacer) ──
+  // No toca `version` ni `updatedAt`: no es un cambio del documento y no debe chocar con el autoguardado.
+  app.post('/:id/follow-up', ...writable, async (c) => {
+    const body = await readBody(
+      c,
+      z.union([
+        z.object({ days: z.number().int().min(1).max(MAX_REMINDER_DAYS) }),
+        z.object({ at: z.string().datetime({ offset: true }).nullable() }),
+      ]),
+    )
+    const { org } = c.get('auth')
+    const current = await findQuote(deps.db, org.id, c.req.param('id'))
+    if (!current) throw notFound('No encontramos esa cotización.')
+    const followUpAt = 'days' in body ? new Date(deps.now().getTime() + body.days * DAY_MS) : body.at ? new Date(body.at) : null
+    await deps.db.update(quotes).set({ followUpAt }).where(and(eq(quotes.id, current.id), eq(quotes.orgId, org.id)))
+    const response: QuoteFollowUpResponse = { followUpAt: followUpAt?.toISOString() ?? null, previous: current.followUpAt?.toISOString() ?? null }
     return c.json(response)
   })
 
   // ── Cambiar estado a mano ──────────────────────────────────────────────────
   app.post('/:id/status', ...writable, async (c) => {
-    const { status } = await readBody(c, z.object({ status: quoteStatusSchema }))
+    const { status, lostReason } = await readBody(c, z.object({ status: quoteStatusSchema, lostReason: z.string().trim().max(MAX_LOST_REASON).optional() }))
     const { org, user } = c.get('auth')
     const current = await findQuote(deps.db, org.id, c.req.param('id'))
     if (!current) throw notFound('No encontramos esa cotización.')
@@ -583,6 +770,7 @@ export function quoteRoutes(deps: AppDeps) {
           ? { acceptedAt: now, acceptedBy: { name: user.name, at: now.toISOString() }, acceptedRevision: current.revision, acceptedTotal: acceptedTotalOf(current) }
           : {}),
         ...(status === 'draft' || status === 'sent' ? { acceptedAt: null, acceptedBy: null, acceptedRevision: null, acceptedTotal: null } : {}),
+        lostReason: status === 'rejected' ? lostReason || current.lostReason : null,
         version: sql`${quotes.version} + 1`,
         updatedAt: now,
       })
@@ -593,12 +781,14 @@ export function quoteRoutes(deps: AppDeps) {
         orgId: org.id,
         actor: { userId: user.id, name: user.name },
         kind: `quote.status`,
-        text: `${firstName(user.name)} marcó ${quoteLabel(current.number)} como ${STATUS_COPY[status]}`,
+        text: `${firstName(user.name)} marcó ${quoteLabel(current.number)} como ${lostReason && status === 'rejected' ? `perdida: «${lostReason}»` : STATUS_COPY[status]}`,
         link: `/cotizaciones/${current.id}`,
         subject: { type: 'quote', id: current.id },
-        meta: { from: current.status, to: status },
+        meta: { from: current.status, to: status, ...(lostReason && status === 'rejected' ? { lostReason } : {}) },
       })
     }
+    // Una cotización perdida ya no espera nada de nadie.
+    if (status === 'rejected') await resolveQuoteNotices(deps.db, org.id, current.id, [...NOTICE_KINDS])
     return c.json(await shown(c, await withClient(org.id, row!)))
   })
 
@@ -606,6 +796,17 @@ export function quoteRoutes(deps: AppDeps) {
 
   return app
 }
+
+/** Avisos del portal que esperan una acción del taller. */
+const NOTICE_KINDS = ['quote.changes_requested', 'quote.accepted'] as const
+/** Tope de la cola de Inicio. */
+const MAX_FOLLOW_UPS = 100
+const DAY_MS = 86_400_000
+const DEFAULT_REMINDER_DAYS = 3
+const MAX_REMINDER_DAYS = 60
+const MAX_LOST_REASON = 120
+/** Cuándo toca escribirle: la fecha elegida o, en lo enviado antes de existir el recordatorio, 3 días después. */
+const followUpDueSql = sql`coalesce(${quotes.followUpAt}, ${quotes.sentAt} + interval '3 days')`
 
 export const STATUS_COPY: Record<QuoteStatus, string> = {
   draft: 'borrador',

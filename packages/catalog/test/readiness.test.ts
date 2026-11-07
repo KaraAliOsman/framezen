@@ -1,4 +1,4 @@
-import type { Catalog, Line } from '@framezen/engine'
+import type { Catalog, Line } from '@dekopen/engine'
 import { describe, expect, it } from 'vitest'
 import { SAMPLE_CATALOG, brandReadiness, catalogReadiness, lineReadiness, requiredRolesFor } from '../src/index'
 
@@ -19,6 +19,26 @@ describe('completitud honesta por línea', () => {
     expect(requiredRolesFor({ kind: 'sliding', typologyIds: ['sliding_2'] })).toEqual(['sliding_frame', 'sliding_sash', 'interlock', 'guide', 'bead'])
   })
 
+  it('un color propio que hereda precios («Mismo precio») no empeora la completitud', () => {
+    const line = sample('serie-60')
+    const before = lineReadiness(SAMPLE_CATALOG, line)
+    // Color propio sin precio en un perfil (su referencia tampoco lo tiene): no es un faltante aparte.
+    const custom = {
+      ...SAMPLE_CATALOG,
+      colors: [...SAMPLE_CATALOG.colors, { id: 'custom-crema', name: 'Crema', hex: '#EEE8D5', priceFrom: { factor: 1 } }],
+      lines: SAMPLE_CATALOG.lines.map((l) => (l.id === line.id ? { ...l, colorIds: [...l.colorIds, 'custom-crema'] } : l)),
+    }
+    const after = lineReadiness(custom, custom.lines.find((l) => l.id === line.id)!)
+    expect(after.state).toBe(before.state)
+    expect(after.unpricedRoles).toEqual(before.unpricedRoles)
+    expect(after.details).toEqual(before.details)
+    expect(after.readyColors).not.toContain('custom-crema')
+    // Con sus precios heredados, cuenta como color listo.
+    const ids = Object.values(line.profiles ?? {}).filter(Boolean) as string[]
+    const priced = { ...custom, profiles: custom.profiles.map((p) => (ids.includes(p.id) ? { ...p, priceByColor: { ...p.priceByColor, 'custom-crema': 1000 } } : p)) }
+    expect(lineReadiness(priced, priced.lines.find((l) => l.id === line.id)!).readyColors).toContain('custom-crema')
+  })
+
   it('«Lista para cotizar» cuando todo tiene precio en algún color', () => {
     const readiness = lineReadiness(SAMPLE_CATALOG, sample('serie-60'))
     expect(readiness).toMatchObject({ level: 'complete', state: 'ready', headline: 'Lista para cotizar', missingRoles: [], unpricedItems: [] })
@@ -26,7 +46,7 @@ describe('completitud honesta por línea', () => {
   })
 
   it('«verified» exige evidencia de taller y además la ventana completa', () => {
-    const withOt = withLine('serie-60', (line) => ({ ...line, source: 'Pauta de la distribuidora, verificada por Framezen' }))
+    const withOt = withLine('serie-60', (line) => ({ ...line, source: 'Pauta de la distribuidora, verificada por DEKOPEN' }))
     expect(lineReadiness(withOt, withOt.lines.find((line) => line.id === 'serie-60')!).level).toBe('verified')
     // La evidencia no se salta la comprobación: sin precio de hoja vuelve a «partial».
     const sashId = sample('serie-60').profiles.sash!
@@ -41,7 +61,7 @@ describe('completitud honesta por línea', () => {
       const catalog = withLine('serie-60', (line) => ({ ...line, source }))
       return lineReadiness(catalog, catalog.lines.find((line) => line.id === 'serie-60')!).level
     }
-    expect(levelWith('Pauta de la distribuidora, verificada por Framezen en una ventana real')).toBe('verified')
+    expect(levelWith('Pauta de la distribuidora, verificada por DEKOPEN en una ventana real')).toBe('verified')
     expect(levelWith('Pauta de la distribuidora + OT N° 385 (un caso verificado)')).toBe('verified')
     expect(levelWith('Pauta de la distribuidora · lista del 31-10-2026')).toBe('complete')
   })

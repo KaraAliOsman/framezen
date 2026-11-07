@@ -2,7 +2,8 @@
  * Geometría de la vista interactiva de cortes: cada barra a escala en píxeles, con sus
  * piezas, despuntes y sobrante, y la decisión de qué texto cabe en cada pieza.
  */
-import type { Bar, BarCut, CutSettings, OptimizationGroup } from '@framezen/engine'
+import type { Bar, BarCut, CutSettings, OptimizationGroup } from '@dekopen/engine'
+import { barGeometry, type BarPieceId } from '@dekopen/documents'
 
 /** Ancho aproximado de un texto en px (cifras tabulares ≈ 0,58 em). */
 export function textWidth(text: string, size: number): number {
@@ -37,6 +38,30 @@ export const MEASURE_SIZE = 15
 export const MEASURE_SMALL = 12
 export const LABEL_SIZE = 11
 
+/** Tamaños de la barra dibujada. `large` = modo taller: se lee a un metro en la tablet. */
+export interface BarMetrics {
+  barHeight: number
+  measure: number
+  measureSmall: number
+  measureVertical: number
+  label: number
+  /** Alto de la fila de leyendas bajo la barra. */
+  captionRow: number
+}
+
+export const BAR_METRICS: Readonly<Record<'normal' | 'large', BarMetrics>> = {
+  normal: { barHeight: BAR_HEIGHT, measure: MEASURE_SIZE, measureSmall: MEASURE_SMALL, measureVertical: 11, label: LABEL_SIZE, captionRow: 18 },
+  large: { barHeight: 64, measure: 24, measureSmall: 18, measureVertical: 15, label: 15, captionRow: 22 },
+}
+
+export interface PlaceOptions {
+  metrics?: BarMetrics
+  /** Formato de las medidas (por defecto el de taller en español: «1.234,5»). */
+  format?: (value: number) => string
+  /** Identidad de cada pieza de la barra: da su lado exacto («arr» en vez de «arr/aba»). */
+  ids?: readonly (BarPieceId | undefined)[]
+}
+
 export interface PiecePlacement {
   /** Número de la pieza dentro de la barra (1…). */
   n: number
@@ -62,44 +87,53 @@ export interface BarPlacement {
   hidden: PiecePlacement[]
 }
 
-function miterPx(angle: number | undefined, w: number): number {
+function miterPx(angle: number | undefined, w: number, barHeight: number): number {
   if (angle === undefined || !Number.isFinite(angle) || angle >= 89.95 || angle <= 0.5) return 0
-  const depth = BAR_HEIGHT * 0.32
+  const depth = barHeight * 0.32
   return Math.min(depth / Math.tan((angle * Math.PI) / 180), w * 0.3)
 }
 
 /** Coloca una barra en `width` px. */
-export function placeBar(bar: Bar, cut: Pick<CutSettings, 'trimStart' | 'trimEnd' | 'minReusable'>, width: number): BarPlacement {
+export function placeBar(
+  bar: Bar,
+  cut: Pick<CutSettings, 'trimStart' | 'trimEnd' | 'minReusable'> & { kerf?: number },
+  width: number,
+  options: PlaceOptions = {},
+): BarPlacement {
+  const m = options.metrics ?? BAR_METRICS.normal
+  const format = options.format ?? mm
   const safeWidth = Math.max(40, width)
   const scale = bar.barLength > 0 ? safeWidth / bar.barLength : 0
   const pieces: PiecePlacement[] = bar.cuts.map((c, i) => {
     const x = c.offset * scale
     const w = Math.max(1, c.length * scale)
-    const text = mm(c.length)
+    const text = format(c.length)
     let measure: PiecePlacement['measure'] = null
-    if (textWidth(text, MEASURE_SIZE) <= w - 8) measure = { size: MEASURE_SIZE, vertical: false }
-    else if (textWidth(text, MEASURE_SMALL) <= w - 4) measure = { size: MEASURE_SMALL, vertical: false }
-    else if (w >= 14 && textWidth(text, 11) <= BAR_HEIGHT - 6) measure = { size: 11, vertical: true }
-    const side = sideOf(c)
+    if (textWidth(text, m.measure) <= w - 8) measure = { size: m.measure, vertical: false }
+    else if (textWidth(text, m.measureSmall) <= w - 4) measure = { size: m.measureSmall, vertical: false }
+    else if (w >= m.measureVertical + 3 && textWidth(text, m.measureVertical) <= m.barHeight - 6) measure = { size: m.measureVertical, vertical: true }
+    const side = options.ids?.[i]?.side ?? sideOf(c)
     const full = c.ref ? (side ? `${c.ref} · ${side}` : c.ref) : side
     let caption: string | null = null
-    if (full && textWidth(full, LABEL_SIZE) <= w + 2) caption = full
-    else if (c.ref && textWidth(c.ref, LABEL_SIZE) <= w + 2) caption = c.ref
-    return { n: i + 1, cut: c, x, w, miterStart: miterPx(c.angleStart, w), miterEnd: miterPx(c.angleEnd, w), measure, caption }
+    if (full && textWidth(full, m.label) <= w + 2) caption = full
+    else if (c.ref && textWidth(c.ref, m.label) <= w + 2) caption = c.ref
+    return { n: i + 1, cut: c, x, w, miterStart: miterPx(c.angleStart, w, m.barHeight), miterEnd: miterPx(c.angleEnd, w, m.barHeight), measure, caption }
   })
-  const trimStart = cut.trimStart > 0 && !bar.fromOffcut ? { x: 0, w: cut.trimStart * scale } : null
-  const trimEnd = cut.trimEnd > 0 && !bar.fromOffcut ? { x: safeWidth - cut.trimEnd * scale, w: cut.trimEnd * scale } : null
-  const remLength = Math.max(0, bar.remainder)
+  // Lo que usó esta barra (la marca puede pedir más disco o despunte que el taller), retazos incluidos.
+  const geo = barGeometry(bar, { ...cut, kerf: cut.kerf ?? 0 })
+  const trimStart = geo.trimStart > 0 ? { x: 0, w: geo.trimStart * scale } : null
+  const trimEnd = geo.trimEnd > 0 ? { x: safeWidth - geo.trimEnd * scale, w: geo.trimEnd * scale } : null
+  const remLength = geo.remainder
   const remW = remLength * scale
-  const remX = Math.max(0, (bar.barLength - (bar.fromOffcut ? 0 : cut.trimEnd) - remLength) * scale)
+  const remX = geo.remainderStart * scale
   const remainder =
     remW > 0.5
       ? {
           x: remX,
           w: remW,
           length: remLength,
-          reusable: remLength >= cut.minReusable,
-          showText: textWidth(mm(remLength), 12) + 8 <= remW,
+          reusable: geo.reusable,
+          showText: textWidth(format(remLength), m.measureSmall) + 8 <= remW,
           showCaption: remW >= 96,
         }
       : null

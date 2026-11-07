@@ -1,4 +1,4 @@
-import type { Catalog } from '@framezen/engine'
+import type { Catalog } from '@dekopen/engine'
 import { isHex, luminance, mix, parseHex, shade, toHex } from '../base/color'
 
 /** Colores de material del sistema de diseño (invariantes, no cambian con el tema). */
@@ -11,13 +11,33 @@ export const MATERIAL_COLORS = {
   winchester: '#7A4A2A',
 } as const
 
+/** Vidrio del dibujo técnico (plano, legible en láser). */
 export const GLASS_FILL = '#D9EBEE'
 export const GLASS_OPACITY = 0.7
 export const SYMBOL_COLOR = '#1F1C18'
-export const DIMENSION_COLOR = '#1F3AA0'
-export const SELECTION_COLOR = '#2747C2'
-export const SELECTION_FILL = '#EEF1FC'
-export const HOVER_COLOR = '#3A5BD6'
+/** Cotas: grafito neutro (`--dk-dimension` / `--dk-dimension-text`); en pantalla siguen al tema. */
+export const DIMENSION_COLOR = '#576366'
+export const DIMENSION_TEXT_COLOR = '#2F373A'
+/** Selección en el lienzo: azul propio (`--dk-select`), porque el acento de la interfaz es tinta y no se ve sobre marcos oscuros. */
+export const SELECTION_COLOR = '#1F6BFF'
+export const SELECTION_FILL = '#DCE8FF'
+export const HOVER_COLOR = '#1F6BFF'
+
+/** Variables CSS con respaldo (en un PDF no hay tema: queda el respaldo). */
+export const DRAWING_CSS = {
+  dimension: `var(--dk-dimension, ${DIMENSION_COLOR})`,
+  dimensionText: `var(--dk-dimension-text, ${DIMENSION_TEXT_COLOR})`,
+  accent: `var(--dk-select, ${SELECTION_COLOR})`,
+  focusRing: 'var(--dk-select-ring, rgb(31 107 255 / 0.22))',
+  selectionFill: `var(--dk-select-ring, ${SELECTION_FILL})`,
+  caption: 'var(--dk-fg-muted, #576366)',
+} as const
+
+/**
+ * Familia de cotas y rótulos, siempre con cifras tabulares: la del tema dentro de un documento
+ * (`--dk-font-body`, o `--fzd-text` en los diseños anteriores) y la de la interfaz en la app.
+ */
+export const DIMENSION_FONT = "var(--dk-font-body, var(--fzd-text, var(--font-sans, 'Funnel Sans Variable', 'Funnel Sans', ui-sans-serif, system-ui, sans-serif)))"
 
 const KEYWORDS: [RegExp, string][] = [
   [/blanc|white/i, MATERIAL_COLORS.white],
@@ -28,7 +48,7 @@ const KEYWORDS: [RegExp, string][] = [
   [/winchester|caoba|sapelli|marr[oó]n|brown/i, MATERIAL_COLORS.winchester],
 ]
 
-/** Color de dibujo de un color del catálogo (con respaldo por nombre/id y PVC blanco por defecto). */
+/** Color plano de un color del catálogo (con respaldo por nombre/id y PVC blanco por defecto). */
 export function colorHex(colorId: string | undefined, catalog: Pick<Catalog, 'colors'> | undefined): string {
   if (!colorId) return MATERIAL_COLORS.white
   const color = catalog?.colors?.find((c) => c.id === colorId)

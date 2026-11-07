@@ -4,6 +4,9 @@
  * Mismo algoritmo que apps/server/src/lib/rut.ts, para que el aviso del navegador y el del
  * servidor digan lo mismo.
  */
+import type { Locale } from '@dekopen/shared'
+import { translate } from '../../lib/i18n'
+import es from './i18n/es'
 
 /** Deja solo dígitos y K (en mayúscula). */
 export function cleanRut(value: string): string {
@@ -52,13 +55,14 @@ export function rutStatus(value: string | null | undefined): RutStatus {
 
 /**
  * Aviso en lenguaje humano (o null si no hay nada que decir). Pensado para mostrarse bajo el
- * campo en color de aviso, nunca como error que bloquea.
+ * campo en color de aviso, nunca como error que bloquea. `locale` = idioma del texto (por
+ * defecto, el de la interfaz; el portal pasa el del documento).
  */
-export function rutHint(value: string | null | undefined): string | null {
+export function rutHint(value: string | null | undefined, locale?: Locale): string | null {
   const status = rutStatus(value)
   if (status !== 'invalid') return null
   const clean = cleanRut(value ?? '')
   const expected = rutCheckDigit(clean.slice(0, -1))
-  if (!/^\d+$/.test(clean.slice(0, -1))) return 'Este RUT tiene letras donde van números. Lo guardamos igual; revísalo cuando puedas.'
-  return `El dígito verificador no calza (con ese número debería terminar en ${expected}). Lo guardamos igual por si acaso.`
+  if (!/^\d+$/.test(clean.slice(0, -1))) return translate(es, 'rut.letters', undefined, locale)
+  return translate(es, 'rut.checkDigit', { expected }, locale)
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { collectLeaves, createDesign } from '@framezen/engine'
-import { SAMPLE_DEFAULTS } from '@framezen/catalog'
-import { parseLocalCommand, type AssistantToolCall } from '@framezen/shared'
+import { collectLeaves, createDesign } from '@dekopen/engine'
+import { SAMPLE_DEFAULTS } from '@dekopen/catalog'
+import { parseLocalCommand, type AssistantToolCall } from '@dekopen/shared'
 import { createExecutor } from './executor'
 import { fakeEditor, fakeWorld, type FakeWorld } from './testing'
 

@@ -4,7 +4,7 @@
  * cambios programados, saldo a favor, tarjeta registrada y cada intento de pago.
  */
 import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
-import type { PlanCode } from '@framezen/shared'
+import type { PlanCode } from '@dekopen/shared'
 import { orgs, users } from '../../db/schema'
 
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' })
